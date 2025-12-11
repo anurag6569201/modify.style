@@ -1,11 +1,14 @@
+import { AppProvider } from './context/AppContext'
 import WebsiteViewer from './components/WebsiteViewer'
 import './App.css'
 
 function App() {
   return (
-    <div className="app">
-      <WebsiteViewer />
-    </div>
+    <AppProvider>
+      <div className="app">
+        <WebsiteViewer />
+      </div>
+    </AppProvider>
   )
 }
 

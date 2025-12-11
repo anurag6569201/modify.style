@@ -1,0 +1,39 @@
+.space-indicator {
+  position: fixed;
+  bottom: 5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 2000;
+  background: rgba(20, 20, 25, 0.95);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 12px;
+  padding: 0.75rem 1.25rem;
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+}
+
+.space-indicator.show {
+  opacity: 1;
+}
+
+.space-key {
+  background: rgba(100, 108, 255, 0.2);
+  border: 1px solid rgba(100, 108, 255, 0.4);
+  border-radius: 6px;
+  padding: 0.25rem 0.5rem;
+  font-weight: 600;
+  font-family: monospace;
+  color: var(--accent-color);
+}
+
+.space-indicator-text {
+  color: var(--text-secondary);
+}

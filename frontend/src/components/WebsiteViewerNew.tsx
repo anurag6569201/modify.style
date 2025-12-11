@@ -18,15 +18,11 @@ import {
   Eye
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { storage } from '../utils/storage';
 import DraggablePanel from './DraggablePanel';
 import CSSEditor from './CSSEditor';
 import ElementInspector from './ElementInspector';
 import SettingsPanel from './SettingsPanel';
-import ZoomControls from './ZoomControls';
-import RecentUrls from './RecentUrls';
 import './WebsiteViewer.css';
-import './SpaceIndicator.css';
 
 // CORS proxy services (fallback options)
 const CORS_PROXIES = [
@@ -50,53 +46,12 @@ const DEVICES: Record<string, DeviceConfig> = {
 };
 
 function WebsiteViewer() {
-  const { state, dispatch, setUrl, setCustomCss, toggleCssEditor, toggleInspector, toggleSettings, setDeviceMode, setZoomLevel, resetViewport } = useApp();
+  const { state, dispatch, setUrl, setCustomCss, toggleCssEditor, toggleInspector, toggleSettings, setDeviceMode, setZoomLevel, resetViewport, handleZoomIn, handleZoomOut, handleZoomReset } = useApp();
   
-  // Local state for pan/drag - minimal state updates
+  // Local state for pan/drag
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [showRecentUrls, setShowRecentUrls] = useState(false);
-  const canvasContainerRef = useRef<HTMLDivElement>(null);
-  const frameRef = useRef<HTMLDivElement>(null);
-  const urlInputRef = useRef<HTMLInputElement>(null);
-  
-  // Use refs exclusively for smooth performance - no state updates during interaction
-  const panPositionRef = useRef({ x: 0, y: 0 });
-  const zoomLevelRef = useRef(1);
-  const isInteractingRef = useRef(false);
-  const rafIdRef = useRef<number | null>(null);
-  
-  // Sync refs with state only when not interacting
-  useEffect(() => {
-    if (!isInteractingRef.current) {
-      panPositionRef.current = { x: state.viewport.panPosition.x, y: state.viewport.panPosition.y };
-      zoomLevelRef.current = state.viewport.zoomLevel;
-    }
-  }, [state.viewport.panPosition.x, state.viewport.panPosition.y, state.viewport.zoomLevel]);
-  
-  // Update DOM transform efficiently (removed - using direct updates instead)
-  
-  // Debounced state sync - only update React state when interaction ends or periodically
-  const syncStateToReact = useCallback(() => {
-    // Use setTimeout instead of RAF for state updates (less overhead)
-    // This ensures React state is updated but doesn't block rendering
-    if (rafIdRef.current) {
-      cancelAnimationFrame(rafIdRef.current);
-    }
-    
-    rafIdRef.current = requestAnimationFrame(() => {
-      // Batch both updates together
-      dispatch({ 
-        type: 'SET_PAN_POSITION', 
-        payload: { ...panPositionRef.current } 
-      });
-      dispatch({ 
-        type: 'SET_ZOOM_LEVEL', 
-        payload: zoomLevelRef.current 
-      });
-      rafIdRef.current = null;
-    });
-  }, [dispatch]);
+  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -198,10 +153,6 @@ function WebsiteViewer() {
 
       dispatch({ type: 'SET_HTML_CONTENT', payload: processedHtml });
       dispatch({ type: 'SET_CURRENT_URL', payload: targetUrl });
-      
-      // Save to recent URLs
-      storage.saveRecentUrl(targetUrl);
-      storage.saveSettings({ lastUrl: targetUrl });
     } catch (err: unknown) {
       const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
       dispatch({ type: 'SET_ERROR', payload: errorMessage || 'Failed to load website.' });
@@ -248,17 +199,13 @@ function WebsiteViewer() {
     }
   }, [state.editor.customCss, state.editor.showCssEditor, injectCustomCss]);
 
-  // Custom zoom functions with smooth scaling
+  // Zoom functions
   const handleZoomIn = useCallback(() => {
-    // Exponential zoom in for smoother experience
-    const newZoom = Math.min(state.viewport.zoomLevel * 1.15, 5);
-    setZoomLevel(newZoom);
+    setZoomLevel(Math.min(state.viewport.zoomLevel + 0.25, 5));
   }, [state.viewport.zoomLevel, setZoomLevel]);
 
   const handleZoomOut = useCallback(() => {
-    // Exponential zoom out for smoother experience
-    const newZoom = Math.max(state.viewport.zoomLevel / 1.15, 0.1);
-    setZoomLevel(newZoom);
+    setZoomLevel(Math.max(state.viewport.zoomLevel - 0.25, 0.25));
   }, [state.viewport.zoomLevel, setZoomLevel]);
 
   const handleZoomReset = useCallback(() => {
@@ -266,249 +213,72 @@ function WebsiteViewer() {
     setPanPosition({ x: 0, y: 0 });
   }, [resetViewport]);
 
-  // Figma-like scroll zoom - highly optimized for performance
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    // Allow normal scrolling when holding space (panning mode)
-    if (state.viewport.isSpacePressed) {
-      return;
-    }
-
-    e.preventDefault();
-    e.stopPropagation();
-    
-    const container = canvasContainerRef.current;
-    if (!container || !frameRef.current) return;
-
-    isInteractingRef.current = true;
-
-    // Get mouse position relative to container (cached)
-    const rect = container.getBoundingClientRect();
-    const mouseX = e.clientX - rect.left;
-    const mouseY = e.clientY - rect.top;
-
-    // Use refs for current values
-    const currentZoom = zoomLevelRef.current;
-    const currentPan = panPositionRef.current;
-
-    // Optimized zoom calculation
-    const delta = e.deltaMode === 1 ? e.deltaY * 16 : e.deltaY;
-    const zoomSensitivity = 0.0008;
-    const zoomFactor = 1 - delta * zoomSensitivity;
-    const newZoom = Math.max(0.1, Math.min(5, currentZoom * zoomFactor));
-
-    // Early exit if change is too small
-    if (Math.abs(newZoom - currentZoom) < 0.0001) {
-      isInteractingRef.current = false;
-      return;
-    }
-
-    // Optimized zoom-to-point calculation
-    const centerX = rect.width * 0.5;
-    const centerY = rect.height * 0.5;
-    const scaleChange = newZoom / currentZoom;
-    
-    // Calculate new pan to keep point under cursor fixed
-    const newPanX = mouseX - centerX - (mouseX - centerX - currentPan.x) * scaleChange;
-    const newPanY = mouseY - centerY - (mouseY - centerY - currentPan.y) * scaleChange;
-
-    // Update refs
-    zoomLevelRef.current = newZoom;
-    panPositionRef.current = { x: newPanX, y: newPanY };
-
-    // Direct DOM update for instant visual feedback (GPU accelerated)
-    frameRef.current.style.transform = `translate3d(${newPanX}px, ${newPanY}px, 0) scale(${newZoom})`;
-
-    // Throttled React state update (batched)
-    syncStateToReact();
-    
-    // Reset interaction flag after a delay
-    setTimeout(() => {
-      isInteractingRef.current = false;
-    }, 100);
-  }, [state.viewport.isSpacePressed, syncStateToReact]);
-
-  // Figma-like panning: Space + drag or middle mouse button (optimized)
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    const target = e.target as HTMLElement;
-    
-    // Don't pan if clicking on buttons or interactive elements
-    if (target.closest('button') || target.closest('a') || target.closest('input') || target.closest('textarea')) {
-      return;
-    }
-
-    // Pan with Space + left click (Figma style)
-    const shouldPan = 
-      state.viewport.isSpacePressed || // Space key pressed
-      e.button === 1 || // Middle mouse button
-      (e.button === 0 && state.viewport.isPanning) || // Pan mode active
-      (e.button === 0 && (e.ctrlKey || e.metaKey)); // Ctrl/Cmd + drag (fallback)
-
-    if (shouldPan) {
-      isInteractingRef.current = true;
-      setIsDragging(true);
-      setDragStart({
-        x: e.clientX - panPositionRef.current.x,
-        y: e.clientY - panPositionRef.current.y
-      });
+  const handleWheel = (e: React.WheelEvent) => {
+    if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      e.stopPropagation();
-      
-      if (canvasContainerRef.current) {
-        canvasContainerRef.current.style.cursor = 'grabbing';
-      }
+      const delta = e.deltaY > 0 ? -0.1 : 0.1;
+      setZoomLevel(Math.max(0.25, Math.min(5, state.viewport.zoomLevel + delta)));
     }
-  }, [state.viewport.isSpacePressed, state.viewport.isPanning]);
+  };
 
-  const handleMouseMove = useCallback((e: React.MouseEvent) => {
-    if (isDragging && frameRef.current) {
-      e.preventDefault();
-      e.stopPropagation();
-      
-      // Direct calculation
-      const newPanX = e.clientX - dragStart.x;
-      const newPanY = e.clientY - dragStart.y;
-      
-      // Update ref
-      panPositionRef.current = { x: newPanX, y: newPanY };
-      
-      // Direct DOM update - no spaces in transform string for better performance
-      const zoom = zoomLevelRef.current;
-      frameRef.current.style.transform = `translate3d(${newPanX}px,${newPanY}px,0) scale(${zoom})`;
-    }
-  }, [isDragging, dragStart]);
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-    isInteractingRef.current = false;
-    
-    // Sync final position to React state
-    syncStateToReact();
-    
-    // Reset cursor
-    if (canvasContainerRef.current) {
-      if (state.viewport.isSpacePressed) {
-        canvasContainerRef.current.style.cursor = 'grab';
-      } else {
-        canvasContainerRef.current.style.cursor = '';
-      }
-    }
-  }, [state.viewport.isSpacePressed, syncStateToReact]);
-
-  // Handle Space key for panning (Figma style)
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't interfere with input fields
-      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+  // Pan functions
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button === 0 && (state.viewport.isPanning || e.ctrlKey || e.metaKey || state.viewport.zoomLevel > 1)) {
+      const target = e.target as HTMLElement;
+      if (target.closest('button') || target.closest('a') || target.closest('input')) {
         return;
       }
+      setIsDragging(true);
+      setDragStart({
+        x: e.clientX - panPosition.x,
+        y: e.clientY - panPosition.y
+      });
+      e.preventDefault();
+    }
+  };
 
-      if (e.code === 'Space' && !state.viewport.isSpacePressed) {
-        e.preventDefault();
-        dispatch({ type: 'SET_SPACE_PRESSED', payload: true });
-        if (canvasContainerRef.current) {
-          canvasContainerRef.current.style.cursor = 'grab';
-        }
-      }
-    };
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (isDragging) {
+      setPanPosition({
+        x: e.clientX - dragStart.x,
+        y: e.clientY - dragStart.y
+      });
+    }
+  };
 
-    const handleKeyUp = (e: KeyboardEvent) => {
-      if (e.code === 'Space' && state.viewport.isSpacePressed) {
-        e.preventDefault();
-        dispatch({ type: 'SET_SPACE_PRESSED', payload: false });
-        if (canvasContainerRef.current && !isDragging) {
-          canvasContainerRef.current.style.cursor = '';
-        }
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('keyup', handleKeyUp);
-
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('keyup', handleKeyUp);
-    };
-  }, [state.viewport.isSpacePressed, isDragging, dispatch]);
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
 
   useEffect(() => {
-    if (!isDragging) return;
-
-    // Store drag start in ref to avoid closure issues
-    const dragStartRef = { ...dragStart };
-    let stateSyncTimeout: number | null = null;
-
     const handleGlobalMouseMove = (e: MouseEvent) => {
-      // Calculate new position
-      const newPanX = e.clientX - dragStartRef.x;
-      const newPanY = e.clientY - dragStartRef.y;
-      
-      // Update ref immediately
-      panPositionRef.current = { x: newPanX, y: newPanY };
-      
-      // CRITICAL: Direct DOM update with NO delays - this is what makes it smooth
-      if (frameRef.current) {
-        const zoom = zoomLevelRef.current;
-        // Use transform property directly - fastest possible update
-        frameRef.current.style.transform = `translate3d(${newPanX}px,${newPanY}px,0) scale(${zoom})`;
+      if (isDragging) {
+        setPanPosition({
+          x: e.clientX - dragStart.x,
+          y: e.clientY - dragStart.y
+        });
       }
-      
-      // Debounce React state sync (only update every 200ms to avoid re-renders during drag)
-      // This prevents React re-renders from blocking smooth panning
-      if (stateSyncTimeout) {
-        clearTimeout(stateSyncTimeout);
-      }
-      stateSyncTimeout = window.setTimeout(() => {
-        syncStateToReact();
-        stateSyncTimeout = null;
-      }, 200);
     };
 
     const handleGlobalMouseUp = () => {
-      // Clear any pending state sync
-      if (stateSyncTimeout) {
-        clearTimeout(stateSyncTimeout);
-        stateSyncTimeout = null;
-      }
-      
-      // Final state sync
-      syncStateToReact();
-      
       setIsDragging(false);
-      isInteractingRef.current = false;
-      
-      if (canvasContainerRef.current) {
-        if (state.viewport.isSpacePressed) {
-          canvasContainerRef.current.style.cursor = 'grab';
-        } else {
-          canvasContainerRef.current.style.cursor = '';
-        }
-      }
     };
 
-    // Add listeners with optimal settings - use document for better capture
-    document.addEventListener('mousemove', handleGlobalMouseMove, { passive: false, capture: true });
-    document.addEventListener('mouseup', handleGlobalMouseUp, { passive: true, capture: true });
-    window.addEventListener('mouseleave', handleGlobalMouseUp, { passive: true });
+    if (isDragging) {
+      window.addEventListener('mousemove', handleGlobalMouseMove);
+      window.addEventListener('mouseup', handleGlobalMouseUp);
+    }
 
     return () => {
-      if (stateSyncTimeout) {
-        clearTimeout(stateSyncTimeout);
-      }
-      document.removeEventListener('mousemove', handleGlobalMouseMove, { capture: true });
-      document.removeEventListener('mouseup', handleGlobalMouseUp, { capture: true });
-      window.removeEventListener('mouseleave', handleGlobalMouseUp);
+      window.removeEventListener('mousemove', handleGlobalMouseMove);
+      window.removeEventListener('mouseup', handleGlobalMouseUp);
     };
-  }, [isDragging, dragStart, state.viewport.isSpacePressed, syncStateToReact]);
+  }, [isDragging, dragStart]);
 
-  // Keyboard shortcuts (excluding Space which is handled separately)
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        return;
-      }
-
-      // Skip Space key - handled in separate effect
-      if (e.code === 'Space') {
         return;
       }
 
@@ -552,41 +322,15 @@ function WebsiteViewer() {
             <div className="brand-pill">
               <Globe size={16} />
             </div>
-            <div className="url-input-wrapper" style={{ position: 'relative' }}>
+            <div className="url-input-wrapper">
               <input
-                ref={urlInputRef}
                 type="text"
                 className="url-input"
                 placeholder="Type a URL to explore..."
                 value={state.view.url}
                 onChange={(e) => setUrl(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') {
-                    loadWebsite();
-                    setShowRecentUrls(false);
-                  } else if (e.key === 'ArrowDown' && showRecentUrls) {
-                    e.preventDefault();
-                  }
-                }}
-                onFocus={() => {
-                  const recent = storage.getRecentUrls();
-                  if (recent.length > 0) {
-                    setShowRecentUrls(true);
-                  }
-                }}
-                onBlur={(e) => {
-                  // Delay to allow click on recent URLs
-                  setTimeout(() => setShowRecentUrls(false), 200);
-                }}
+                onKeyDown={(e) => e.key === 'Enter' && loadWebsite()}
                 disabled={state.view.loading}
-              />
-              <RecentUrls
-                isOpen={showRecentUrls}
-                onClose={() => setShowRecentUrls(false)}
-                onSelectUrl={(url) => {
-                  setUrl(url);
-                  setTimeout(() => loadWebsite(), 0);
-                }}
               />
             </div>
             <button
@@ -609,26 +353,15 @@ function WebsiteViewer() {
 
       {/* Main Canvas Area */}
       <div 
-        ref={canvasContainerRef}
+        ref={canvasRef}
         className={`viewer-canvas ${state.viewport.isFullView ? 'full-view' : ''}`}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
-        onContextMenu={(e) => {
-          // Prevent context menu when panning with middle mouse
-          if (e.button === 1) {
-            e.preventDefault();
-          }
-        }}
         style={{
-          cursor: isDragging 
-            ? 'grabbing' 
-            : state.viewport.isSpacePressed 
-              ? 'grab' 
-              : 'default',
-          userSelect: isDragging ? 'none' : 'auto'
+          cursor: (isDragging || (state.viewport.isPanning && state.viewport.zoomLevel > 1)) ? 'grabbing' : (state.viewport.isPanning || state.viewport.zoomLevel > 1 ? 'grab' : 'default')
         }}
       >
         {state.view.error ? (
@@ -644,21 +377,13 @@ function WebsiteViewer() {
           </div>
         ) : (
           <div
-            ref={frameRef}
             className={`frame-wrapper ${state.viewport.deviceMode} ${state.viewport.isFullView ? 'full-view-frame' : ''}`}
             style={{
               width: state.viewport.isFullView ? '100%' : DEVICES[state.viewport.deviceMode].width,
               height: state.viewport.isFullView ? '100%' : (state.viewport.deviceMode === 'desktop' ? '100%' : DEVICES[state.viewport.deviceMode].height),
-              // Use refs during interaction, state when idle
-              transform: isDragging 
-                ? `translate3d(${panPositionRef.current.x}px, ${panPositionRef.current.y}px, 0) scale(${zoomLevelRef.current})`
-                : `translate3d(${state.viewport.panPosition.x}px, ${state.viewport.panPosition.y}px, 0) scale(${state.viewport.zoomLevel})`,
+              transform: `translate(${panPosition.x}px, ${panPosition.y}px) scale(${state.viewport.zoomLevel})`,
               transformOrigin: 'center center',
-              transition: isDragging ? 'none' : 'transform 0.1s ease-out',
-              willChange: isDragging ? 'transform' : 'auto',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden',
-              perspective: 1000
+              transition: isDragging ? 'none' : 'transform 0.2s ease-out'
             }}
           >
             {!state.viewport.isFullView && (
@@ -725,10 +450,10 @@ function WebsiteViewer() {
           <button
             className={`dock-item ${state.viewport.isPanning ? 'active' : ''}`}
             onClick={() => dispatch({ type: 'SET_PANNING', payload: !state.viewport.isPanning })}
-            title="Pan Mode (Space + Drag or Middle Mouse Button)"
+            title="Pan Mode (Hold Ctrl/Cmd + Drag)"
           >
             <Move size={20} strokeWidth={1.5} />
-            <span className="dock-tooltip">Pan Mode (Space + Drag)</span>
+            <span className="dock-tooltip">Pan Mode</span>
           </button>
 
           <div className="dock-divider"></div>
@@ -736,7 +461,7 @@ function WebsiteViewer() {
           <button
             className="dock-item"
             onClick={handleZoomOut}
-            disabled={state.viewport.zoomLevel <= 0.1}
+            disabled={state.viewport.zoomLevel <= 0.25}
             title="Zoom Out (Ctrl/Cmd + Scroll)"
           >
             <ZoomOut size={20} strokeWidth={1.5} />
@@ -744,12 +469,12 @@ function WebsiteViewer() {
           </button>
 
           <button
-            className={`dock-item zoom-indicator ${state.viewport.showZoomControls ? 'active' : ''}`}
-            onClick={() => dispatch({ type: 'TOGGLE_ZOOM_CONTROLS' })}
-            title="Zoom Controls (Click to open advanced controls)"
+            className="dock-item zoom-indicator"
+            onClick={handleZoomReset}
+            title="Reset Zoom"
           >
             <span className="zoom-level">{Math.round(state.viewport.zoomLevel * 100)}%</span>
-            <span className="dock-tooltip">Zoom Controls</span>
+            <span className="dock-tooltip">Reset Zoom</span>
           </button>
 
           <button
@@ -832,26 +557,6 @@ function WebsiteViewer() {
         >
           <SettingsPanel />
         </DraggablePanel>
-      )}
-
-      {/* Zoom Controls Panel */}
-      {state.viewport.showZoomControls && !state.viewport.isFullView && (
-        <DraggablePanel
-          title="Zoom Controls"
-          onClose={() => dispatch({ type: 'TOGGLE_ZOOM_CONTROLS' })}
-          initialPosition={{ x: window.innerWidth / 2 - 150, y: 100 }}
-          width={320}
-        >
-          <ZoomControls />
-        </DraggablePanel>
-      )}
-
-      {/* Space Key Indicator */}
-      {state.viewport.isSpacePressed && !state.viewport.isFullView && (
-        <div className="space-indicator show">
-          <span className="space-key">SPACE</span>
-          <span className="space-indicator-text">Hold and drag to pan</span>
-        </div>
       )}
     </div>
   );
