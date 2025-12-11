@@ -34,12 +34,13 @@ class ApiService {
       const response = await fetch(url, config);
       
       if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
       }
 
       const data = await response.json();
       return data;
-    } catch (error) {
+    } catch (error: any) {
       console.error('API request failed:', error);
       throw error;
     }
@@ -75,6 +76,11 @@ class ApiService {
   // API info
   async getApiInfo() {
     return this.get<{ name: string; version: string; endpoints: any }>('/info/');
+  }
+
+  // Proxy website
+  async proxyWebsite(url: string) {
+    return this.get<{ html: string; url: string; status: string }>(`/proxy/?url=${encodeURIComponent(url)}`);
   }
 }
 
