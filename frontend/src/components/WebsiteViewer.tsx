@@ -15,16 +15,19 @@ import {
   ZoomOut,
   Move,
   Settings,
-  Eye
+  Eye,
+  Plus
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { storage } from '../utils/storage';
+import type { CustomDevice } from '../utils/storage';
 import DraggablePanel from './DraggablePanel';
 import CSSEditor from './CSSEditor';
 import ElementInspector from './ElementInspector';
 import SettingsPanel from './SettingsPanel';
 import ZoomControls from './ZoomControls';
 import RecentUrls from './RecentUrls';
+import CustomDeviceManager from './CustomDeviceManager';
 import './WebsiteViewer.css';
 import './SpaceIndicator.css';
 
@@ -40,9 +43,11 @@ interface DeviceConfig {
   label: string;
   width: string;
   height: string;
+  isCustom?: boolean;
+  customId?: string;
 }
 
-const DEVICES: Record<string, DeviceConfig> = {
+const DEFAULT_DEVICES: Record<string, DeviceConfig> = {
   mobile: { icon: Smartphone, label: 'Mobile', width: '375px', height: '667px' },
   tablet: { icon: Tablet, label: 'Tablet', width: '768px', height: '1024px' },
   laptop: { icon: Laptop, label: 'Laptop', width: '1366px', height: '768px' },
@@ -50,15 +55,89 @@ const DEVICES: Record<string, DeviceConfig> = {
 };
 
 function WebsiteViewer() {
-  const { state, dispatch, setUrl, setCustomCss, toggleCssEditor, toggleInspector, toggleSettings, setDeviceMode, setZoomLevel, resetViewport } = useApp();
+  const { state, dispatch, setUrl, toggleCssEditor, toggleInspector, toggleSettings, setZoomLevel, resetViewport } = useApp();
   
   // Local state for pan/drag - minimal state updates
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showRecentUrls, setShowRecentUrls] = useState(false);
+  const [showCustomDevices, setShowCustomDevices] = useState(false);
+  const [customDevices, setCustomDevices] = useState<CustomDevice[]>([]);
+  const [currentDeviceMode, setCurrentDeviceMode] = useState<string>('desktop');
+  const [currentCustomDevice, setCurrentCustomDevice] = useState<CustomDevice | null>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
+
+  // Load custom devices on mount and sync with state
+  useEffect(() => {
+    const loaded = storage.getCustomDevices();
+    setCustomDevices(loaded);
+    setCurrentDeviceMode(state.viewport.deviceMode);
+  }, []);
+
+  // Update current device mode when state changes
+  useEffect(() => {
+    if (!currentDeviceMode.startsWith('custom-')) {
+      setCurrentDeviceMode(state.viewport.deviceMode);
+    }
+  }, [state.viewport.deviceMode]);
+
+  // Helper to get device config for rendering
+  const getDeviceConfig = (mode: string): DeviceConfig | null => {
+    if (mode.startsWith('custom-')) {
+      const customId = mode.replace('custom-', '');
+      const custom = customDevices.find(d => d.id === customId);
+      if (custom) {
+        const iconMap: Record<string, typeof Smartphone> = {
+          mobile: Smartphone,
+          tablet: Tablet,
+          laptop: Laptop,
+        };
+        return {
+          icon: iconMap[custom.type] || Smartphone,
+          label: custom.name,
+          width: `${custom.width}px`,
+          height: `${custom.height}px`,
+          isCustom: true,
+          customId: custom.id,
+        };
+      }
+    }
+    return DEFAULT_DEVICES[mode] || null;
+  };
+
+  const handleCustomDeviceSelect = (device: CustomDevice) => {
+    setCurrentCustomDevice(device);
+    setCurrentDeviceMode(`custom-${device.id}`);
+    dispatch({ 
+      type: 'SET_DEVICE_MODE', 
+      payload: device.type as any // Use the type for frame styling
+    });
+    resetViewport();
+    setPanPosition({ x: 0, y: 0 });
+    setShowCustomDevices(false);
+  };
+
+  const handleDeviceModeChange = (mode: string) => {
+    setCurrentDeviceMode(mode);
+    
+    if (mode.startsWith('custom-')) {
+      const customId = mode.replace('custom-', '');
+      const custom = customDevices.find(d => d.id === customId);
+      if (custom) {
+        setCurrentCustomDevice(custom);
+        dispatch({ type: 'SET_DEVICE_MODE', payload: custom.type as any });
+      }
+    } else {
+      setCurrentCustomDevice(null);
+      dispatch({ type: 'SET_DEVICE_MODE', payload: mode as any });
+    }
+    
+    resetViewport();
+    setPanPosition({ x: 0, y: 0 });
+  };
   
   // Use refs exclusively for smooth performance - no state updates during interaction
   const panPositionRef = useRef({ x: 0, y: 0 });
@@ -645,10 +724,20 @@ function WebsiteViewer() {
         ) : (
           <div
             ref={frameRef}
-            className={`frame-wrapper ${state.viewport.deviceMode} ${state.viewport.isFullView ? 'full-view-frame' : ''}`}
+            className={`frame-wrapper ${currentCustomDevice ? currentCustomDevice.type : state.viewport.deviceMode} ${state.viewport.isFullView ? 'full-view-frame' : ''}`}
             style={{
-              width: state.viewport.isFullView ? '100%' : DEVICES[state.viewport.deviceMode].width,
-              height: state.viewport.isFullView ? '100%' : (state.viewport.deviceMode === 'desktop' ? '100%' : DEVICES[state.viewport.deviceMode].height),
+              width: state.viewport.isFullView 
+                ? '100%' 
+                : (currentCustomDevice 
+                  ? `${currentCustomDevice.width}px` 
+                  : (DEFAULT_DEVICES[state.viewport.deviceMode]?.width || '100%')),
+              height: state.viewport.isFullView 
+                ? '100%' 
+                : (state.viewport.deviceMode === 'desktop' 
+                  ? '100%' 
+                  : (currentCustomDevice 
+                    ? `${currentCustomDevice.height}px` 
+                    : (DEFAULT_DEVICES[state.viewport.deviceMode]?.height || '100%'))),
               // Use refs during interaction, state when idle
               transform: isDragging 
                 ? `translate3d(${panPositionRef.current.x}px, ${panPositionRef.current.y}px, 0) scale(${zoomLevelRef.current})`
@@ -685,22 +774,53 @@ function WebsiteViewer() {
       {/* Floating Dock (Bottom) */}
       {!state.viewport.isFullView && (
         <div className="dock-container">
-          {Object.entries(DEVICES).map(([mode, config]) => {
+          {Object.entries(DEFAULT_DEVICES).map(([mode, config]) => {
             const Icon = config.icon;
             return (
               <button
                 key={mode}
-                className={`dock-item ${state.viewport.deviceMode === mode ? 'active' : ''}`}
-                onClick={() => {
-                  setDeviceMode(mode as any);
-                  setPanPosition({ x: 0, y: 0 });
-                }}
+                className={`dock-item ${currentDeviceMode === mode ? 'active' : ''}`}
+                onClick={() => handleDeviceModeChange(mode)}
               >
                 <Icon size={20} strokeWidth={1.5} />
                 <span className="dock-tooltip">{config.label}</span>
               </button>
             );
           })}
+
+          {/* Custom Devices */}
+          {customDevices.map((custom) => {
+            const iconMap: Record<string, typeof Smartphone> = {
+              mobile: Smartphone,
+              tablet: Tablet,
+              laptop: Laptop,
+            };
+            const Icon = iconMap[custom.type] || Smartphone;
+            const modeKey = `custom-${custom.id}`;
+            
+            return (
+              <button
+                key={modeKey}
+                className={`dock-item custom-device ${currentDeviceMode === modeKey ? 'active' : ''}`}
+                onClick={() => handleDeviceModeChange(modeKey)}
+                title={`${custom.name} (${custom.width}×${custom.height})`}
+              >
+                <Icon size={20} strokeWidth={1.5} />
+                <span className="dock-tooltip">{custom.name}</span>
+              </button>
+            );
+          })}
+
+          {/* Add Custom Device Button */}
+          <div className="dock-divider"></div>
+          <button
+            className="dock-item"
+            onClick={() => setShowCustomDevices(true)}
+            title="Manage Custom Devices"
+          >
+            <Plus size={20} strokeWidth={1.5} />
+            <span className="dock-tooltip">Custom Devices</span>
+          </button>
 
           <div className="dock-divider"></div>
 
@@ -843,6 +963,23 @@ function WebsiteViewer() {
           width={320}
         >
           <ZoomControls />
+        </DraggablePanel>
+      )}
+
+      {/* Custom Device Manager */}
+      {showCustomDevices && !state.viewport.isFullView && (
+        <DraggablePanel
+          title="Custom Devices"
+          onClose={() => setShowCustomDevices(false)}
+          initialPosition={{ x: window.innerWidth / 2 - 200, y: 100 }}
+          width={400}
+          height={600}
+        >
+          <CustomDeviceManager
+            onDeviceSelect={handleCustomDeviceSelect}
+            onClose={() => setShowCustomDevices(false)}
+            onDevicesChange={(devices) => setCustomDevices(devices)}
+          />
         </DraggablePanel>
       )}
 

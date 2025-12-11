@@ -1,6 +1,6 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { X, Moon, Sun, Monitor, Download, Palette, Trash2 } from 'lucide-react';
+import { X, Monitor, Download, Palette, Trash2 } from 'lucide-react';
 import { storage } from '../utils/storage';
 import './SettingsPanel.css';
 

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useApp } from '../context/AppContext';
 import { X, Copy, Eye, EyeOff } from 'lucide-react';
 import './ElementInspector.css';
@@ -66,13 +66,15 @@ export default function ElementInspector() {
       setElementInfo(info);
 
       // Highlight element
-      if (highlighted) {
+      if (highlighted && element instanceof HTMLElement) {
         const originalOutline = element.style.outline;
         element.style.outline = '2px solid #646cff';
         element.style.outlineOffset = '2px';
 
         return () => {
-          element.style.outline = originalOutline;
+          if (element instanceof HTMLElement) {
+            element.style.outline = originalOutline;
+          }
         };
       }
     } catch (err) {

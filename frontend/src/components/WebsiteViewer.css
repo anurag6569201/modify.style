@@ -240,6 +240,22 @@
   box-shadow: 0 0 8px var(--accent-color);
 }
 
+.dock-item.custom-device {
+  position: relative;
+}
+
+.dock-item.custom-device::before {
+  content: '';
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  width: 6px;
+  height: 6px;
+  background: #27c93f;
+  border-radius: 50%;
+  border: 1px solid rgba(0, 0, 0, 0.3);
+}
+
 .dock-item:disabled {
   opacity: 0.4;
   cursor: not-allowed;
