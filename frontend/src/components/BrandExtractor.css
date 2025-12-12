@@ -149,6 +149,7 @@
   border-color: rgba(100, 108, 255, 0.5);
 }
 
+
 .color-checkbox {
   width: 18px;
   height: 18px;
@@ -199,6 +200,34 @@
   cursor: not-allowed;
 }
 
+.reset-colors-btn {
+  background: rgba(255, 100, 100, 0.1);
+  border: 1px solid rgba(255, 100, 100, 0.3);
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: rgba(255, 150, 150, 0.9);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.reset-colors-btn:hover:not(:disabled) {
+  background: rgba(255, 100, 100, 0.2);
+  border-color: rgba(255, 100, 100, 0.5);
+  color: rgba(255, 200, 200, 1);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(255, 100, 100, 0.2);
+}
+
+.reset-colors-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
 .color-swatch {
   width: 40px;
   height: 40px;
@@ -211,6 +240,33 @@
 
 .color-swatch:hover {
   transform: scale(1.05);
+}
+
+.color-swatch {
+  position: relative;
+}
+
+.color-picker-input {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  border: none;
+  padding: 0;
+  margin: 0;
+  z-index: 10;
+}
+
+.color-swatch {
+  cursor: pointer;
+}
+
+.color-swatch:hover {
+  transform: scale(1.05);
+  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.3);
 }
 
 .copy-indicator {
@@ -244,6 +300,29 @@
 .color-count {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.5);
+}
+
+.color-copy-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+}
+
+.color-copy-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+  transform: scale(1.1);
 }
 
 

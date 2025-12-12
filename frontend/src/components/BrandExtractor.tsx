@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle } from 'lucide-react';
+import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle, RotateCcw } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { getRandomPalette, mapColorsToPalette, applyColorReplacementsToDOM } from '../utils/colorPalettes';
+import { mapColorsToPalette, applyColorReplacementsToDOM } from '../utils/colorPalettes';
 import './BrandExtractor.css';
 
 interface ColorInfo {
@@ -61,7 +61,10 @@ export default function BrandExtractor() {
   const [isExtracting, setIsExtracting] = useState(false);
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
   const [selectedColors, setSelectedColors] = useState<Set<string>>(new Set());
+  const [selectedColorIndices, setSelectedColorIndices] = useState<Set<number>>(new Set()); // Track by index
   const [isRandomizing, setIsRandomizing] = useState(false);
+  const [editedColors, setEditedColors] = useState<Record<string, string>>({});
+  const [originalColors, setOriginalColors] = useState<ColorInfo[]>([]);
 
   // Convert hex/rgb to hex format
   const normalizeColor = (color: string): string | null => {
@@ -300,7 +303,30 @@ export default function BrandExtractor() {
           .sort((a, b) => b.count - a.count)
           .slice(0, 8);
 
+        // Store original colors first (deep copy to avoid reference issues)
+        const originalColorsCopy = colorArray.map(c => ({
+          color: c.color,
+          count: c.count,
+          usage: [...c.usage],
+        }));
+        setOriginalColors(originalColorsCopy);
+        
+        // Clear selections when re-extracting
+        setSelectedColors(new Set());
+        setSelectedColorIndices(new Set());
+        
+        // Set current colors - if there are existing mappings, apply them
+        const existingMapping = state.editor.colorMapping || {};
+        if (Object.keys(existingMapping).length === 0) {
         setColors(colorArray);
+        } else {
+          // Apply existing mappings to maintain state
+          const mappedColors = colorArray.map(colorInfo => {
+            const mapped = existingMapping[colorInfo.color];
+            return mapped ? { ...colorInfo, color: mapped } : colorInfo;
+          });
+          setColors(mappedColors);
+        }
         setFonts(fontArray);
         setSpacing(spacingArray);
         setBorderRadius(borderRadiusArray);
@@ -335,24 +361,31 @@ export default function BrandExtractor() {
   };
 
   // Toggle color selection
-  const toggleColorSelection = (color: string) => {
+  const toggleColorSelection = (color: string, index: number) => {
     const newSelected = new Set(selectedColors);
+    const newSelectedIndices = new Set(selectedColorIndices);
+    
     if (newSelected.has(color)) {
       newSelected.delete(color);
+      newSelectedIndices.delete(index);
     } else {
       newSelected.add(color);
+      newSelectedIndices.add(index);
     }
     setSelectedColors(newSelected);
+    setSelectedColorIndices(newSelectedIndices);
   };
 
   // Select all colors
   const selectAllColors = () => {
     setSelectedColors(new Set(colors.map(c => c.color)));
+    setSelectedColorIndices(new Set(colors.map((_, index) => index)));
   };
 
   // Deselect all colors
   const deselectAllColors = () => {
     setSelectedColors(new Set());
+    setSelectedColorIndices(new Set());
   };
 
   // Randomize selected colors
@@ -362,23 +395,129 @@ export default function BrandExtractor() {
       return;
     }
 
+    if (colors.length === 0) {
+      alert('No colors extracted yet. Please extract colors first.');
+      return;
+    }
+
     setIsRandomizing(true);
     try {
-      // Get a random palette
-      const randomPalette = await getRandomPalette();
+      // Get selected colors by index (more reliable than by color value)
+      const selectedIndices = Array.from(selectedColorIndices);
+      const selectedColorsArray = selectedIndices.map(idx => colors[idx]?.color).filter(Boolean) as string[];
       
-      // Map selected colors to new palette colors
-      const selectedColorsArray = Array.from(selectedColors);
+      if (selectedColorsArray.length === 0) {
+        throw new Error('No colors selected');
+      }
+      
+      // Generate truly random colors using hex string concatenation method
+      // This ensures no repeating patterns
+      const numSelected = selectedColorsArray.length;
+      
+      // Generate a random hex string: 6 characters per color
+      // Example: for 3 colors, generate 18 random hex characters
+      const hexChars = '0123456789abcdef';
+      let randomHexString = '';
+      
+      for (let i = 0; i < numSelected * 6; i++) {
+        randomHexString += hexChars[Math.floor(Math.random() * hexChars.length)];
+      }
+      
+      // Break the string into 6-character chunks to create new colors
+      const randomPalette: string[] = [];
+      for (let i = 0; i < numSelected; i++) {
+        const startIndex = i * 6;
+        const hexChunk = randomHexString.substring(startIndex, startIndex + 6);
+        randomPalette.push(`#${hexChunk}`);
+      }
+      
+      // Map from currently displayed colors to new random palette
+      // Each selected color will get a unique random color
       const colorMapping = mapColorsToPalette(selectedColorsArray, randomPalette);
       
-      // Merge with existing color mapping to preserve previous randomizations
+      if (Object.keys(colorMapping).length === 0) {
+        throw new Error('Failed to map colors');
+      }
+      
+      // Build the full mapping from original colors to new colors
+      // We need to trace back: current color -> original color -> new color
       const existingMapping = state.editor.colorMapping || {};
-      const mergedMapping = { ...existingMapping, ...colorMapping };
+      const fullMapping: Record<string, string> = {};
+      
+      // For each selected color (currently displayed), find its original and map to new color
+      selectedColorsArray.forEach((currentColor, idx) => {
+        const colorIndex = selectedIndices[idx];
+        if (colorIndex === undefined) return;
+        
+        // Find the original color for this current color
+        let originalColor = currentColor;
+        
+        // Check if this current color is already mapped (was randomized/edited before)
+        // Reverse lookup: find which original color maps to this current color
+        if (originalColors.length > 0 && originalColors[colorIndex]) {
+          originalColor = originalColors[colorIndex].color;
+        } else {
+          // Fallback: find by matching
+          const foundOriginal = originalColors.find(orig => {
+            const mapped = existingMapping[orig.color];
+            return mapped === currentColor || (!mapped && orig.color === currentColor);
+          });
+          if (foundOriginal) {
+            originalColor = foundOriginal.color;
+          }
+        }
+        
+        // Map the original color to the new random color
+        const newColor = colorMapping[currentColor];
+        if (newColor) {
+          fullMapping[originalColor] = newColor;
+        }
+      });
+      
+      // Merge with existing mapping (for non-selected colors, keep their existing mappings)
+      const mergedMapping = { ...existingMapping };
+      // Update only the selected colors' mappings
+      Object.entries(fullMapping).forEach(([orig, newCol]) => {
+        mergedMapping[orig] = newCol;
+      });
+      
+      // Update the colors array to show the new randomized colors (replace in place)
+      const updatedColors = colors.map((colorInfo, index) => {
+        // Check if this color was selected by index
+        if (selectedColorIndices.has(index)) {
+          const currentColor = colorInfo.color;
+          const newColor = colorMapping[currentColor];
+          if (newColor) {
+            return {
+              ...colorInfo,
+              color: newColor,
+            };
+          }
+        }
+        // Keep unchanged colors as they are
+        return colorInfo;
+      });
+      setColors(updatedColors);
+      
+      // Update selected colors set with new color values
+      const newSelectedColors = new Set<string>();
+      selectedColorIndices.forEach(index => {
+        const updatedColor = updatedColors[index]?.color;
+        if (updatedColor) {
+          newSelectedColors.add(updatedColor);
+        }
+      });
+      setSelectedColors(newSelectedColors);
+      
+      // Update editedColors to include randomized colors (use full mapping)
+      const updatedEditedColors = { ...editedColors, ...fullMapping };
+      setEditedColors(updatedEditedColors);
       
       // Store the mapping in state (this will trigger WebsiteViewer's useEffect)
       setColorMapping(mergedMapping);
       
       // Apply to iframe immediately for instant feedback
+      setTimeout(() => {
       const iframe = document.querySelector('iframe') as HTMLIFrameElement;
       if (iframe) {
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
@@ -388,13 +527,129 @@ export default function BrandExtractor() {
           applyColorReplacementsToDOM(iframeDoc, mergedMapping);
         }
       }
+      }, 100);
     } catch (error) {
       console.error('Error randomizing colors:', error);
       alert('Failed to randomize colors. Please try again.');
     } finally {
       setIsRandomizing(false);
     }
-  }, [selectedColors, setColorMapping, state.editor.colorMapping]);
+  }, [selectedColors, colors, originalColors, setColorMapping, state.editor.colorMapping, editedColors]);
+
+  // Handle color editing
+  const handleColorEdit = useCallback((originalColor: string, newColor: string) => {
+    // Normalize the new color
+    const normalized = normalizeColor(newColor);
+    if (!normalized) {
+      return;
+    }
+
+    // Update edited colors mapping
+    const updatedEditedColors = {
+      ...editedColors,
+      [originalColor]: normalized,
+    };
+    setEditedColors(updatedEditedColors);
+
+    // Update the colors array to show the new color
+    const updatedColors = colors.map(colorInfo => {
+      if (colorInfo.color === originalColor) {
+        return {
+          ...colorInfo,
+          color: normalized,
+        };
+      }
+      return colorInfo;
+    });
+    setColors(updatedColors);
+
+    // Create color mapping for this single color
+    const colorMapping: Record<string, string> = {
+      [originalColor]: normalized,
+    };
+
+    // Merge with existing color mapping
+    const existingMapping = state.editor.colorMapping || {};
+    const mergedMapping = { ...existingMapping, ...colorMapping };
+
+    // Store the mapping in state
+    setColorMapping(mergedMapping);
+
+    // Apply to iframe immediately
+    setTimeout(() => {
+      const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+      if (iframe) {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc) {
+          applyColorReplacementsToDOM(iframeDoc, mergedMapping);
+        }
+      }
+    }, 50);
+  }, [editedColors, setColorMapping, state.editor.colorMapping, colors]);
+
+
+  // Reset colors to default
+  const resetColors = useCallback(() => {
+    if (!state.editor.colorMapping || Object.keys(state.editor.colorMapping).length === 0) {
+      return; // Nothing to reset
+    }
+
+    // Clear the color mapping and edited colors - this will trigger WebsiteViewer to reload
+    setColorMapping(null);
+    setEditedColors({});
+    
+    // Clear selected colors and indices
+    setSelectedColors(new Set());
+    setSelectedColorIndices(new Set());
+    
+    // Restore original colors in the palette display (create a fresh deep copy)
+    // IMPORTANT: Replace the entire array, don't add to it
+    if (originalColors.length > 0) {
+      const restoredColors = originalColors.map(c => ({
+        color: c.color,
+        count: c.count,
+        usage: [...c.usage],
+      }));
+      // Directly set - React will handle the update properly
+      setColors(restoredColors);
+    }
+    
+    // Force reload the iframe to restore original colors
+    // The WebsiteViewer useEffect will handle the reload when colorMapping becomes null
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (iframe && state.view.htmlContent) {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        // Remove all inline style modifications that might have been added
+        const allElements = iframeDoc.querySelectorAll('*');
+        allElements.forEach((element) => {
+          const htmlElement = element as HTMLElement;
+          if (htmlElement.style) {
+            // Remove important styles that were added for color replacement
+            const styleProps = [
+              'color', 'background-color', 'border-color', 'border-top-color',
+              'border-right-color', 'border-bottom-color', 'border-left-color',
+              'outline-color', 'text-decoration-color', 'column-rule-color',
+              'box-shadow', 'text-shadow', 'fill', 'stroke'
+            ];
+            styleProps.forEach(prop => {
+              if (htmlElement.style.getPropertyPriority(prop) === 'important') {
+                htmlElement.style.removeProperty(prop);
+              }
+            });
+          }
+        });
+        
+        // Reload the iframe content to fully restore original colors
+        const proxyBase = window.location.origin;
+        const processedHtml = state.view.htmlContent.replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
+        
+        iframeDoc.open();
+        iframeDoc.write(processedHtml);
+        iframeDoc.close();
+      }
+    }
+  }, [setColorMapping, state.editor.colorMapping, state.view.htmlContent, originalColors]);
 
   return (
     <div className="brand-extractor">
@@ -461,45 +716,81 @@ export default function BrandExtractor() {
               <button
                 className="randomize-colors-btn"
                 onClick={randomizeSelectedColors}
-                disabled={selectedColors.size === 0 || isRandomizing}
+                disabled={selectedColors.size === 0 || isRandomizing || colors.length === 0}
                 title={selectedColors.size === 0 ? 'Select colors to randomize' : 'Randomize selected colors'}
               >
                 <Shuffle size={14} />
-                {isRandomizing ? 'Randomizing...' : 'Randomize'}
+              </button>
+              <button
+                className="reset-colors-btn"
+                onClick={resetColors}
+                disabled={!state.editor.colorMapping || Object.keys(state.editor.colorMapping).length === 0}
+                title="Reset to original colors"
+              >
+                <RotateCcw size={14} />
+                
               </button>
             </div>
           </div>
           <div className="colors-grid">
-            {colors.map((colorInfo) => {
-              const isSelected = selectedColors.has(colorInfo.color);
+            {colors.map((colorInfo, index) => {
+              const isSelected = selectedColors.has(colorInfo.color) || selectedColorIndices.has(index);
+              const editedColor = editedColors[colorInfo.color] || colorInfo.color;
+              const displayColor = editedColor;
+              
               return (
                 <div 
-                  key={colorInfo.color} 
+                  key={`${colorInfo.color}-${index}`} 
                   className={`color-item ${isSelected ? 'selected' : ''}`}
                 >
                   <input
                     type="checkbox"
                     className="color-checkbox"
                     checked={isSelected}
-                    onChange={() => toggleColorSelection(colorInfo.color)}
+                    onChange={() => toggleColorSelection(colorInfo.color, index)}
                     onClick={(e) => e.stopPropagation()}
                   />
                   <div
                     className="color-swatch"
-                    style={{ backgroundColor: colorInfo.color }}
-                    onClick={() => copyToClipboard(colorInfo.color)}
-                    title={`Click to copy: ${colorInfo.color}`}
+                    style={{ backgroundColor: displayColor }}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      // Directly open color picker - no edit mode needed
+                      const colorInput = document.querySelector(`input[type="color"][data-color="${colorInfo.color}"]`) as HTMLInputElement;
+                      if (colorInput) {
+                        colorInput.click();
+                      }
+                    }}
+                    title={`Click to edit color: ${displayColor}`}
                   >
                     {copiedItem === colorInfo.color && (
                       <div className="copy-indicator">
                         <Check size={12} />
                       </div>
                     )}
+                    <input
+                      type="color"
+                      className="color-picker-input"
+                      data-color={colorInfo.color}
+                      value={displayColor}
+                      onChange={(e) => handleColorEdit(colorInfo.color, e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                    />
                   </div>
                   <div className="color-info">
-                    <div className="color-value">{colorInfo.color}</div>
+                    <div className="color-value">{displayColor}</div>
                     <div className="color-count">{colorInfo.count} uses</div>
                   </div>
+                  <button
+                    className="color-copy-btn"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      copyToClipboard(displayColor);
+                    }}
+                    title="Copy color value"
+                  >
+                    {copiedItem === colorInfo.color ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
                 </div>
               );
             })}
