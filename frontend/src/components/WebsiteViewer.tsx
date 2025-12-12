@@ -16,7 +16,11 @@ import {
   Move,
   Settings,
   Eye,
-  Plus
+  Plus,
+  Layout,
+  Sparkles,
+  Settings2,
+  Palette
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { storage } from '../utils/storage';
@@ -28,6 +32,11 @@ import SettingsPanel from './SettingsPanel';
 import ZoomControls from './ZoomControls';
 import RecentUrls from './RecentUrls';
 import CustomDeviceManager from './CustomDeviceManager';
+import CollapsibleLeftPanel, { PANEL_WIDTH, ICON_MENU_WIDTH, type PanelType } from './CollapsibleLeftPanel';
+import DesignPanel from './DesignPanel';
+import EffectsPanel from './EffectsPanel';
+import BrandExtractor from './BrandExtractor';
+import { PREDEFINED_EFFECTS } from './EffectsPanel';
 import './WebsiteViewer.css';
 import './SpaceIndicator.css';
 
@@ -55,17 +64,20 @@ const DEFAULT_DEVICES: Record<string, DeviceConfig> = {
 };
 
 function WebsiteViewer() {
-  const { state, dispatch, setUrl, toggleCssEditor, toggleInspector, toggleSettings, setZoomLevel, resetViewport } = useApp();
-  
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { state, dispatch, setUrl, toggleCssEditor, toggleInspector, toggleSettings, setZoomLevel, resetViewport, toggleEffect, setTypographyCss } = useApp();
+
   // Local state for pan/drag - minimal state updates
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  const [panPosition, setPanPosition] = useState({ x: 0, y: 0 });
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [_panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showRecentUrls, setShowRecentUrls] = useState(false);
   const [showCustomDevices, setShowCustomDevices] = useState(false);
   const [customDevices, setCustomDevices] = useState<CustomDevice[]>([]);
   const [currentDeviceMode, setCurrentDeviceMode] = useState<string>('desktop');
   const [currentCustomDevice, setCurrentCustomDevice] = useState<CustomDevice | null>(null);
+  const [activePanel, setActivePanel] = useState<PanelType>('design');
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
@@ -84,35 +96,13 @@ function WebsiteViewer() {
     }
   }, [state.viewport.deviceMode]);
 
-  // Helper to get device config for rendering
-  const getDeviceConfig = (mode: string): DeviceConfig | null => {
-    if (mode.startsWith('custom-')) {
-      const customId = mode.replace('custom-', '');
-      const custom = customDevices.find(d => d.id === customId);
-      if (custom) {
-        const iconMap: Record<string, typeof Smartphone> = {
-          mobile: Smartphone,
-          tablet: Tablet,
-          laptop: Laptop,
-        };
-        return {
-          icon: iconMap[custom.type] || Smartphone,
-          label: custom.name,
-          width: `${custom.width}px`,
-          height: `${custom.height}px`,
-          isCustom: true,
-          customId: custom.id,
-        };
-      }
-    }
-    return DEFAULT_DEVICES[mode] || null;
-  };
+
 
   const handleCustomDeviceSelect = (device: CustomDevice) => {
     setCurrentCustomDevice(device);
     setCurrentDeviceMode(`custom-${device.id}`);
-    dispatch({ 
-      type: 'SET_DEVICE_MODE', 
+    dispatch({
+      type: 'SET_DEVICE_MODE',
       payload: device.type as any // Use the type for frame styling
     });
     resetViewport();
@@ -122,7 +112,7 @@ function WebsiteViewer() {
 
   const handleDeviceModeChange = (mode: string) => {
     setCurrentDeviceMode(mode);
-    
+
     if (mode.startsWith('custom-')) {
       const customId = mode.replace('custom-', '');
       const custom = customDevices.find(d => d.id === customId);
@@ -134,17 +124,17 @@ function WebsiteViewer() {
       setCurrentCustomDevice(null);
       dispatch({ type: 'SET_DEVICE_MODE', payload: mode as any });
     }
-    
+
     resetViewport();
     setPanPosition({ x: 0, y: 0 });
   };
-  
+
   // Use refs exclusively for smooth performance - no state updates during interaction
   const panPositionRef = useRef({ x: 0, y: 0 });
   const zoomLevelRef = useRef(1);
   const isInteractingRef = useRef(false);
   const rafIdRef = useRef<number | null>(null);
-  
+
   // Sync refs with state only when not interacting
   useEffect(() => {
     if (!isInteractingRef.current) {
@@ -152,9 +142,9 @@ function WebsiteViewer() {
       zoomLevelRef.current = state.viewport.zoomLevel;
     }
   }, [state.viewport.panPosition.x, state.viewport.panPosition.y, state.viewport.zoomLevel]);
-  
+
   // Update DOM transform efficiently (removed - using direct updates instead)
-  
+
   // Debounced state sync - only update React state when interaction ends or periodically
   const syncStateToReact = useCallback(() => {
     // Use setTimeout instead of RAF for state updates (less overhead)
@@ -162,23 +152,23 @@ function WebsiteViewer() {
     if (rafIdRef.current) {
       cancelAnimationFrame(rafIdRef.current);
     }
-    
+
     rafIdRef.current = requestAnimationFrame(() => {
       // Batch both updates together
-      dispatch({ 
-        type: 'SET_PAN_POSITION', 
-        payload: { ...panPositionRef.current } 
+      dispatch({
+        type: 'SET_PAN_POSITION',
+        payload: { ...panPositionRef.current }
       });
-      dispatch({ 
-        type: 'SET_ZOOM_LEVEL', 
-        payload: zoomLevelRef.current 
+      dispatch({
+        type: 'SET_ZOOM_LEVEL',
+        payload: zoomLevelRef.current
       });
       rafIdRef.current = null;
     });
   }, [dispatch]);
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const canvasRef = useRef<HTMLDivElement>(null);
+
 
   const fetchWithProxy = async (targetUrl: string, proxyIndex: number = 0): Promise<string> => {
     if (proxyIndex >= CORS_PROXIES.length) {
@@ -277,7 +267,7 @@ function WebsiteViewer() {
 
       dispatch({ type: 'SET_HTML_CONTENT', payload: processedHtml });
       dispatch({ type: 'SET_CURRENT_URL', payload: targetUrl });
-      
+
       // Save to recent URLs
       storage.saveRecentUrl(targetUrl);
       storage.saveSettings({ lastUrl: targetUrl });
@@ -292,16 +282,50 @@ function WebsiteViewer() {
   const injectCustomCss = useCallback((doc: Document) => {
     if (!doc) return;
 
+    // Remove existing custom CSS
     const existingStyle = doc.getElementById('custom-injected-css');
     if (existingStyle) existingStyle.remove();
 
+    // Remove existing effects CSS
+    const existingEffectsStyle = doc.getElementById('effects-injected-css');
+    if (existingEffectsStyle) existingEffectsStyle.remove();
+
+    // Combine custom CSS, typography CSS, and effects CSS
+    let combinedCss = '';
+
+    // Add typography CSS
+    if (state.editor.typographyCss.trim()) {
+      combinedCss += state.editor.typographyCss + '\n';
+    }
+
+    // Add custom CSS
     if (state.editor.customCss.trim()) {
+      combinedCss += state.editor.customCss + '\n';
+    }
+
+    // Add effects CSS
+    if (state.editor.activeEffects.length > 0) {
+      const effectsCss = state.editor.activeEffects
+        .map(effectId => {
+          const effect = PREDEFINED_EFFECTS.find(e => e.id === effectId);
+          return effect ? effect.css : '';
+        })
+        .filter(css => css.trim())
+        .join('\n');
+
+      if (effectsCss.trim()) {
+        combinedCss += '\n/* Effects CSS */\n' + effectsCss;
+      }
+    }
+
+    // Inject combined CSS
+    if (combinedCss.trim()) {
       const style = doc.createElement('style');
       style.id = 'custom-injected-css';
-      style.textContent = state.editor.customCss;
+      style.textContent = combinedCss;
       doc.head.appendChild(style);
     }
-  }, [state.editor.customCss]);
+  }, [state.editor.customCss, state.editor.activeEffects, state.editor.typographyCss]);
 
   useEffect(() => {
     if (state.view.htmlContent && iframeRef.current) {
@@ -354,7 +378,7 @@ function WebsiteViewer() {
 
     e.preventDefault();
     e.stopPropagation();
-    
+
     const container = canvasContainerRef.current;
     if (!container || !frameRef.current) return;
 
@@ -385,7 +409,7 @@ function WebsiteViewer() {
     const centerX = rect.width * 0.5;
     const centerY = rect.height * 0.5;
     const scaleChange = newZoom / currentZoom;
-    
+
     // Calculate new pan to keep point under cursor fixed
     const newPanX = mouseX - centerX - (mouseX - centerX - currentPan.x) * scaleChange;
     const newPanY = mouseY - centerY - (mouseY - centerY - currentPan.y) * scaleChange;
@@ -399,7 +423,7 @@ function WebsiteViewer() {
 
     // Throttled React state update (batched)
     syncStateToReact();
-    
+
     // Reset interaction flag after a delay
     setTimeout(() => {
       isInteractingRef.current = false;
@@ -409,14 +433,14 @@ function WebsiteViewer() {
   // Figma-like panning: Space + drag or middle mouse button (optimized)
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     const target = e.target as HTMLElement;
-    
+
     // Don't pan if clicking on buttons or interactive elements
     if (target.closest('button') || target.closest('a') || target.closest('input') || target.closest('textarea')) {
       return;
     }
 
     // Pan with Space + left click (Figma style)
-    const shouldPan = 
+    const shouldPan =
       state.viewport.isSpacePressed || // Space key pressed
       e.button === 1 || // Middle mouse button
       (e.button === 0 && state.viewport.isPanning) || // Pan mode active
@@ -431,7 +455,7 @@ function WebsiteViewer() {
       });
       e.preventDefault();
       e.stopPropagation();
-      
+
       if (canvasContainerRef.current) {
         canvasContainerRef.current.style.cursor = 'grabbing';
       }
@@ -442,14 +466,14 @@ function WebsiteViewer() {
     if (isDragging && frameRef.current) {
       e.preventDefault();
       e.stopPropagation();
-      
+
       // Direct calculation
       const newPanX = e.clientX - dragStart.x;
       const newPanY = e.clientY - dragStart.y;
-      
+
       // Update ref
       panPositionRef.current = { x: newPanX, y: newPanY };
-      
+
       // Direct DOM update - no spaces in transform string for better performance
       const zoom = zoomLevelRef.current;
       frameRef.current.style.transform = `translate3d(${newPanX}px,${newPanY}px,0) scale(${zoom})`;
@@ -459,10 +483,10 @@ function WebsiteViewer() {
   const handleMouseUp = useCallback(() => {
     setIsDragging(false);
     isInteractingRef.current = false;
-    
+
     // Sync final position to React state
     syncStateToReact();
-    
+
     // Reset cursor
     if (canvasContainerRef.current) {
       if (state.viewport.isSpacePressed) {
@@ -520,17 +544,17 @@ function WebsiteViewer() {
       // Calculate new position
       const newPanX = e.clientX - dragStartRef.x;
       const newPanY = e.clientY - dragStartRef.y;
-      
+
       // Update ref immediately
       panPositionRef.current = { x: newPanX, y: newPanY };
-      
+
       // CRITICAL: Direct DOM update with NO delays - this is what makes it smooth
       if (frameRef.current) {
         const zoom = zoomLevelRef.current;
         // Use transform property directly - fastest possible update
         frameRef.current.style.transform = `translate3d(${newPanX}px,${newPanY}px,0) scale(${zoom})`;
       }
-      
+
       // Debounce React state sync (only update every 200ms to avoid re-renders during drag)
       // This prevents React re-renders from blocking smooth panning
       if (stateSyncTimeout) {
@@ -548,13 +572,13 @@ function WebsiteViewer() {
         clearTimeout(stateSyncTimeout);
         stateSyncTimeout = null;
       }
-      
+
       // Final state sync
       syncStateToReact();
-      
+
       setIsDragging(false);
       isInteractingRef.current = false;
-      
+
       if (canvasContainerRef.current) {
         if (state.viewport.isSpacePressed) {
           canvasContainerRef.current.style.cursor = 'grab';
@@ -614,6 +638,51 @@ function WebsiteViewer() {
 
   return (
     <div className={`website-viewer ${state.viewport.isFullView ? 'full-view-mode' : ''}`}>
+      {/* Collapsible Left Panel with Design Tools */}
+      {!state.viewport.isFullView && (
+        <CollapsibleLeftPanel
+          defaultPanel="design"
+          onPanelChange={setActivePanel}
+          panels={[
+            {
+              id: 'design',
+              icon: <Layout size={20} />,
+              label: 'Design',
+              component: (
+                <DesignPanel
+                  activeEffects={state.editor.activeEffects}
+                  onToggleEffect={toggleEffect}
+                  onTypographyChange={setTypographyCss}
+                />
+              ),
+            },
+            {
+              id: 'effects',
+              icon: <Sparkles size={20} />,
+              label: 'Effects',
+              component: (
+                <EffectsPanel
+                  activeEffects={state.editor.activeEffects}
+                  onToggleEffect={toggleEffect}
+                />
+              ),
+            },
+            {
+              id: 'brand',
+              icon: <Palette size={20} />,
+              label: 'Brand',
+              component: <BrandExtractor />,
+            },
+            {
+              id: 'settings',
+              icon: <Settings2 size={20} />,
+              label: 'Settings',
+              component: <SettingsPanel />,
+            },
+          ]}
+        />
+      )}
+
       {/* Animated Background */}
       {!state.viewport.isFullView && (
         <div className="ambient-background">
@@ -653,7 +722,7 @@ function WebsiteViewer() {
                     setShowRecentUrls(true);
                   }
                 }}
-                onBlur={(e) => {
+                onBlur={() => {
                   // Delay to allow click on recent URLs
                   setTimeout(() => setShowRecentUrls(false), 200);
                 }}
@@ -687,9 +756,9 @@ function WebsiteViewer() {
       )}
 
       {/* Main Canvas Area */}
-      <div 
+      <div
         ref={canvasContainerRef}
-        className={`viewer-canvas ${state.viewport.isFullView ? 'full-view' : ''}`}
+        className={`viewer-canvas ${state.viewport.isFullView ? 'full-view' : ''} ${activePanel ? 'panel-open' : 'panel-closed'}`}
         onWheel={handleWheel}
         onMouseDown={handleMouseDown}
         onMouseMove={handleMouseMove}
@@ -702,12 +771,13 @@ function WebsiteViewer() {
           }
         }}
         style={{
-          cursor: isDragging 
-            ? 'grabbing' 
-            : state.viewport.isSpacePressed 
-              ? 'grab' 
+          cursor: isDragging
+            ? 'grabbing'
+            : state.viewport.isSpacePressed
+              ? 'grab'
               : 'default',
-          userSelect: isDragging ? 'none' : 'auto'
+          userSelect: isDragging ? 'none' : 'auto',
+          paddingLeft: state.viewport.isFullView ? 0 : (activePanel ? `${PANEL_WIDTH + ICON_MENU_WIDTH + 16}px` : `${ICON_MENU_WIDTH + 16}px`),
         }}
       >
         {state.view.error ? (
@@ -726,20 +796,20 @@ function WebsiteViewer() {
             ref={frameRef}
             className={`frame-wrapper ${currentCustomDevice ? currentCustomDevice.type : state.viewport.deviceMode} ${state.viewport.isFullView ? 'full-view-frame' : ''}`}
             style={{
-              width: state.viewport.isFullView 
-                ? '100%' 
-                : (currentCustomDevice 
-                  ? `${currentCustomDevice.width}px` 
+              width: state.viewport.isFullView
+                ? '100%'
+                : (currentCustomDevice
+                  ? `${currentCustomDevice.width}px`
                   : (DEFAULT_DEVICES[state.viewport.deviceMode]?.width || '100%')),
-              height: state.viewport.isFullView 
-                ? '100%' 
-                : (state.viewport.deviceMode === 'desktop' 
-                  ? '100%' 
-                  : (currentCustomDevice 
-                    ? `${currentCustomDevice.height}px` 
+              height: state.viewport.isFullView
+                ? '100%'
+                : (state.viewport.deviceMode === 'desktop'
+                  ? '100%'
+                  : (currentCustomDevice
+                    ? `${currentCustomDevice.height}px`
                     : (DEFAULT_DEVICES[state.viewport.deviceMode]?.height || '100%'))),
               // Use refs during interaction, state when idle
-              transform: isDragging 
+              transform: isDragging
                 ? `translate3d(${panPositionRef.current.x}px, ${panPositionRef.current.y}px, 0) scale(${zoomLevelRef.current})`
                 : `translate3d(${state.viewport.panPosition.x}px, ${state.viewport.panPosition.y}px, 0) scale(${state.viewport.zoomLevel})`,
               transformOrigin: 'center center',
@@ -797,7 +867,7 @@ function WebsiteViewer() {
             };
             const Icon = iconMap[custom.type] || Smartphone;
             const modeKey = `custom-${custom.id}`;
-            
+
             return (
               <button
                 key={modeKey}

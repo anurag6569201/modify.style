@@ -1,4 +1,5 @@
-import React, { createContext, useContext, useReducer, useCallback, ReactNode, useEffect } from 'react';
+import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
+import type { ReactNode } from 'react';
 import { storage } from '../utils/storage';
 
 // Types
@@ -18,6 +19,8 @@ export interface EditorState {
   showInspector: boolean;
   showSettings: boolean;
   selectedElement: string | null;
+  activeEffects: string[];
+  typographyCss: string;
 }
 
 export interface ViewportState {
@@ -73,7 +76,10 @@ type AppAction =
   | { type: 'ADD_TAB' }
   | { type: 'CLOSE_TAB'; payload: number }
   | { type: 'SET_ACTIVE_TAB'; payload: number }
-  | { type: 'RESET_STATE' };
+  | { type: 'RESET_STATE' }
+  | { type: 'TOGGLE_EFFECT'; payload: string }
+  | { type: 'CLEAR_ALL_EFFECTS' }
+  | { type: 'SET_TYPOGRAPHY_CSS'; payload: string };
 
 // Load initial state from localStorage
 const loadInitialState = (): AppState => {
@@ -96,6 +102,8 @@ const loadInitialState = (): AppState => {
       showInspector: savedEditor.showInspector || false,
       showSettings: false,
       selectedElement: null,
+      activeEffects: savedEditor.activeEffects || [],
+      typographyCss: savedEditor.typographyCss || '',
     },
     viewport: {
       deviceMode: savedViewport.deviceMode || 'desktop',
@@ -304,6 +312,35 @@ function appReducer(state: AppState, action: AppAction): AppState {
       };
     case 'RESET_STATE':
       return initialState;
+    case 'TOGGLE_EFFECT':
+      const effectId = action.payload;
+      const currentEffects = state.editor.activeEffects;
+      const newEffects = currentEffects.includes(effectId)
+        ? currentEffects.filter(id => id !== effectId)
+        : [...currentEffects, effectId];
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          activeEffects: newEffects,
+        },
+      };
+    case 'CLEAR_ALL_EFFECTS':
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          activeEffects: [],
+        },
+      };
+    case 'SET_TYPOGRAPHY_CSS':
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          typographyCss: action.payload,
+        },
+      };
     default:
       return state;
   }
@@ -326,6 +363,9 @@ interface AppContextType {
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
+  toggleEffect: (effectId: string) => void;
+  clearAllEffects: () => void;
+  setTypographyCss: (css: string) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -364,7 +404,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         showCssEditor: state.editor.showCssEditor,
         showInspector: state.editor.showInspector,
       });
-      
+
       // Also save CSS separately for quick access
       if (state.editor.customCss) {
         storage.saveCustomCss(state.editor.customCss);
@@ -372,7 +412,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }, 1000); // Debounce CSS saves to avoid excessive writes
 
     return () => clearTimeout(timeoutId);
-  }, [state.editor.customCss, state.editor.showCssEditor, state.editor.showInspector]);
+  }, [state.editor.customCss, state.editor.showCssEditor, state.editor.showInspector, state.editor.activeEffects, state.editor.typographyCss]);
 
   // Save current URL when it changes
   useEffect(() => {
@@ -424,6 +464,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'REDO' });
   }, []);
 
+  const toggleEffect = useCallback((effectId: string) => {
+    dispatch({ type: 'TOGGLE_EFFECT', payload: effectId });
+  }, []);
+
+  const clearAllEffects = useCallback(() => {
+    dispatch({ type: 'CLEAR_ALL_EFFECTS' });
+  }, []);
+
+  const setTypographyCss = useCallback((css: string) => {
+    dispatch({ type: 'SET_TYPOGRAPHY_CSS', payload: css });
+  }, []);
+
   const value: AppContextType = {
     state,
     dispatch,
@@ -439,6 +491,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
     redo,
     canUndo: state.history.past.length > 0,
     canRedo: state.history.future.length > 0,
+    toggleEffect,
+    clearAllEffects,
+    setTypographyCss,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

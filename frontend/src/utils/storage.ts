@@ -22,6 +22,8 @@ export interface EditorState {
   showCssEditor: boolean;
   showInspector: boolean;
   showSettings: boolean;
+  activeEffects?: string[];
+  typographyCss?: string;
 }
 
 export interface AppSettings {
@@ -179,4 +181,4 @@ export const storage = {
 };
 
 // Re-export types for easier importing
-export type { CustomDevice };
+

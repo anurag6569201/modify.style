@@ -1,0 +1,44 @@
+1. The "Smart" Inspector (The Hook)
+Don't just show div or span. Make the tool understand the context.
+"Brand Extractor": When the URL loads, automatically scan the site and generate a Color Palette and Font List on the sidebar.
+Why: It allows the user to say "Swap ALL 'Dark Blue' with 'Neon Green' instantly," rather than editing buttons one by one.
+"Similar Item" Selection: If I click a menu item, give me a button that says "Select all menu items." (Matches by class name automatically).
+
+
+2. The Content & Asset Swapper (The Realism)
+Clients don't just care about colors; they care about content.
+Image Replacer: Let me double-click an image on the live site and upload a new one from my computer (host it temporarily on your server).
+"AI Copywriter" Context Menu: Right-click a headline -> "Rewrite this to be punchier" (using OpenAI API).
+Use Case: Changing "Welcome to our site" to "Explode Your Sales Today" instantly.
+
+
+3. The "Tailwind-ify" Button (The Dev Handoff)
+Developers hate "messy" generated CSS.
+Feature: When I change a margin or color, don't just give me the raw CSS. Give me a toggle to see the Tailwind Class (e.g., mt-4 text-blue-500).
+Value: This makes the tool useful for developers who want to prototype visually but code in Tailwind.
+
+
+4. The "Shareable Preview" (The Money Maker)
+This is how you go viral.
+Feature: A "Publish" button.
+Action: It saves the CSS diffs to your database and generates a unique link: try.getsva.com/preview/nike-redesign-v2.
+Experience: When the client opens that link, they see the live Nike site with your changes applied, but they don't see the editor toolbar. They just see the new design.
+Comments: Allow the client to click anywhere and leave a comment like "Make this logo bigger."
+
+
+5. Mobile & Responsive Simulator
+Feature: Don't just resize the iframe.
+Action: A bar at the top with "iPhone 14," "iPad," and "Desktop" icons.
+Logic: When clicked, resize the iframe and rotate the user agent so the site actually switches to its mobile layout (hamburger menu appears).
+
+
+6. The "Chaos Mode" (A/B Testing Simulator)
+Feature: A "Compare" slider.
+Action: A vertical bar in the middle of the screen. Left side is the Original Website, Right side is Your Redesign.
+Why: It is the most powerful way to sell a redesign. "Look how boring your old site is vs. my new version."
+
+
+7. Global Theming (The "One-Click" Magic)
+Feature: Pre-built "Vibes."
+Action: One click on "Dark Mode," "Minimalist," or "Brutalist."
+Logic: Your engine attempts to invert the background colors and lighten the text colors automatically using CSS filters or logic.

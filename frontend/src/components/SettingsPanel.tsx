@@ -1,13 +1,13 @@
 import React from 'react';
 import { useApp } from '../context/AppContext';
-import { X, Monitor, Download, Palette, Trash2 } from 'lucide-react';
+import { Monitor, Download, Palette, Trash2, Grid, Type, Save } from 'lucide-react';
 import { storage } from '../utils/storage';
 import './SettingsPanel.css';
 
 export default function SettingsPanel() {
   const { state, dispatch } = useApp();
   const savedSettings = storage.getSettings();
-  
+
   const [theme, setTheme] = React.useState<'light' | 'dark' | 'auto'>(savedSettings.theme || 'dark');
   const [autoSave, setAutoSave] = React.useState(savedSettings.autoSave !== undefined ? savedSettings.autoSave : true);
   const [showGrid, setShowGrid] = React.useState(savedSettings.showGrid !== undefined ? savedSettings.showGrid : true);
@@ -20,7 +20,7 @@ export default function SettingsPanel() {
       deviceMode: state.viewport.deviceMode,
       timestamp: new Date().toISOString(),
     };
-    
+
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -84,30 +84,26 @@ export default function SettingsPanel() {
     }
   };
 
-  if (!state.editor.showSettings) return null;
+  // Although SettingsPanel is rendered inside CollapsibleLeftPanel now, 
+  // we might want to keep the container layout clean.
+  // We don't need the header close button if it's in the sidebar, 
+  // but if it's standalone, we do. 
+  // Based on WebsiteViewer.tsx, it's rendered as a component prop to CollapsibleLeftPanel.
+  // The CollapsibleLeftPanel handles title and close. 
+  // So we should remove the header from here to avoid double headers.
 
   return (
     <div className="settings-panel">
-      <div className="settings-header">
-        <div className="settings-title">
-          <Palette size={18} />
-          <span>Settings</span>
-        </div>
-        <button
-          className="settings-close-btn"
-          onClick={() => dispatch({ type: 'TOGGLE_SETTINGS' })}
-        >
-          <X size={18} />
-        </button>
-      </div>
-
+      {/* Content */}
       <div className="settings-content">
+
+        {/* Appearance Section */}
         <div className="settings-section">
           <h3 className="section-heading">Appearance</h3>
-          
+
           <div className="setting-item">
             <label className="setting-label">
-              <Monitor size={16} />
+              <Monitor size={14} />
               <span>Theme</span>
             </label>
             <div className="setting-control">
@@ -125,7 +121,8 @@ export default function SettingsPanel() {
 
           <div className="setting-item">
             <label className="setting-label">
-              <span>Show Grid Background</span>
+              <Grid size={14} />
+              <span>Grid Background</span>
             </label>
             <div className="setting-control">
               <label className="toggle-switch">
@@ -140,12 +137,14 @@ export default function SettingsPanel() {
           </div>
         </div>
 
+        {/* Editor Section */}
         <div className="settings-section">
           <h3 className="section-heading">Editor</h3>
-          
+
           <div className="setting-item">
             <label className="setting-label">
-              <span>Auto-save Changes</span>
+              <Save size={14} />
+              <span>Auto-save</span>
             </label>
             <div className="setting-control">
               <label className="toggle-switch">
@@ -161,11 +160,12 @@ export default function SettingsPanel() {
 
           <div className="setting-item">
             <label className="setting-label">
+              <Type size={14} />
               <span>Font Size</span>
             </label>
             <div className="setting-control">
-              <select 
-                className="setting-select" 
+              <select
+                className="setting-select"
                 value={fontSize}
                 onChange={(e) => handleFontSizeChange(Number(e.target.value))}
               >
@@ -178,28 +178,30 @@ export default function SettingsPanel() {
           </div>
         </div>
 
+        {/* Data Section */}
         <div className="settings-section">
-          <h3 className="section-heading">Data</h3>
-          
+          <h3 className="section-heading">Configuration</h3>
+
           <div className="setting-item">
             <label className="setting-label">
-              <Download size={16} />
-              <span>Export Configuration</span>
+              <Download size={14} />
+              <span>Export Config</span>
             </label>
             <div className="setting-control">
               <button className="setting-btn" onClick={handleExport}>
-                Export
+                Export JSON
               </button>
             </div>
           </div>
 
           <div className="setting-item">
             <label className="setting-label">
-              <span>Import Configuration</span>
+              <Palette size={14} />
+              <span>Import Config</span>
             </label>
             <div className="setting-control">
               <label className="setting-btn file-input-label">
-                Import
+                Import JSON
                 <input
                   type="file"
                   accept=".json"
@@ -211,30 +213,29 @@ export default function SettingsPanel() {
           </div>
         </div>
 
+        {/* Danger Zone */}
         <div className="settings-section">
-          <h3 className="section-heading">Data Management</h3>
-          
+          <h3 className="section-heading" style={{ color: 'rgba(239, 68, 68, 0.8)' }}>Danger Zone</h3>
+
           <div className="setting-item">
             <label className="setting-label">
-              <Trash2 size={16} />
-              <span>Clear All Data</span>
+              <Trash2 size={14} style={{ color: 'rgba(239, 68, 68, 0.8)' }} />
+              <span style={{ color: 'rgba(239, 68, 68, 0.8)' }}>Clear All Data</span>
             </label>
             <div className="setting-control">
               <button className="setting-btn danger" onClick={handleClearStorage}>
-                Clear All
+                Reset App
               </button>
             </div>
           </div>
         </div>
 
-        <div className="settings-section">
-          <h3 className="section-heading">About</h3>
-          <div className="about-info">
-            <p>Modify.Style v1.0.0</p>
-            <p className="about-description">
-              A powerful web customization tool for viewing and editing websites in real-time.
-            </p>
-          </div>
+        {/* About Info */}
+        <div className="about-info">
+          <div className="about-version">Modify.Style v1.0.0</div>
+          <p className="about-description">
+            A powerful web customization tool for viewing and editing websites in real-time.
+          </p>
         </div>
       </div>
     </div>

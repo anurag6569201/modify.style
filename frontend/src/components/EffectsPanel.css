@@ -1,0 +1,234 @@
+.effects-panel {
+  display: flex;
+  flex-direction: column;
+  color: rgba(255, 255, 255, 0.9);
+  padding: 10px;
+  gap: 12px;
+}
+
+.effects-panel-search {
+  flex-shrink: 0;
+}
+
+.effects-search-input {
+  padding: 8px 12px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 0.5px solid rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  transition: all 0.2s ease;
+}
+
+.effects-search-input:focus {
+  outline: none;
+  border-color: rgba(99, 102, 241, 0.4);
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.effects-search-input::placeholder {
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.effects-panel-categories {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.category-btn {
+  padding: 5px 10px;
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+}
+
+.category-btn::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6);
+  border-radius: 2px;
+  transition: width 0.2s ease;
+}
+
+.category-btn:hover {
+  color: rgba(255, 255, 255, 0.8);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.category-btn.active {
+  color: rgba(255, 255, 255, 0.95);
+  background: rgba(99, 102, 241, 0.1);
+}
+
+.category-btn.active::after {
+  width: calc(100% - 20px);
+}
+
+.effects-list {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 4px;
+  position: relative;
+}
+
+.effect-item {
+  padding: 10px 12px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  border-radius: 8px;
+  position: relative;
+  background: transparent;
+}
+
+.effect-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  background: linear-gradient(180deg, #6366f1, #8b5cf6);
+  border-radius: 0 3px 3px 0;
+  transition: all 0.2s ease;
+}
+
+.effect-item:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.effect-item.active {
+  background: rgba(99, 102, 241, 0.08);
+}
+
+.effect-item.active::before {
+  width: 3px;
+  height: 60%;
+}
+
+.effect-item-content {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.effect-item-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.effect-item-name {
+  font-size: 13px;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.95);
+  margin-bottom: 4px;
+  line-height: 1.4;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.active-dot {
+  width: 6px;
+  height: 6px;
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  border-radius: 50%;
+  box-shadow: 0 0 6px rgba(99, 102, 241, 0.6);
+  flex-shrink: 0;
+}
+
+.effect-item-description {
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.5);
+  line-height: 1.4;
+}
+
+.effect-item-toggle {
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.3);
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+}
+
+.effect-item.active .effect-item-toggle {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+}
+
+.effects-empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  color: rgba(255, 255, 255, 0.4);
+  font-size: 12px;
+  width: 100%;
+  padding: 0 20px;
+}
+
+.effects-panel-footer {
+  padding-top: 8px;
+  border-top: 0.5px solid rgba(255, 255, 255, 0.06);
+  flex-shrink: 0;
+}
+
+.clear-all-btn {
+  width: 100%;
+  padding: 8px;
+  background: transparent;
+  border: 0.5px solid rgba(239, 68, 68, 0.3);
+  border-radius: 8px;
+  color: rgba(239, 68, 68, 0.8);
+  font-size: 11px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.clear-all-btn:hover {
+  background: rgba(239, 68, 68, 0.1);
+  border-color: rgba(239, 68, 68, 0.5);
+  color: rgba(239, 68, 68, 1);
+}
+
+/* Scrollbar styling */
+.effects-list::-webkit-scrollbar {
+  width: 3px;
+}
+
+.effects-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.effects-list::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+.effects-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}

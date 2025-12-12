@@ -1,0 +1,314 @@
+.style-editor {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: rgba(15, 15, 20, 0.5);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.style-editor-empty {
+  padding: 2rem;
+  text-align: center;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 13px;
+}
+
+.style-editor-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 12px;
+  border-bottom: 0.5px solid rgba(255, 255, 255, 0.06);
+  background: rgba(20, 20, 25, 0.5);
+}
+
+.style-editor-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.style-editor-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.style-btn {
+  background: transparent;
+  border: 0.5px solid rgba(255, 255, 255, 0.08);
+  border-radius: 4px;
+  padding: 4px;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+}
+
+.style-btn:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+.style-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.style-editor-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.style-section {
+  margin-bottom: 16px;
+}
+
+.style-section:last-child {
+  margin-bottom: 0;
+}
+
+.style-section-title {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 8px;
+}
+
+.style-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.style-property {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  background: rgba(15, 15, 20, 0.4);
+  border-radius: 6px;
+  font-size: 11px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  transition: all 0.2s ease;
+}
+
+.style-property:hover {
+  background: rgba(15, 15, 20, 0.6);
+}
+
+.style-property.modified {
+  border-left: 2px solid #818cf8;
+  background: rgba(100, 108, 255, 0.1);
+}
+
+.style-property-name {
+  color: #818cf8;
+  font-weight: 500;
+  min-width: 120px;
+  flex-shrink: 0;
+}
+
+.style-property-value-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.style-property-value {
+  color: rgba(255, 255, 255, 0.9);
+  flex: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+  word-break: break-word;
+}
+
+.style-property-value:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.style-property-value .empty-value {
+  color: rgba(255, 255, 255, 0.3);
+  font-style: italic;
+}
+
+.color-preview {
+  width: 20px;
+  height: 20px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: transform 0.2s ease;
+}
+
+.color-preview:hover {
+  transform: scale(1.1);
+}
+
+.style-property-edit {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.style-input {
+  flex: 1;
+  background: rgba(20, 20, 25, 0.8);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 11px;
+  outline: none;
+}
+
+.style-input:focus {
+  border-color: #818cf8;
+  background: rgba(20, 20, 25, 0.95);
+}
+
+.color-input-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+}
+
+.color-picker {
+  width: 30px;
+  height: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: 4px;
+  cursor: pointer;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.color-picker::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-picker::-webkit-color-swatch {
+  border: none;
+  border-radius: 3px;
+}
+
+.save-btn,
+.cancel-btn,
+.remove-btn {
+  background: transparent;
+  border: none;
+  color: rgba(255, 255, 255, 0.5);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: 12px;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.save-btn:hover {
+  background: rgba(34, 197, 94, 0.2);
+  color: #22c55e;
+}
+
+.cancel-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.remove-btn:hover {
+  background: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.add-property-btn {
+  width: 100%;
+  background: rgba(100, 108, 255, 0.1);
+  border: 1px dashed rgba(100, 108, 255, 0.3);
+  border-radius: 6px;
+  padding: 8px;
+  color: #818cf8;
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.add-property-btn:hover {
+  background: rgba(100, 108, 255, 0.2);
+  border-color: rgba(100, 108, 255, 0.5);
+}
+
+.add-property-form {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.property-name-input,
+.property-value-input {
+  flex: 1;
+  background: rgba(20, 20, 25, 0.8);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 4px;
+  padding: 6px 8px;
+  color: rgba(255, 255, 255, 0.9);
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 11px;
+  outline: none;
+}
+
+.property-name-input:focus,
+.property-value-input:focus {
+  border-color: #818cf8;
+  background: rgba(20, 20, 25, 0.95);
+}
+
+.add-btn {
+  background: rgba(100, 108, 255, 0.2);
+  border: 1px solid rgba(100, 108, 255, 0.4);
+  border-radius: 4px;
+  padding: 6px 12px;
+  color: #818cf8;
+  cursor: pointer;
+  font-size: 11px;
+  transition: all 0.2s ease;
+}
+
+.add-btn:hover {
+  background: rgba(100, 108, 255, 0.3);
+  border-color: rgba(100, 108, 255, 0.6);
+}
+
+.style-editor-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.style-editor-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.style-editor-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ZoomIn, ZoomOut, Minus, Plus } from 'lucide-react';
+import { ZoomIn, ZoomOut } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import './ZoomControls.css';
 
