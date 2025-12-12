@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles } from 'lucide-react';
+import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { getRandomPalette, mapColorsToPalette, applyColorReplacementsToDOM } from '../utils/colorPalettes';
 import './BrandExtractor.css';
 
 interface ColorInfo {
@@ -47,7 +48,7 @@ interface LayoutInfo {
 }
 
 export default function BrandExtractor() {
-  const { state } = useApp();
+  const { state, setExtractedColors, setColorMapping } = useApp();
   const [colors, setColors] = useState<ColorInfo[]>([]);
   const [fonts, setFonts] = useState<FontInfo[]>([]);
   const [spacing, setSpacing] = useState<SpacingInfo[]>([]);
@@ -59,6 +60,8 @@ export default function BrandExtractor() {
   const [links, setLinks] = useState<string[]>([]);
   const [isExtracting, setIsExtracting] = useState(false);
   const [copiedItem, setCopiedItem] = useState<string | null>(null);
+  const [selectedColors, setSelectedColors] = useState<Set<string>>(new Set());
+  const [isRandomizing, setIsRandomizing] = useState(false);
 
   // Convert hex/rgb to hex format
   const normalizeColor = (color: string): string | null => {
@@ -306,6 +309,10 @@ export default function BrandExtractor() {
         setLayouts(layoutArray);
         setImages(Array.from(imageSet).slice(0, 20));
         setLinks(Array.from(linkSet).slice(0, 20));
+        
+        // Store extracted colors in context for color randomization
+        setExtractedColors(colorArray.map(c => ({ color: c.color, usage: c.usage })));
+        
         setIsExtracting(false);
       }, 1000);
     } catch (err) {
@@ -326,6 +333,68 @@ export default function BrandExtractor() {
     setCopiedItem(text);
     setTimeout(() => setCopiedItem(null), 2000);
   };
+
+  // Toggle color selection
+  const toggleColorSelection = (color: string) => {
+    const newSelected = new Set(selectedColors);
+    if (newSelected.has(color)) {
+      newSelected.delete(color);
+    } else {
+      newSelected.add(color);
+    }
+    setSelectedColors(newSelected);
+  };
+
+  // Select all colors
+  const selectAllColors = () => {
+    setSelectedColors(new Set(colors.map(c => c.color)));
+  };
+
+  // Deselect all colors
+  const deselectAllColors = () => {
+    setSelectedColors(new Set());
+  };
+
+  // Randomize selected colors
+  const randomizeSelectedColors = useCallback(async () => {
+    if (selectedColors.size === 0) {
+      alert('Please select at least one color to randomize');
+      return;
+    }
+
+    setIsRandomizing(true);
+    try {
+      // Get a random palette
+      const randomPalette = await getRandomPalette();
+      
+      // Map selected colors to new palette colors
+      const selectedColorsArray = Array.from(selectedColors);
+      const colorMapping = mapColorsToPalette(selectedColorsArray, randomPalette);
+      
+      // Merge with existing color mapping to preserve previous randomizations
+      const existingMapping = state.editor.colorMapping || {};
+      const mergedMapping = { ...existingMapping, ...colorMapping };
+      
+      // Store the mapping in state (this will trigger WebsiteViewer's useEffect)
+      setColorMapping(mergedMapping);
+      
+      // Apply to iframe immediately for instant feedback
+      const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+      if (iframe) {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc) {
+          // Apply color replacements directly to DOM - this will override all instances
+          // This ensures changes are reflected immediately without page reload
+          applyColorReplacementsToDOM(iframeDoc, mergedMapping);
+        }
+      }
+    } catch (error) {
+      console.error('Error randomizing colors:', error);
+      alert('Failed to randomize colors. Please try again.');
+    } finally {
+      setIsRandomizing(false);
+    }
+  }, [selectedColors, setColorMapping, state.editor.colorMapping]);
 
   return (
     <div className="brand-extractor">
@@ -374,28 +443,66 @@ export default function BrandExtractor() {
           <div className="section-header">
             <Palette size={14} />
             <span>Color Palette ({colors.length})</span>
+            <div style={{ marginLeft: 'auto', display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button
+                className="color-select-btn"
+                onClick={selectAllColors}
+                title="Select All"
+              >
+                Select All
+              </button>
+              <button
+                className="color-select-btn"
+                onClick={deselectAllColors}
+                title="Deselect All"
+              >
+                Clear
+              </button>
+              <button
+                className="randomize-colors-btn"
+                onClick={randomizeSelectedColors}
+                disabled={selectedColors.size === 0 || isRandomizing}
+                title={selectedColors.size === 0 ? 'Select colors to randomize' : 'Randomize selected colors'}
+              >
+                <Shuffle size={14} />
+                {isRandomizing ? 'Randomizing...' : 'Randomize'}
+              </button>
+            </div>
           </div>
           <div className="colors-grid">
-            {colors.map((colorInfo) => (
-              <div key={colorInfo.color} className="color-item">
-                <div
-                  className="color-swatch"
-                  style={{ backgroundColor: colorInfo.color }}
-                  onClick={() => copyToClipboard(colorInfo.color)}
-                  title={`Click to copy: ${colorInfo.color}`}
+            {colors.map((colorInfo) => {
+              const isSelected = selectedColors.has(colorInfo.color);
+              return (
+                <div 
+                  key={colorInfo.color} 
+                  className={`color-item ${isSelected ? 'selected' : ''}`}
                 >
-                  {copiedItem === colorInfo.color && (
-                    <div className="copy-indicator">
-                      <Check size={12} />
-                    </div>
-                  )}
+                  <input
+                    type="checkbox"
+                    className="color-checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleColorSelection(colorInfo.color)}
+                    onClick={(e) => e.stopPropagation()}
+                  />
+                  <div
+                    className="color-swatch"
+                    style={{ backgroundColor: colorInfo.color }}
+                    onClick={() => copyToClipboard(colorInfo.color)}
+                    title={`Click to copy: ${colorInfo.color}`}
+                  >
+                    {copiedItem === colorInfo.color && (
+                      <div className="copy-indicator">
+                        <Check size={12} />
+                      </div>
+                    )}
+                  </div>
+                  <div className="color-info">
+                    <div className="color-value">{colorInfo.color}</div>
+                    <div className="color-count">{colorInfo.count} uses</div>
+                  </div>
                 </div>
-                <div className="color-info">
-                  <div className="color-value">{colorInfo.color}</div>
-                  <div className="color-count">{colorInfo.count} uses</div>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}

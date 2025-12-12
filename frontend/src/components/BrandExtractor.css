@@ -118,6 +118,7 @@
   font-size: 13px;
   color: rgba(255, 255, 255, 0.8);
   margin-bottom: 12px;
+  flex-wrap: wrap;
 }
 
 .colors-grid {
@@ -132,10 +133,10 @@
   border-radius: 8px;
   padding: 10px;
   display: flex;
-  flex-direction: column;
   gap: 8px;
   transition: all 0.2s;
   position: relative;
+  align-items: center;
 }
 
 .color-item:hover {
@@ -143,9 +144,64 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.color-item.selected {
+  background: rgba(100, 108, 255, 0.15);
+  border-color: rgba(100, 108, 255, 0.5);
+}
+
+.color-checkbox {
+  width: 18px;
+  height: 18px;
+  cursor: pointer;
+  accent-color: var(--accent-color, #646cff);
+  flex-shrink: 0;
+}
+
+.color-select-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.8);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.color-select-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.randomize-colors-btn {
+  background: var(--accent-color, #646cff);
+  border: none;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+}
+
+.randomize-colors-btn:hover:not(:disabled) {
+  background: var(--accent-hover, #7b82ff);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(100, 108, 255, 0.3);
+}
+
+.randomize-colors-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .color-swatch {
-  width: 100%;
-  height: 60px;
+  width: 40px;
+  height: 40px;
   border-radius: 6px;
   cursor: pointer;
   position: relative;

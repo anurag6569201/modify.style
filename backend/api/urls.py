@@ -9,6 +9,7 @@ urlpatterns = [
     path('health/', views.health_check, name='health-check'),
     path('info/', views.api_info, name='api-info'),
     path('proxy/', views.proxy_website, name='proxy-website'),
+    path('proxy-resource/', views.proxy_resource, name='proxy-resource'),
     path('', include(router.urls)),
 ]
 

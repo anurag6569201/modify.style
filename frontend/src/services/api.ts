@@ -33,15 +33,29 @@ class ApiService {
     try {
       const response = await fetch(url, config);
       
+      // Try to parse JSON response even if status is not ok
+      let errorData: any = {};
+      try {
+        errorData = await response.json();
+      } catch {
+        // If JSON parsing fails, use empty object
+      }
+      
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        // If the response has an error field, use it
+        if (errorData.error) {
+          throw new Error(errorData.error);
+        }
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      const data = await response.json();
-      return data;
+      return errorData as T;
     } catch (error: any) {
       console.error('API request failed:', error);
+      // Re-throw with more context if it's a network error
+      if (error.name === 'TypeError' && error.message.includes('fetch')) {
+        throw new Error('Unable to connect to the server. Please ensure the backend is running on http://localhost:8000');
+      }
       throw error;
     }
   }
@@ -80,7 +94,7 @@ class ApiService {
 
   // Proxy website
   async proxyWebsite(url: string) {
-    return this.get<{ html: string; url: string; status: string }>(`/proxy/?url=${encodeURIComponent(url)}`);
+    return this.get<{ html?: string; url?: string; status?: string; error?: string }>(`/proxy/?url=${encodeURIComponent(url)}`);
   }
 }
 

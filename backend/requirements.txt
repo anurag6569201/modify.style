@@ -4,4 +4,7 @@ django-cors-headers
 python-dotenv
 Pillow
 psycopg2-binary
+playwright
+beautifulsoup4
+requests
 

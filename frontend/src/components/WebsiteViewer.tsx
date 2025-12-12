@@ -25,6 +25,7 @@ import {
 import { useApp } from '../context/AppContext';
 import { storage } from '../utils/storage';
 import type { CustomDevice } from '../utils/storage';
+import { generateColorReplacementCSS, applyColorReplacementsToDOM } from '../utils/colorPalettes';
 import DraggablePanel from './DraggablePanel';
 import CSSEditor from './CSSEditor';
 import ElementInspector from './ElementInspector';
@@ -37,15 +38,9 @@ import DesignPanel from './DesignPanel';
 import EffectsPanel from './EffectsPanel';
 import BrandExtractor from './BrandExtractor';
 import { PREDEFINED_EFFECTS } from './EffectsPanel';
+import apiService from '../services/api';
 import './WebsiteViewer.css';
 import './SpaceIndicator.css';
-
-// CORS proxy services (fallback options)
-const CORS_PROXIES = [
-  'https://api.allorigins.win/raw?url=',
-  'https://corsproxy.io/?',
-  'https://api.codetabs.com/v1/proxy?quest=',
-];
 
 interface DeviceConfig {
   icon: typeof Smartphone;
@@ -169,82 +164,10 @@ function WebsiteViewer() {
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
 
-
-  const fetchWithProxy = async (targetUrl: string, proxyIndex: number = 0): Promise<string> => {
-    if (proxyIndex >= CORS_PROXIES.length) {
-      throw new Error('All proxy services failed. Please try again later.');
-    }
-
-    const proxy = CORS_PROXIES[proxyIndex];
-    const proxyUrl = `${proxy}${encodeURIComponent(targetUrl)}`;
-
-    try {
-      const response = await fetch(proxyUrl, {
-        method: 'GET',
-        headers: {
-          'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-        },
-      });
-
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
-      }
-
-      const html = await response.text();
-      return html;
-    } catch (err) {
-      console.warn(`Proxy ${proxyIndex} failed, trying next...`, err);
-      return fetchWithProxy(targetUrl, proxyIndex + 1);
-    }
-  };
-
-  const processHtml = (html: string, baseUrl: string): string => {
-    const parser = new DOMParser();
-    const doc = parser.parseFromString(html, 'text/html');
-
-    // Remove X-Frame-Options and CSP meta tags
-    const metas = doc.querySelectorAll('meta');
-    metas.forEach((meta) => {
-      const httpEquiv = meta.getAttribute('http-equiv')?.toLowerCase();
-      const name = meta.getAttribute('name')?.toLowerCase();
-      if (
-        httpEquiv === 'x-frame-options' ||
-        httpEquiv === 'content-security-policy' ||
-        name === 'csp'
-      ) {
-        meta.remove();
-      }
-    });
-
-    // Convert relative URLs to absolute URLs
-    const base = doc.createElement('base');
-    base.href = baseUrl;
-    if (doc.head) {
-      doc.head.insertBefore(base, doc.head.firstChild);
-    }
-
-    // Fix relative URLs
-    const fixUrl = (element: Element, attr: string) => {
-      const value = element.getAttribute(attr);
-      if (value && !value.match(/^(https?:|#|javascript:|mailto:|tel:|\/\/)/)) {
-        try {
-          element.setAttribute(attr, new URL(value, baseUrl).href);
-        } catch {
-          // Invalid URL, skip
-        }
-      }
-    };
-
-    doc.querySelectorAll('img[src]').forEach((img) => fixUrl(img, 'src'));
-    doc.querySelectorAll('a[href]').forEach((a) => fixUrl(a, 'href'));
-    doc.querySelectorAll('link[href]').forEach((link) => fixUrl(link, 'href'));
-    doc.querySelectorAll('script[src]').forEach((script) => fixUrl(script, 'src'));
-    doc.querySelectorAll('source[src]').forEach((source) => fixUrl(source, 'src'));
-    doc.querySelectorAll('form[action]').forEach((form) => fixUrl(form, 'action'));
-
-    return doc.documentElement.outerHTML;
-  };
-
+  /**
+   * Load website using Django reverse proxy (Playwright-based)
+   * This provides full browser rendering with JavaScript execution
+   */
   const loadWebsite = async () => {
     if (!state.view.url.trim()) {
       dispatch({ type: 'SET_ERROR', payload: 'Please enter a URL' });
@@ -262,18 +185,43 @@ function WebsiteViewer() {
         targetUrl = 'https://' + targetUrl;
       }
 
-      const html = await fetchWithProxy(targetUrl);
-      const processedHtml = processHtml(html, targetUrl);
+      // Use Django backend proxy with Playwright for full browser rendering
+      const response = await apiService.proxyWebsite(targetUrl) as { html?: string; url?: string; status?: string; error?: string };
+      
+      if (response.error) {
+        throw new Error(response.error);
+      }
 
-      dispatch({ type: 'SET_HTML_CONTENT', payload: processedHtml });
-      dispatch({ type: 'SET_CURRENT_URL', payload: targetUrl });
+      if (!response.html) {
+        throw new Error('No HTML content received from server');
+      }
+
+      // The backend already processes HTML (removes CSP, fixes URLs, etc.)
+      // So we can use it directly
+      dispatch({ type: 'SET_HTML_CONTENT', payload: response.html });
+      dispatch({ type: 'SET_CURRENT_URL', payload: response.url || targetUrl });
 
       // Save to recent URLs
-      storage.saveRecentUrl(targetUrl);
-      storage.saveSettings({ lastUrl: targetUrl });
+      storage.saveRecentUrl(response.url || targetUrl);
+      storage.saveSettings({ lastUrl: response.url || targetUrl });
     } catch (err: unknown) {
-      const errorMessage = err instanceof Error ? err.message : 'An unknown error occurred';
-      dispatch({ type: 'SET_ERROR', payload: errorMessage || 'Failed to load website.' });
+      console.error('Error loading website:', err);
+      let errorMessage = 'Failed to load website.';
+      
+      if (err instanceof Error) {
+        errorMessage = err.message;
+      } else if (typeof err === 'string') {
+        errorMessage = err;
+      }
+      
+      // Provide helpful error messages
+      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
+        errorMessage = 'Unable to connect to the server. Please ensure the backend is running on http://localhost:8000';
+      } else if (errorMessage.includes('timeout')) {
+        errorMessage = 'The website took too long to load. Please try again or check if the URL is correct.';
+      }
+      
+      dispatch({ type: 'SET_ERROR', payload: errorMessage });
     } finally {
       dispatch({ type: 'SET_LOADING', payload: false });
     }
@@ -290,8 +238,16 @@ function WebsiteViewer() {
     const existingEffectsStyle = doc.getElementById('effects-injected-css');
     if (existingEffectsStyle) existingEffectsStyle.remove();
 
-    // Combine custom CSS, typography CSS, and effects CSS
+    // Combine custom CSS, typography CSS, effects CSS, and color replacement CSS
     let combinedCss = '';
+
+    // Add color replacement CSS
+    if (state.editor.colorMapping) {
+      const colorCss = generateColorReplacementCSS(state.editor.colorMapping);
+      if (colorCss.trim()) {
+        combinedCss += '\n/* Color Palette Replacement */\n' + colorCss;
+      }
+    }
 
     // Add typography CSS
     if (state.editor.typographyCss.trim()) {
@@ -325,7 +281,8 @@ function WebsiteViewer() {
       style.textContent = combinedCss;
       doc.head.appendChild(style);
     }
-  }, [state.editor.customCss, state.editor.activeEffects, state.editor.typographyCss]);
+  }, [state.editor.customCss, state.editor.activeEffects, state.editor.typographyCss, state.editor.colorMapping]);
+
 
   useEffect(() => {
     if (state.view.htmlContent && iframeRef.current) {
@@ -333,9 +290,14 @@ function WebsiteViewer() {
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
 
       if (iframeDoc) {
+        // Replace proxy URL placeholders with actual origin before writing
+        const proxyBase = window.location.origin;
+        const processedHtml = state.view.htmlContent.replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
+        
         iframeDoc.open();
-        iframeDoc.write(state.view.htmlContent);
+        iframeDoc.write(processedHtml);
         iframeDoc.close();
+        
         injectCustomCss(iframeDoc);
       }
     }
@@ -346,10 +308,14 @@ function WebsiteViewer() {
       const iframe = iframeRef.current;
       const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
       if (iframeDoc) {
+        // Apply color replacements to DOM
+        if (state.editor.colorMapping) {
+          applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+        }
         injectCustomCss(iframeDoc);
       }
     }
-  }, [state.editor.customCss, state.editor.showCssEditor, injectCustomCss]);
+  }, [state.editor.customCss, state.editor.showCssEditor, state.editor.colorMapping, injectCustomCss]);
 
   // Custom zoom functions with smooth scaling
   const handleZoomIn = useCallback(() => {
@@ -780,7 +746,19 @@ function WebsiteViewer() {
           paddingLeft: state.viewport.isFullView ? 0 : (activePanel ? `${PANEL_WIDTH + ICON_MENU_WIDTH + 16}px` : `${ICON_MENU_WIDTH + 16}px`),
         }}
       >
-        {state.view.error ? (
+        {state.view.loading ? (
+          <div className="loading-state">
+            <div className="loader-container">
+              <div className="loader-spinner">
+                <div className="spinner-ring"></div>
+                <div className="spinner-ring"></div>
+                <div className="spinner-ring"></div>
+              </div>
+              <h3>Loading Website</h3>
+              <p>Rendering with Playwright...</p>
+            </div>
+          </div>
+        ) : state.view.error ? (
           <div className="error-state">
             <div className="error-icon">!</div>
             <h3>Unable to Load</h3>
@@ -1060,6 +1038,7 @@ function WebsiteViewer() {
           <span className="space-indicator-text">Hold and drag to pan</span>
         </div>
       )}
+
     </div>
   );
 }

@@ -21,6 +21,8 @@ export interface EditorState {
   selectedElement: string | null;
   activeEffects: string[];
   typographyCss: string;
+  colorMapping: Record<string, string> | null; // Using Record instead of Map for serialization
+  extractedColors: Array<{ color: string; usage: string[] }>;
 }
 
 export interface ViewportState {
@@ -79,7 +81,9 @@ type AppAction =
   | { type: 'RESET_STATE' }
   | { type: 'TOGGLE_EFFECT'; payload: string }
   | { type: 'CLEAR_ALL_EFFECTS' }
-  | { type: 'SET_TYPOGRAPHY_CSS'; payload: string };
+  | { type: 'SET_TYPOGRAPHY_CSS'; payload: string }
+  | { type: 'SET_COLOR_MAPPING'; payload: Record<string, string> | null }
+  | { type: 'SET_EXTRACTED_COLORS'; payload: Array<{ color: string; usage: string[] }> };
 
 // Load initial state from localStorage
 const loadInitialState = (): AppState => {
@@ -104,6 +108,8 @@ const loadInitialState = (): AppState => {
       selectedElement: null,
       activeEffects: savedEditor.activeEffects || [],
       typographyCss: savedEditor.typographyCss || '',
+      colorMapping: null,
+      extractedColors: [],
     },
     viewport: {
       deviceMode: savedViewport.deviceMode || 'desktop',
@@ -341,6 +347,22 @@ function appReducer(state: AppState, action: AppAction): AppState {
           typographyCss: action.payload,
         },
       };
+    case 'SET_COLOR_MAPPING':
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          colorMapping: action.payload,
+        },
+      };
+    case 'SET_EXTRACTED_COLORS':
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          extractedColors: action.payload,
+        },
+      };
     default:
       return state;
   }
@@ -366,6 +388,8 @@ interface AppContextType {
   toggleEffect: (effectId: string) => void;
   clearAllEffects: () => void;
   setTypographyCss: (css: string) => void;
+  setColorMapping: (mapping: Record<string, string> | null) => void;
+  setExtractedColors: (colors: Array<{ color: string; usage: string[] }>) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -476,6 +500,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_TYPOGRAPHY_CSS', payload: css });
   }, []);
 
+  const setColorMapping = useCallback((mapping: Record<string, string> | null) => {
+    dispatch({ type: 'SET_COLOR_MAPPING', payload: mapping });
+  }, []);
+
+  const setExtractedColors = useCallback((colors: Array<{ color: string; usage: string[] }>) => {
+    dispatch({ type: 'SET_EXTRACTED_COLORS', payload: colors });
+  }, []);
+
   const value: AppContextType = {
     state,
     dispatch,
@@ -494,6 +526,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toggleEffect,
     clearAllEffects,
     setTypographyCss,
+    setColorMapping,
+    setExtractedColors,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

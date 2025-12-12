@@ -160,6 +160,10 @@ CORS_ALLOW_HEADERS = [
     'x-requested-with',
 ]
 
+# Exclude proxy-resource endpoint from CORS middleware
+# We handle CORS headers manually in the view to avoid duplicates
+CORS_URLS_REGEX = r'^/api/(?!proxy-resource/).*$'
+
 # CSRF configuration for development
 if DEBUG:
     CSRF_TRUSTED_ORIGINS = [
