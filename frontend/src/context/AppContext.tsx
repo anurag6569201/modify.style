@@ -1,3 +1,8 @@
+/**
+ * Application context and state management.
+ * Provides global state for the application using React Context and useReducer.
+ */
+
 import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { storage } from '../utils/storage';

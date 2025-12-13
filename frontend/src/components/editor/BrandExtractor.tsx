@@ -1,8 +1,8 @@
-import { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle, RotateCcw, Edit2, X } from 'lucide-react';
-import { useApp } from '../context/AppContext';
-import { mapColorsToPalette, applyColorReplacementsToDOM } from '../utils/colorPalettes';
-import './BrandExtractor.css';
+import { useApp } from '../../context/AppContext';
+import { mapColorsToPalette, applyColorReplacementsToDOM } from '../../utils/colorPalettes';
+import '../../assets/css/editor/BrandExtractor.css';
 
 interface ColorInfo {
   color: string;

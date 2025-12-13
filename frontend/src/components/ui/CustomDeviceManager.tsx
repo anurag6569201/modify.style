@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { Plus, Edit2, Trash2, X, Save, Smartphone, Tablet, Laptop } from 'lucide-react';
-import { storage } from '../utils/storage';
-import type { CustomDevice } from '../utils/storage';
-import './CustomDeviceManager.css';
+import { storage } from '../../utils/storage';
+import type { CustomDevice } from '../../utils/storage';
+import '../../assets/css/ui/CustomDeviceManager.css';
 
 interface CustomDeviceManagerProps {
   onDeviceSelect?: (device: CustomDevice) => void;

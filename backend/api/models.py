@@ -1,9 +1,15 @@
+"""
+Database models for the modify.style application.
+"""
+
 from django.db import models
-from django.utils import timezone
 
 
 class BaseModel(models.Model):
-    """Abstract base model with common fields."""
+    """
+    Abstract base model providing common timestamp fields.
+    All models should inherit from this for consistent timestamps.
+    """
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
@@ -11,15 +17,19 @@ class BaseModel(models.Model):
         abstract = True
 
 
-# Example model - you can modify or remove this based on your needs
 class ExampleModel(BaseModel):
-    """Example model for demonstration."""
+    """
+    Example model for demonstration purposes.
+    Can be modified or removed based on application needs.
+    """
     name = models.CharField(max_length=255)
     description = models.TextField(blank=True)
     is_active = models.BooleanField(default=True)
 
     class Meta:
         ordering = ['-created_at']
+        verbose_name = 'Example'
+        verbose_name_plural = 'Examples'
 
     def __str__(self):
         return self.name

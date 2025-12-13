@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useState } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from '../../context/AppContext';
 import { Undo2, Redo2, Download, Copy, Check } from 'lucide-react';
-import './CSSEditor.css';
+import '../../assets/css/editor/CSSEditor.css';
 
 export default function CSSEditor() {
   const { state, setCustomCss, undo, redo, canUndo, canRedo } = useApp();

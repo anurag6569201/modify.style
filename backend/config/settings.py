@@ -1,5 +1,8 @@
 """
 Django settings for modify.style project.
+
+Configuration is loaded from environment variables via .env file.
+For production, ensure all sensitive values are set via environment variables.
 """
 
 import os
@@ -9,15 +12,17 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
+# Build paths inside the project
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-# SECURITY WARNING: keep the secret key used in production secret!
+# Security settings
+# SECURITY WARNING: Change SECRET_KEY in production!
 SECRET_KEY = os.getenv('SECRET_KEY', 'django-insecure-change-this-in-production-!@#$%^&*()')
 
-# SECURITY WARNING: don't run with debug turned on in production!
+# SECURITY WARNING: Set DEBUG=False in production!
 DEBUG = os.getenv('DEBUG', 'True') == 'True'
 
+# Allowed hosts for the application
 ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 # Application definition
@@ -129,7 +134,7 @@ REST_FRAMEWORK = {
     ],
 }
 
-# CORS configuration
+# CORS configuration for frontend-backend communication
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",  # Vite default port
     "http://127.0.0.1:5173",
@@ -161,10 +166,11 @@ CORS_ALLOW_HEADERS = [
 ]
 
 # Exclude proxy-resource endpoint from CORS middleware
-# We handle CORS headers manually in the view to avoid duplicates
+# CORS headers are handled manually in the view to avoid duplicates
 CORS_URLS_REGEX = r'^/api/(?!proxy-resource/).*$'
 
 # CSRF configuration for development
+# In production, update CSRF_TRUSTED_ORIGINS with your domain
 if DEBUG:
     CSRF_TRUSTED_ORIGINS = [
         "http://localhost:5173",

@@ -1,8 +1,8 @@
 import React from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from '../../context/AppContext';
 import { Monitor, Download, Palette, Trash2, Grid, Type, Save } from 'lucide-react';
-import { storage } from '../utils/storage';
-import './SettingsPanel.css';
+import { storage } from '../../utils/storage';
+import '../../assets/css/ui/SettingsPanel.css';
 
 export default function SettingsPanel() {
   const { state, dispatch } = useApp();

@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ZoomIn, ZoomOut } from 'lucide-react';
-import { useApp } from '../context/AppContext';
-import './ZoomControls.css';
+import { useApp } from '../../context/AppContext';
+import '../../assets/css/ui/ZoomControls.css';
 
 export default function ZoomControls() {
   const { state, setZoomLevel, resetViewport } = useApp();

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Clock, X } from 'lucide-react';
-import { storage } from '../utils/storage';
-import './RecentUrls.css';
+import { storage } from '../../utils/storage';
+import '../../assets/css/ui/RecentUrls.css';
 
 interface RecentUrlsProps {
   onSelectUrl: (url: string) => void;

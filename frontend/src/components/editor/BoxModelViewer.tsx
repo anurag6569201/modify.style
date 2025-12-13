@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import './BoxModelViewer.css';
+import '../../assets/css/editor/BoxModelViewer.css';
 
 interface BoxModelViewerProps {
   element: HTMLElement | null;

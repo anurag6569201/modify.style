@@ -1,10 +1,9 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
-import { useApp } from '../context/AppContext';
+import { useApp } from '../../context/AppContext';
 import { X, Copy, Eye, EyeOff, MousePointer2, ChevronUp, ChevronDown, Edit3, Box, Info, Layers, Zap } from 'lucide-react';
-import { generateSelector, generateSimpleSelector } from '../utils/selectorGenerator';
-import StyleEditor from './StyleEditor';
-import BoxModelViewer from './BoxModelViewer';
-import './ElementInspector.css';
+import { generateSelector, generateSimpleSelector } from '../../utils/selectorGenerator';
+import { StyleEditor, BoxModelViewer } from './';
+import '../../assets/css/editor/ElementInspector.css';
 
 interface ElementInfo {
   tag: string;

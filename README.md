@@ -1,24 +1,56 @@
 # Modify.Style
 
-Full-stack application with React + TypeScript frontend and Django REST Framework backend.
+A full-stack web application for real-time website style modification and prototyping. Built with React + TypeScript frontend and Django REST Framework backend.
+
+## Features
+
+- **Live Website Rendering**: Load and display any website in an iframe with full JavaScript support
+- **Real-time CSS Editing**: Modify website styles in real-time with a live CSS editor
+- **Element Inspector**: Inspect and select elements on the rendered website
+- **Brand Extraction**: Automatically extract color palettes and fonts from websites
+- **Device Preview**: Preview websites in different device sizes (mobile, tablet, desktop)
+- **Zoom & Pan Controls**: Navigate large websites with zoom and pan functionality
+- **Effects Panel**: Apply predefined visual effects to websites
+- **Design Tools**: Advanced design panel for typography and color management
+
+## Tech Stack
+
+- **Frontend**: React 19, TypeScript, Vite
+- **Backend**: Django 5.0.6, Django REST Framework
+- **Browser Automation**: Playwright
+- **Database**: SQLite (development), PostgreSQL (production recommended)
 
 ## Project Structure
 
 ```
 modify.style/
-├── frontend/          # React + TypeScript + Vite frontend
+├── backend/              # Django backend
+│   ├── api/             # API application
+│   │   ├── services/    # Business logic layer
+│   │   ├── models.py    # Database models
+│   │   ├── views.py     # API views
+│   │   └── serializers.py
+│   ├── config/          # Django configuration
+│   │   ├── settings.py  # Application settings
+│   │   └── urls.py      # URL routing
+│   └── requirements.txt
+├── frontend/            # React frontend
 │   ├── src/
-│   │   ├── services/  # API service layer
-│   │   └── ...
-│   └── ...
-├── backend/           # Django REST Framework backend
-│   ├── api/          # API application
-│   ├── config/       # Django configuration
-│   └── ...
+│   │   ├── components/  # React components
+│   │   ├── context/     # React context providers
+│   │   ├── services/    # API service layer
+│   │   ├── types/       # TypeScript type definitions
+│   │   └── utils/       # Utility functions
+│   └── package.json
 └── README.md
 ```
 
 ## Quick Start
+
+### Prerequisites
+
+- Python 3.8+
+- Node.js 16+ and npm
 
 ### Backend Setup
 
@@ -37,7 +69,7 @@ Or manually:
 python3 -m venv venv
 source venv/bin/activate  # On Windows: venv\Scripts\activate
 pip install -r requirements.txt
-cp .env.example .env
+cp .env.example .env  # If .env.example exists
 python manage.py makemigrations
 python manage.py migrate
 ```
@@ -68,29 +100,12 @@ npm run dev
 
 Frontend will run on `http://localhost:5173`
 
-## Features
-
-### Backend
-- ✅ Django 5.0.6
-- ✅ Django REST Framework
-- ✅ CORS configured for frontend
-- ✅ Environment variable configuration
-- ✅ SQLite database (easily switchable to PostgreSQL)
-- ✅ Professional project structure
-- ✅ API endpoints with health check
-
-### Frontend
-- ✅ React 19
-- ✅ TypeScript
-- ✅ Vite for fast development
-- ✅ API service layer
-- ✅ Proxy configuration for backend
-- ✅ Backend connection status indicator
-
 ## API Endpoints
 
 - `GET /api/health/` - Health check endpoint
 - `GET /api/info/` - API information
+- `GET /api/proxy/?url=<website_url>` - Proxy and render a website
+- `GET /api/proxy-resource/?url=<resource_url>` - Proxy a single resource (CSS, JS, images)
 - `GET /api/examples/` - List all examples
 - `POST /api/examples/` - Create new example
 - `GET /api/examples/{id}/` - Get specific example
@@ -124,49 +139,63 @@ import apiService from './services/api'
 // Health check
 const health = await apiService.healthCheck()
 
-// Get API info
-const info = await apiService.getApiInfo()
-
-// Custom GET request
-const data = await apiService.get('/examples/')
-
-// POST request
-const newItem = await apiService.post('/examples/', { name: 'Test', description: 'Description' })
+// Proxy website
+const result = await apiService.proxyWebsite('https://example.com')
 ```
 
 ## Environment Variables
 
 ### Backend (.env)
-- `SECRET_KEY` - Django secret key
-- `DEBUG` - Debug mode (True/False)
-- `ALLOWED_HOSTS` - Comma-separated list of allowed hosts
+
+Create a `.env` file in the `backend/` directory:
+
+```env
+SECRET_KEY=your-secret-key-here
+DEBUG=True
+ALLOWED_HOSTS=localhost,127.0.0.1
+```
 
 ### Frontend
-- `VITE_API_URL` - API base URL (defaults to `/api` which uses proxy)
+
+Create a `.env` file in the `frontend/` directory (optional):
+
+```env
+VITE_API_URL=/api
+```
 
 ## Production Deployment
 
 ### Backend
+
 1. Set `DEBUG=False` in `.env`
-2. Generate new `SECRET_KEY`
+2. Generate a new `SECRET_KEY`
 3. Update `ALLOWED_HOSTS` with your domain
 4. Configure PostgreSQL database
 5. Set up static file serving
 6. Configure proper CORS origins
 
 ### Frontend
+
 1. Build for production: `npm run build`
 2. Serve static files or deploy to hosting service
 3. Update `VITE_API_URL` to point to production API
 
-## Tech Stack
+## Troubleshooting
 
-- **Frontend**: React 19, TypeScript, Vite
-- **Backend**: Django 5.0.6, Django REST Framework
-- **Database**: SQLite (development), PostgreSQL (production recommended)
-- **API**: RESTful API with JSON responses
+### Backend won't start
+- Ensure virtual environment is activated
+- Check if port 8000 is already in use
+- Verify all dependencies are installed: `pip install -r requirements.txt`
+
+### Frontend can't connect to backend
+- Ensure Django server is running on port 8000
+- Check browser console for CORS errors
+- Verify Vite proxy configuration in `vite.config.ts`
+
+### Port conflicts
+- Backend: Change port with `python manage.py runserver 8001`
+- Frontend: Change port in `vite.config.ts` (and update CORS settings in Django)
 
 ## License
 
 MIT
-

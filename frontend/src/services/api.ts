@@ -1,5 +1,6 @@
 /**
- * API service for communicating with Django backend
+ * API service for communicating with Django backend.
+ * Provides methods for making HTTP requests to the backend API.
  */
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api';

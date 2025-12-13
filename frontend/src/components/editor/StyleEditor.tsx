@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Copy, RotateCcw, Download, Plus, X } from 'lucide-react';
-import './StyleEditor.css';
+import '../../assets/css/editor/StyleEditor.css';
 
 interface StyleProperty {
   name: string;

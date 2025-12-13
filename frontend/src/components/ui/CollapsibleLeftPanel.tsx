@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Layers, X } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import './CollapsibleLeftPanel.css';
+import '../../assets/css/ui/CollapsibleLeftPanel.css';
 
 export const PANEL_WIDTH = 280;
 export const ICON_MENU_WIDTH = 56;

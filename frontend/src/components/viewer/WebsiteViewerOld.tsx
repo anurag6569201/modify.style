@@ -15,8 +15,8 @@ import {
   ZoomOut,
   Move
 } from 'lucide-react';
-import DraggablePanel from './DraggablePanel';
-import './WebsiteViewer.css';
+import { DraggablePanel } from '../';
+import '../../assets/css/viewer/WebsiteViewer.css';
 
 // CORS proxy services (fallback options)
 const CORS_PROXIES = [

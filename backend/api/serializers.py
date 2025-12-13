@@ -1,9 +1,17 @@
+"""
+Serializers for API responses.
+Converts model instances to JSON and validates incoming data.
+"""
+
 from rest_framework import serializers
 from .models import ExampleModel
 
 
 class ExampleModelSerializer(serializers.ModelSerializer):
-    """Serializer for ExampleModel."""
+    """
+    Serializer for ExampleModel.
+    Handles serialization/deserialization for CRUD operations.
+    """
     
     class Meta:
         model = ExampleModel

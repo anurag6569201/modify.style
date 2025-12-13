@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Sparkles, X, Check } from 'lucide-react';
-import './EffectsPanel.css';
+import '../../assets/css/editor/EffectsPanel.css';
 
 export interface CSSEffect {
   id: string;

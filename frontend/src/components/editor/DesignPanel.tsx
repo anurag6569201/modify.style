@@ -14,7 +14,7 @@ import {
   Palette
 } from 'lucide-react';
 import { motion } from 'framer-motion';
-import './DesignPanel.css';
+import '../../assets/css/editor/DesignPanel.css';
 import { PREDEFINED_EFFECTS } from './EffectsPanel';
 
 interface DesignPanelProps {

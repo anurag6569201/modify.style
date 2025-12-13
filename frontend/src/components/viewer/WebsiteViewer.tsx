@@ -22,25 +22,30 @@ import {
   Settings2,
   Palette
 } from 'lucide-react';
-import { useApp } from '../context/AppContext';
-import { storage } from '../utils/storage';
-import type { CustomDevice } from '../utils/storage';
-import { generateColorReplacementCSS, applyColorReplacementsToDOM } from '../utils/colorPalettes';
-import DraggablePanel from './DraggablePanel';
-import CSSEditor from './CSSEditor';
-import ElementInspector from './ElementInspector';
-import SettingsPanel from './SettingsPanel';
-import ZoomControls from './ZoomControls';
-import RecentUrls from './RecentUrls';
-import CustomDeviceManager from './CustomDeviceManager';
-import CollapsibleLeftPanel, { PANEL_WIDTH, ICON_MENU_WIDTH, type PanelType } from './CollapsibleLeftPanel';
-import DesignPanel from './DesignPanel';
-import EffectsPanel from './EffectsPanel';
-import BrandExtractor from './BrandExtractor';
-import { PREDEFINED_EFFECTS } from './EffectsPanel';
-import apiService from '../services/api';
-import './WebsiteViewer.css';
-import './SpaceIndicator.css';
+import { useApp } from '../../context/AppContext';
+import { storage } from '../../utils/storage';
+import type { CustomDevice } from '../../utils/storage';
+import { generateColorReplacementCSS, applyColorReplacementsToDOM } from '../../utils/colorPalettes';
+import {
+  DraggablePanel,
+  CSSEditor,
+  ElementInspector,
+  SettingsPanel,
+  ZoomControls,
+  RecentUrls,
+  CustomDeviceManager,
+  CollapsibleLeftPanel,
+  PANEL_WIDTH,
+  ICON_MENU_WIDTH,
+  DesignPanel,
+  EffectsPanel,
+  BrandExtractor,
+  PREDEFINED_EFFECTS,
+} from '../';
+import type { PanelType } from '../';
+import apiService from '../../services/api';
+import '../../assets/css/viewer/WebsiteViewer.css';
+import '../../assets/css/ui/SpaceIndicator.css';
 
 interface DeviceConfig {
   icon: typeof Smartphone;
