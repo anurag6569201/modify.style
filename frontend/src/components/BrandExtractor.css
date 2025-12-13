@@ -380,6 +380,35 @@
   color: rgba(255, 255, 255, 0.5);
 }
 
+.font-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.font-apply-select {
+  background: rgba(100, 108, 255, 0.1);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  transition: all 0.2s;
+  min-width: 120px;
+}
+
+.font-apply-select:hover {
+  background: rgba(100, 108, 255, 0.2);
+  border-color: rgba(100, 108, 255, 0.5);
+}
+
+.font-apply-select:focus {
+  outline: none;
+  border-color: rgba(100, 108, 255, 0.6);
+  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.2);
+}
+
 .font-copy-btn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -422,6 +451,13 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.scale-item.editing {
+  flex-direction: column;
+  align-items: stretch;
+  background: rgba(100, 108, 255, 0.1);
+  border-color: rgba(100, 108, 255, 0.3);
+}
+
 .scale-preview {
   width: 50px;
   height: 50px;
@@ -454,6 +490,40 @@
   color: rgba(255, 255, 255, 0.5);
 }
 
+.scale-edited-indicator {
+  font-size: 10px;
+  color: rgba(100, 108, 255, 0.8);
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.scale-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.scale-edit-btn {
+  background: rgba(100, 108, 255, 0.1);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px;
+  cursor: pointer;
+  color: rgba(100, 108, 255, 0.9);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.scale-edit-btn:hover {
+  background: rgba(100, 108, 255, 0.2);
+  border-color: rgba(100, 108, 255, 0.5);
+  color: rgba(100, 108, 255, 1);
+}
+
 .scale-copy-btn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -471,6 +541,109 @@
 .scale-copy-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
+}
+
+.scale-editor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.typography-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.control-group label {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.7);
+  text-transform: uppercase;
+}
+
+.typography-input {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  transition: all 0.2s;
+}
+
+.typography-input:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.typography-input:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(100, 108, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.2);
+}
+
+.typography-input select {
+  cursor: pointer;
+}
+
+.editor-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.save-btn {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: rgba(255, 255, 255, 0.7);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.save-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(255, 255, 255, 0.2);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.reset-typography-btn {
+  background: rgba(255, 100, 100, 0.1);
+  border: 1px solid rgba(255, 100, 100, 0.3);
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  color: rgba(255, 150, 150, 0.9);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s;
+  margin-left: auto;
+}
+
+.reset-typography-btn:hover {
+  background: rgba(255, 100, 100, 0.2);
+  border-color: rgba(255, 100, 100, 0.5);
+  color: rgba(255, 200, 200, 1);
 }
 
 /* Spacing */
@@ -496,12 +669,30 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.spacing-item.editing {
+  flex-direction: column;
+  align-items: stretch;
+  background: rgba(100, 108, 255, 0.1);
+  border-color: rgba(100, 108, 255, 0.3);
+}
+
 .spacing-type {
   font-size: 11px;
   font-weight: 600;
   color: rgba(100, 108, 255, 0.8);
   text-transform: uppercase;
   min-width: 60px;
+}
+
+.spacing-type-display {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(100, 108, 255, 0.9);
+  text-transform: uppercase;
+  padding: 8px 12px;
+  background: rgba(100, 108, 255, 0.1);
+  border-radius: 6px;
+  text-align: center;
 }
 
 .spacing-value {
@@ -514,6 +705,39 @@
 .spacing-count {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.5);
+}
+
+.spacing-edited-indicator {
+  font-size: 10px;
+  color: rgba(100, 108, 255, 0.8);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.spacing-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.spacing-edit-btn {
+  background: rgba(100, 108, 255, 0.1);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px;
+  cursor: pointer;
+  color: rgba(100, 108, 255, 0.9);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.spacing-edit-btn:hover {
+  background: rgba(100, 108, 255, 0.2);
+  border-color: rgba(100, 108, 255, 0.5);
+  color: rgba(100, 108, 255, 1);
 }
 
 .spacing-copy-btn {
@@ -533,6 +757,19 @@
 .spacing-copy-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
+}
+
+.spacing-editor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.spacing-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 12px;
 }
 
 /* Border Radius */
@@ -558,8 +795,29 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.radius-item.editing {
+  flex-direction: column;
+  align-items: stretch;
+  background: rgba(100, 108, 255, 0.1);
+  border-color: rgba(100, 108, 255, 0.3);
+}
+
 .radius-preview {
   flex-shrink: 0;
+}
+
+.radius-preview-large {
+  width: 100%;
+  height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(100, 108, 255, 0.2);
+  border: 2px solid rgba(100, 108, 255, 0.4);
+  margin-top: 12px;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  font-size: 14px;
 }
 
 .radius-info {
@@ -581,6 +839,40 @@
   color: rgba(255, 255, 255, 0.5);
 }
 
+.radius-edited-indicator {
+  font-size: 10px;
+  color: rgba(100, 108, 255, 0.8);
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.radius-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.radius-edit-btn {
+  background: rgba(100, 108, 255, 0.1);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px;
+  cursor: pointer;
+  color: rgba(100, 108, 255, 0.9);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.radius-edit-btn:hover {
+  background: rgba(100, 108, 255, 0.2);
+  border-color: rgba(100, 108, 255, 0.5);
+  color: rgba(100, 108, 255, 1);
+}
+
 .radius-copy-btn {
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid rgba(255, 255, 255, 0.1);
@@ -598,6 +890,19 @@
 .radius-copy-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
+}
+
+.radius-editor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.radius-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* Shadows */
@@ -623,6 +928,13 @@
   border-color: rgba(255, 255, 255, 0.2);
 }
 
+.shadow-item.editing {
+  flex-direction: column;
+  align-items: stretch;
+  background: rgba(100, 108, 255, 0.1);
+  border-color: rgba(100, 108, 255, 0.3);
+}
+
 .shadow-preview {
   width: 60px;
   height: 40px;
@@ -633,6 +945,23 @@
   font-size: 11px;
   font-weight: 500;
   color: rgba(255, 255, 255, 0.7);
+}
+
+.shadow-preview-large {
+  width: 100%;
+  min-height: 80px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(255, 255, 255, 0.05);
+  border: 2px solid rgba(100, 108, 255, 0.3);
+  border-radius: 8px;
+  margin-top: 12px;
+  padding: 20px;
+  color: rgba(255, 255, 255, 0.9);
+  font-weight: 500;
+  font-size: 14px;
+  text-align: center;
 }
 
 .shadow-info {
@@ -649,6 +978,17 @@
   text-transform: uppercase;
 }
 
+.shadow-type-display {
+  font-size: 12px;
+  font-weight: 600;
+  color: rgba(100, 108, 255, 0.9);
+  text-transform: uppercase;
+  padding: 8px 12px;
+  background: rgba(100, 108, 255, 0.1);
+  border-radius: 6px;
+  text-align: center;
+}
+
 .shadow-value {
   font-size: 11px;
   font-family: 'Courier New', monospace;
@@ -659,6 +999,40 @@
 .shadow-count {
   font-size: 11px;
   color: rgba(255, 255, 255, 0.5);
+}
+
+.shadow-edited-indicator {
+  font-size: 10px;
+  color: rgba(100, 108, 255, 0.8);
+  font-weight: 600;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+.shadow-actions {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.shadow-edit-btn {
+  background: rgba(100, 108, 255, 0.1);
+  border: 1px solid rgba(100, 108, 255, 0.3);
+  border-radius: 6px;
+  padding: 6px;
+  cursor: pointer;
+  color: rgba(100, 108, 255, 0.9);
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.shadow-edit-btn:hover {
+  background: rgba(100, 108, 255, 0.2);
+  border-color: rgba(100, 108, 255, 0.5);
+  color: rgba(100, 108, 255, 1);
 }
 
 .shadow-copy-btn {
@@ -678,6 +1052,45 @@
 .shadow-copy-btn:hover {
   background: rgba(255, 255, 255, 0.1);
   color: rgba(255, 255, 255, 0.9);
+}
+
+.shadow-editor {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.shadow-controls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 12px;
+}
+
+.shadow-textarea {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 6px;
+  padding: 8px 10px;
+  color: rgba(255, 255, 255, 0.9);
+  font-size: 12px;
+  font-family: 'Courier New', monospace;
+  transition: all 0.2s;
+  resize: vertical;
+  min-height: 60px;
+  width: 100%;
+}
+
+.shadow-textarea:hover {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.2);
+}
+
+.shadow-textarea:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.1);
+  border-color: rgba(100, 108, 255, 0.5);
+  box-shadow: 0 0 0 2px rgba(100, 108, 255, 0.2);
 }
 
 /* Layouts */

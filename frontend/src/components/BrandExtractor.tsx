@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle, RotateCcw } from 'lucide-react';
+import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle, RotateCcw, Edit2, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { mapColorsToPalette, applyColorReplacementsToDOM } from '../utils/colorPalettes';
 import './BrandExtractor.css';
@@ -38,6 +38,10 @@ interface TypographyScale {
   size: string;
   count: number;
   elements: string[];
+  fontFamily?: string;
+  fontWeight?: string;
+  lineHeight?: string;
+  letterSpacing?: string;
 }
 
 interface LayoutInfo {
@@ -48,7 +52,7 @@ interface LayoutInfo {
 }
 
 export default function BrandExtractor() {
-  const { state, setExtractedColors, setColorMapping } = useApp();
+  const { state, setExtractedColors, setColorMapping, setTypographyCss } = useApp();
   const [colors, setColors] = useState<ColorInfo[]>([]);
   const [fonts, setFonts] = useState<FontInfo[]>([]);
   const [spacing, setSpacing] = useState<SpacingInfo[]>([]);
@@ -65,6 +69,14 @@ export default function BrandExtractor() {
   const [isRandomizing, setIsRandomizing] = useState(false);
   const [editedColors, setEditedColors] = useState<Record<string, string>>({});
   const [originalColors, setOriginalColors] = useState<ColorInfo[]>([]);
+  const [editingTypography, setEditingTypography] = useState<string | null>(null);
+  const [typographyEdits, setTypographyEdits] = useState<Record<string, Partial<TypographyScale>>>({});
+  const [editingBorderRadius, setEditingBorderRadius] = useState<string | null>(null);
+  const [borderRadiusEdits, setBorderRadiusEdits] = useState<Record<string, string>>({});
+  const [editingSpacing, setEditingSpacing] = useState<string | null>(null);
+  const [spacingEdits, setSpacingEdits] = useState<Record<string, { value: string; type: 'margin' | 'padding' }>>({});
+  const [editingShadow, setEditingShadow] = useState<string | null>(null);
+  const [shadowEdits, setShadowEdits] = useState<Record<string, { value: string; type: 'box-shadow' | 'text-shadow' }>>({});
 
   // Convert hex/rgb to hex format
   const normalizeColor = (color: string): string | null => {
@@ -651,6 +663,325 @@ export default function BrandExtractor() {
     }
   }, [setColorMapping, state.editor.colorMapping, state.view.htmlContent, originalColors]);
 
+
+  // Handle typography edit
+  const handleTypographyEdit = useCallback((size: string, field: keyof TypographyScale, value: string) => {
+    setTypographyEdits(prev => {
+      const currentEdits = prev[size] || {};
+      const updatedEdits = {
+        ...currentEdits,
+        [field]: value,
+      };
+      
+      return {
+        ...prev,
+        [size]: updatedEdits,
+      };
+    });
+  }, []);
+
+  // Apply typography changes when edits change
+  useEffect(() => {
+    if (Object.keys(typographyEdits).length === 0) {
+      setTypographyCss('');
+      return;
+    }
+
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) return;
+
+    // Generate CSS for typography changes
+    const cssRules: string[] = [];
+    
+    Object.entries(typographyEdits).forEach(([originalSize, edits]) => {
+      // Find the scale item to get element types
+      const scaleItem = typographyScale.find(s => s.size === originalSize);
+      if (!scaleItem) return;
+
+      // Create selector based on element types
+      const elementSelectors = scaleItem.elements.map(el => el.toLowerCase()).join(', ');
+      
+      // Build CSS rules
+      const rules: string[] = [];
+      if (edits.fontFamily) rules.push(`font-family: ${edits.fontFamily} !important;`);
+      if (edits.fontWeight) rules.push(`font-weight: ${edits.fontWeight} !important;`);
+      if (edits.lineHeight) rules.push(`line-height: ${edits.lineHeight} !important;`);
+      if (edits.letterSpacing) rules.push(`letter-spacing: ${edits.letterSpacing} !important;`);
+      if (edits.size) rules.push(`font-size: ${edits.size} !important;`);
+      
+      if (rules.length > 0 && elementSelectors) {
+        cssRules.push(`${elementSelectors} { ${rules.join(' ')} }`);
+      }
+    });
+
+    // Also apply directly to DOM for immediate feedback
+    const allElements = iframeDoc.querySelectorAll('*');
+    allElements.forEach((el) => {
+      const computed = iframeDoc.defaultView?.getComputedStyle(el) || window.getComputedStyle(el);
+      const currentSize = computed.fontSize;
+      
+      // Check if this size has edits
+      const sizeEdits = typographyEdits[currentSize];
+      if (sizeEdits) {
+        const htmlEl = el as HTMLElement;
+        if (sizeEdits.fontFamily) {
+          htmlEl.style.setProperty('font-family', sizeEdits.fontFamily, 'important');
+        }
+        if (sizeEdits.fontWeight) {
+          htmlEl.style.setProperty('font-weight', sizeEdits.fontWeight, 'important');
+        }
+        if (sizeEdits.lineHeight) {
+          htmlEl.style.setProperty('line-height', sizeEdits.lineHeight, 'important');
+        }
+        if (sizeEdits.letterSpacing) {
+          htmlEl.style.setProperty('letter-spacing', sizeEdits.letterSpacing, 'important');
+        }
+        if (sizeEdits.size) {
+          htmlEl.style.setProperty('font-size', sizeEdits.size, 'important');
+        }
+      }
+    });
+
+    // Update typography CSS in state
+    if (cssRules.length > 0) {
+      setTypographyCss(cssRules.join('\n'));
+    } else {
+      setTypographyCss('');
+    }
+  }, [typographyEdits, typographyScale, setTypographyCss]);
+
+  // Apply font to all elements with specific font size
+  const applyFontToTypography = useCallback((fontFamily: string, size: string) => {
+    handleTypographyEdit(size, 'fontFamily', fontFamily);
+  }, [handleTypographyEdit]);
+
+  // Reset typography changes
+  const resetTypography = useCallback(() => {
+    setTypographyEdits({});
+    setEditingTypography(null);
+    setTypographyCss('');
+    
+    // Remove typography styles from iframe
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (iframe) {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const allElements = iframeDoc.querySelectorAll('*');
+        allElements.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          if (htmlEl.style) {
+            ['font-family', 'font-weight', 'line-height', 'letter-spacing', 'font-size'].forEach(prop => {
+              if (htmlEl.style.getPropertyPriority(prop) === 'important') {
+                htmlEl.style.removeProperty(prop);
+              }
+            });
+          }
+        });
+      }
+    }
+  }, [setTypographyCss]);
+
+  // Apply border radius changes
+  useEffect(() => {
+    if (Object.keys(borderRadiusEdits).length === 0) return;
+
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) return;
+
+    // Apply border radius changes directly to DOM
+    const allElements = iframeDoc.querySelectorAll('*');
+    allElements.forEach((el) => {
+      const computed = iframeDoc.defaultView?.getComputedStyle(el) || window.getComputedStyle(el);
+      const currentRadius = computed.borderRadius;
+      
+      // Check if this radius has edits
+      if (borderRadiusEdits[currentRadius]) {
+        const htmlEl = el as HTMLElement;
+        htmlEl.style.setProperty('border-radius', borderRadiusEdits[currentRadius], 'important');
+      }
+    });
+  }, [borderRadiusEdits]);
+
+  // Apply spacing changes
+  useEffect(() => {
+    if (Object.keys(spacingEdits).length === 0) return;
+
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) return;
+
+    // Apply spacing changes directly to DOM
+    const allElements = iframeDoc.querySelectorAll('*');
+    allElements.forEach((el) => {
+      const computed = iframeDoc.defaultView?.getComputedStyle(el) || window.getComputedStyle(el);
+      const currentMargin = computed.margin;
+      const currentPadding = computed.padding;
+      
+      // Check margin edits
+      if (spacingEdits[currentMargin] && spacingEdits[currentMargin].type === 'margin') {
+        const htmlEl = el as HTMLElement;
+        htmlEl.style.setProperty('margin', spacingEdits[currentMargin].value, 'important');
+      }
+      
+      // Check padding edits
+      if (spacingEdits[currentPadding] && spacingEdits[currentPadding].type === 'padding') {
+        const htmlEl = el as HTMLElement;
+        htmlEl.style.setProperty('padding', spacingEdits[currentPadding].value, 'important');
+      }
+    });
+  }, [spacingEdits]);
+
+  // Handle border radius edit
+  const handleBorderRadiusEdit = useCallback((originalValue: string, newValue: string) => {
+    setBorderRadiusEdits(prev => ({
+      ...prev,
+      [originalValue]: newValue,
+    }));
+  }, []);
+
+  // Handle spacing edit
+  const handleSpacingEdit = useCallback((originalValue: string, type: 'margin' | 'padding', newValue: string) => {
+    setSpacingEdits(prev => ({
+      ...prev,
+      [originalValue]: { value: newValue, type },
+    }));
+  }, []);
+
+  // Reset border radius changes
+  const resetBorderRadius = useCallback(() => {
+    setBorderRadiusEdits({});
+    setEditingBorderRadius(null);
+    
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (iframe) {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const allElements = iframeDoc.querySelectorAll('*');
+        allElements.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          if (htmlEl.style && htmlEl.style.getPropertyPriority('border-radius') === 'important') {
+            htmlEl.style.removeProperty('border-radius');
+          }
+        });
+      }
+    }
+  }, []);
+
+  // Reset spacing changes
+  const resetSpacing = useCallback(() => {
+    setSpacingEdits({});
+    setEditingSpacing(null);
+    
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (iframe) {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const allElements = iframeDoc.querySelectorAll('*');
+        allElements.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          if (htmlEl.style) {
+            if (htmlEl.style.getPropertyPriority('margin') === 'important') {
+              htmlEl.style.removeProperty('margin');
+            }
+            if (htmlEl.style.getPropertyPriority('padding') === 'important') {
+              htmlEl.style.removeProperty('padding');
+            }
+          }
+        });
+      }
+    }
+  }, []);
+
+  // Apply shadow changes
+  useEffect(() => {
+    if (Object.keys(shadowEdits).length === 0) return;
+
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (!iframe) return;
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) return;
+
+    // Apply shadow changes directly to DOM
+    const allElements = iframeDoc.querySelectorAll('*');
+    allElements.forEach((el) => {
+      const computed = iframeDoc.defaultView?.getComputedStyle(el) || window.getComputedStyle(el);
+      const currentBoxShadow = computed.boxShadow;
+      const currentTextShadow = computed.textShadow;
+      
+      // Check box-shadow edits
+      if (currentBoxShadow && currentBoxShadow !== 'none' && shadowEdits[currentBoxShadow] && shadowEdits[currentBoxShadow].type === 'box-shadow') {
+        const htmlEl = el as HTMLElement;
+        htmlEl.style.setProperty('box-shadow', shadowEdits[currentBoxShadow].value, 'important');
+      }
+      
+      // Check text-shadow edits
+      if (currentTextShadow && currentTextShadow !== 'none' && shadowEdits[currentTextShadow] && shadowEdits[currentTextShadow].type === 'text-shadow') {
+        const htmlEl = el as HTMLElement;
+        htmlEl.style.setProperty('text-shadow', shadowEdits[currentTextShadow].value, 'important');
+      }
+    });
+  }, [shadowEdits]);
+
+  // Handle shadow edit
+  const handleShadowEdit = useCallback((originalValue: string, type: 'box-shadow' | 'text-shadow', newValue: string) => {
+    setShadowEdits(prev => ({
+      ...prev,
+      [originalValue]: { value: newValue, type },
+    }));
+  }, []);
+
+  // Reset shadow changes
+  const resetShadows = useCallback(() => {
+    setShadowEdits({});
+    setEditingShadow(null);
+    
+    const iframe = document.querySelector('iframe') as HTMLIFrameElement;
+    if (iframe) {
+      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (iframeDoc) {
+        const allElements = iframeDoc.querySelectorAll('*');
+        allElements.forEach((el) => {
+          const htmlEl = el as HTMLElement;
+          if (htmlEl.style) {
+            if (htmlEl.style.getPropertyPriority('box-shadow') === 'important') {
+              htmlEl.style.removeProperty('box-shadow');
+            }
+            if (htmlEl.style.getPropertyPriority('text-shadow') === 'important') {
+              htmlEl.style.removeProperty('text-shadow');
+            }
+          }
+        });
+      }
+    }
+  }, []);
+
+  // Popular font families
+  const popularFonts = [
+    'Inter, sans-serif',
+    'Roboto, sans-serif',
+    'Open Sans, sans-serif',
+    'Lato, sans-serif',
+    'Montserrat, sans-serif',
+    'Poppins, sans-serif',
+    'Playfair Display, serif',
+    'Merriweather, serif',
+    'Georgia, serif',
+    'Courier New, monospace',
+    'Fira Code, monospace',
+    'Arial, sans-serif',
+    'Helvetica, sans-serif',
+    'Times New Roman, serif',
+  ];
+
   return (
     <div className="brand-extractor">
       <div className="brand-header">
@@ -817,13 +1148,37 @@ export default function BrandExtractor() {
                     {fontInfo.count} uses • {Array.from(fontInfo.weights).join(', ')} • {Array.from(fontInfo.sizes).slice(0, 3).join(', ')}
                   </div>
                 </div>
-                <button
-                  className="font-copy-btn"
-                  onClick={() => copyToClipboard(fontInfo.family)}
-                  title="Copy font name"
-                >
-                  {copiedItem === fontInfo.family ? <Check size={12} /> : <Copy size={12} />}
-                </button>
+                <div className="font-actions">
+                  <select
+                    className="font-apply-select"
+                    onChange={(e) => {
+                      if (e.target.value) {
+                        // Apply font to all typography scales that match
+                        typographyScale.forEach(scale => {
+                          if (Array.from(fontInfo.sizes).includes(scale.size)) {
+                            applyFontToTypography(e.target.value, scale.size);
+                          }
+                        });
+                        e.target.value = '';
+                      }
+                    }}
+                    title="Apply to matching typography"
+                  >
+                    <option value="">Apply to...</option>
+                    {typographyScale.map(scale => (
+                      <option key={scale.size} value={fontInfo.family}>
+                        {scale.size} ({scale.count} uses)
+                      </option>
+                    ))}
+                  </select>
+                  <button
+                    className="font-copy-btn"
+                    onClick={() => copyToClipboard(fontInfo.family)}
+                    title="Copy font name"
+                  >
+                    {copiedItem === fontInfo.family ? <Check size={12} /> : <Copy size={12} />}
+                  </button>
+                </div>
               </div>
             ))}
           </div>
@@ -836,28 +1191,155 @@ export default function BrandExtractor() {
           <div className="section-header">
             <Type size={14} />
             <span>Typography Scale ({typographyScale.length})</span>
+            {Object.keys(typographyEdits).length > 0 && (
+              <button
+                className="reset-typography-btn"
+                onClick={resetTypography}
+                title="Reset all typography changes"
+              >
+                <RotateCcw size={12} />
+                Reset
+              </button>
+            )}
           </div>
           <div className="typography-scale-list">
-            {typographyScale.map((scale) => (
-              <div key={scale.size} className="scale-item">
-                <div className="scale-preview" style={{ fontSize: scale.size }}>
-                  Aa
-                </div>
-                <div className="scale-info">
-                  <div className="scale-size">{scale.size}</div>
-                  <div className="scale-details">
-                    {scale.count} uses • {scale.elements.slice(0, 3).join(', ')}
+            {typographyScale.map((scale) => {
+              const isEditing = editingTypography === scale.size;
+              const edits = typographyEdits[scale.size] || {};
+              const displayFont = edits.fontFamily || scale.fontFamily || 'inherit';
+              const displayWeight = edits.fontWeight || scale.fontWeight || '400';
+              const displayLineHeight = edits.lineHeight || scale.lineHeight || 'normal';
+              const displayLetterSpacing = edits.letterSpacing || scale.letterSpacing || 'normal';
+              const displaySize = edits.size || scale.size;
+
+              return (
+                <div key={scale.size} className={`scale-item ${isEditing ? 'editing' : ''}`}>
+                  <div 
+                    className="scale-preview" 
+                    style={{ 
+                      fontSize: displaySize,
+                      fontFamily: displayFont,
+                      fontWeight: displayWeight,
+                      lineHeight: displayLineHeight,
+                      letterSpacing: displayLetterSpacing,
+                    }}
+                  >
+                    Aa
                   </div>
+                  {!isEditing ? (
+                    <>
+                      <div className="scale-info">
+                        <div className="scale-size">{displaySize}</div>
+                        <div className="scale-details">
+                          {scale.count} uses • {scale.elements.slice(0, 3).join(', ')}
+                        </div>
+                        {(edits.fontFamily || edits.fontWeight || edits.lineHeight || edits.letterSpacing || edits.size) && (
+                          <div className="scale-edited-indicator">
+                            Customized
+                          </div>
+                        )}
+                      </div>
+                      <div className="scale-actions">
+                        <button
+                          className="scale-edit-btn"
+                          onClick={() => setEditingTypography(scale.size)}
+                          title="Edit typography"
+                        >
+                          <Edit2 size={12} />
+                        </button>
+                        <button
+                          className="scale-copy-btn"
+                          onClick={() => copyToClipboard(scale.size)}
+                          title="Copy font size"
+                        >
+                          {copiedItem === scale.size ? <Check size={12} /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="scale-editor">
+                      <div className="typography-controls">
+                        <div className="control-group">
+                          <label>Font Family</label>
+                          <select
+                            value={edits.fontFamily || ''}
+                            onChange={(e) => handleTypographyEdit(scale.size, 'fontFamily', e.target.value)}
+                            className="typography-input"
+                          >
+                            <option value="">Select font...</option>
+                            {popularFonts.map(font => (
+                              <option key={font} value={font}>{font}</option>
+                            ))}
+                            {fonts.map(font => (
+                              <option key={font.family} value={font.family}>{font.family}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="control-group">
+                          <label>Font Size</label>
+                          <input
+                            type="text"
+                            value={edits.size || scale.size}
+                            onChange={(e) => handleTypographyEdit(scale.size, 'size', e.target.value)}
+                            className="typography-input"
+                            placeholder={scale.size}
+                          />
+                        </div>
+                        <div className="control-group">
+                          <label>Font Weight</label>
+                          <select
+                            value={edits.fontWeight || ''}
+                            onChange={(e) => handleTypographyEdit(scale.size, 'fontWeight', e.target.value)}
+                            className="typography-input"
+                          >
+                            <option value="">Default</option>
+                            <option value="100">100 - Thin</option>
+                            <option value="200">200 - Extra Light</option>
+                            <option value="300">300 - Light</option>
+                            <option value="400">400 - Normal</option>
+                            <option value="500">500 - Medium</option>
+                            <option value="600">600 - Semi Bold</option>
+                            <option value="700">700 - Bold</option>
+                            <option value="800">800 - Extra Bold</option>
+                            <option value="900">900 - Black</option>
+                          </select>
+                        </div>
+                        <div className="control-group">
+                          <label>Line Height</label>
+                          <input
+                            type="text"
+                            value={edits.lineHeight || ''}
+                            onChange={(e) => handleTypographyEdit(scale.size, 'lineHeight', e.target.value)}
+                            className="typography-input"
+                            placeholder="normal"
+                          />
+                        </div>
+                        <div className="control-group">
+                          <label>Letter Spacing</label>
+                          <input
+                            type="text"
+                            value={edits.letterSpacing || ''}
+                            onChange={(e) => handleTypographyEdit(scale.size, 'letterSpacing', e.target.value)}
+                            className="typography-input"
+                            placeholder="normal"
+                          />
+                        </div>
+                      </div>
+                      <div className="editor-actions">
+                        <button
+                          className="save-btn"
+                          onClick={() => setEditingTypography(null)}
+                          title="Close editor"
+                        >
+                          <X size={12} />
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button
-                  className="scale-copy-btn"
-                  onClick={() => copyToClipboard(scale.size)}
-                  title="Copy font size"
-                >
-                  {copiedItem === scale.size ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -868,22 +1350,84 @@ export default function BrandExtractor() {
           <div className="section-header">
             <Ruler size={14} />
             <span>Spacing ({spacing.length})</span>
+            {Object.keys(spacingEdits).length > 0 && (
+              <button
+                className="reset-typography-btn"
+                onClick={resetSpacing}
+                title="Reset all spacing changes"
+              >
+                <RotateCcw size={12} />
+                Reset
+              </button>
+            )}
           </div>
           <div className="spacing-list">
-            {spacing.map((spacingInfo, idx) => (
-              <div key={`${spacingInfo.type}-${idx}`} className="spacing-item">
-                <div className="spacing-type">{spacingInfo.type}</div>
-                <div className="spacing-value">{spacingInfo.value}</div>
-                <div className="spacing-count">{spacingInfo.count} uses</div>
-                <button
-                  className="spacing-copy-btn"
-                  onClick={() => copyToClipboard(spacingInfo.value)}
-                  title="Copy spacing value"
-                >
-                  {copiedItem === spacingInfo.value ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            ))}
+            {spacing.map((spacingInfo) => {
+              const spacingKey = `${spacingInfo.type}:${spacingInfo.value}`;
+              const isEditing = editingSpacing === spacingKey;
+              const edit = spacingEdits[spacingInfo.value];
+              const displayValue = edit?.value || spacingInfo.value;
+
+              return (
+                <div key={spacingKey} className={`spacing-item ${isEditing ? 'editing' : ''}`}>
+                  {!isEditing ? (
+                    <>
+                      <div className="spacing-type">{spacingInfo.type}</div>
+                      <div className="spacing-value">{displayValue}</div>
+                      <div className="spacing-count">{spacingInfo.count} uses</div>
+                      {edit && (
+                        <div className="spacing-edited-indicator">Customized</div>
+                      )}
+                      <div className="spacing-actions">
+                        <button
+                          className="spacing-edit-btn"
+                          onClick={() => setEditingSpacing(spacingKey)}
+                          title="Edit spacing"
+                        >
+                          <Edit2 size={12} />
+                        </button>
+                        <button
+                          className="spacing-copy-btn"
+                          onClick={() => copyToClipboard(displayValue)}
+                          title="Copy spacing value"
+                        >
+                          {copiedItem === spacingInfo.value ? <Check size={12} /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="spacing-editor">
+                      <div className="spacing-controls">
+                        <div className="control-group">
+                          <label>Type</label>
+                          <div className="spacing-type-display">{spacingInfo.type}</div>
+                        </div>
+                        <div className="control-group">
+                          <label>Value</label>
+                          <input
+                            type="text"
+                            value={edit?.value || spacingInfo.value}
+                            onChange={(e) => handleSpacingEdit(spacingInfo.value, spacingInfo.type, e.target.value)}
+                            className="typography-input"
+                            placeholder={spacingInfo.value}
+                          />
+                        </div>
+                      </div>
+                      <div className="editor-actions">
+                        <button
+                          className="save-btn"
+                          onClick={() => setEditingSpacing(null)}
+                          title="Close editor"
+                        >
+                          <X size={12} />
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       )}
@@ -894,24 +1438,92 @@ export default function BrandExtractor() {
           <div className="section-header">
             <Box size={14} />
             <span>Border Radius ({borderRadius.length})</span>
+            {Object.keys(borderRadiusEdits).length > 0 && (
+              <button
+                className="reset-typography-btn"
+                onClick={resetBorderRadius}
+                title="Reset all border radius changes"
+              >
+                <RotateCcw size={12} />
+                Reset
+              </button>
+            )}
           </div>
           <div className="border-radius-list">
-            {borderRadius.map((radius) => (
-              <div key={radius.value} className="radius-item">
-                <div className="radius-preview" style={{ borderRadius: radius.value, width: '40px', height: '40px', background: 'rgba(100, 108, 255, 0.3)' }} />
-                <div className="radius-info">
-                  <div className="radius-value">{radius.value}</div>
-                  <div className="radius-count">{radius.count} uses</div>
+            {borderRadius.map((radius) => {
+              const isEditing = editingBorderRadius === radius.value;
+              const edit = borderRadiusEdits[radius.value];
+              const displayValue = edit || radius.value;
+
+              return (
+                <div key={radius.value} className={`radius-item ${isEditing ? 'editing' : ''}`}>
+                  <div 
+                    className="radius-preview" 
+                    style={{ 
+                      borderRadius: displayValue, 
+                      width: '40px', 
+                      height: '40px', 
+                      background: 'rgba(100, 108, 255, 0.3)' 
+                    }} 
+                  />
+                  {!isEditing ? (
+                    <>
+                      <div className="radius-info">
+                        <div className="radius-value">{displayValue}</div>
+                        <div className="radius-count">{radius.count} uses</div>
+                        {edit && (
+                          <div className="radius-edited-indicator">Customized</div>
+                        )}
+                      </div>
+                      <div className="radius-actions">
+                        <button
+                          className="radius-edit-btn"
+                          onClick={() => setEditingBorderRadius(radius.value)}
+                          title="Edit border radius"
+                        >
+                          <Edit2 size={12} />
+                        </button>
+                        <button
+                          className="radius-copy-btn"
+                          onClick={() => copyToClipboard(displayValue)}
+                          title="Copy border radius"
+                        >
+                          {copiedItem === radius.value ? <Check size={12} /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="radius-editor">
+                      <div className="radius-controls">
+                        <div className="control-group">
+                          <label>Border Radius</label>
+                          <input
+                            type="text"
+                            value={edit || radius.value}
+                            onChange={(e) => handleBorderRadiusEdit(radius.value, e.target.value)}
+                            className="typography-input"
+                            placeholder={radius.value}
+                          />
+                          <div className="radius-preview-large" style={{ borderRadius: edit || radius.value }}>
+                            Preview
+                          </div>
+                        </div>
+                      </div>
+                      <div className="editor-actions">
+                        <button
+                          className="save-btn"
+                          onClick={() => setEditingBorderRadius(null)}
+                          title="Close editor"
+                        >
+                          <X size={12} />
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <button
-                  className="radius-copy-btn"
-                  onClick={() => copyToClipboard(radius.value)}
-                  title="Copy border radius"
-                >
-                  {copiedItem === radius.value ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
@@ -922,35 +1534,106 @@ export default function BrandExtractor() {
           <div className="section-header">
             <Sparkles size={14} />
             <span>Shadows ({shadows.length})</span>
+            {Object.keys(shadowEdits).length > 0 && (
+              <button
+                className="reset-typography-btn"
+                onClick={resetShadows}
+                title="Reset all shadow changes"
+              >
+                <RotateCcw size={12} />
+                Reset
+              </button>
+            )}
           </div>
           <div className="shadows-list">
-            {shadows.map((shadow, idx) => (
-              <div key={`${shadow.type}-${idx}`} className="shadow-item">
-                <div className="shadow-preview" style={{ 
-                  boxShadow: shadow.type === 'box-shadow' ? shadow.value : 'none',
-                  textShadow: shadow.type === 'text-shadow' ? shadow.value : 'none',
-                  padding: '8px',
-                  background: 'rgba(255, 255, 255, 0.05)',
-                  borderRadius: '4px'
-                }}>
-                  {shadow.type === 'box-shadow' ? 'Box' : 'Text'}
+            {shadows.map((shadow, idx) => {
+              const shadowKey = `${shadow.type}-${idx}`;
+              const isEditing = editingShadow === shadowKey;
+              const edit = shadowEdits[shadow.value];
+              const displayValue = edit?.value || shadow.value;
+
+              return (
+                <div key={shadowKey} className={`shadow-item ${isEditing ? 'editing' : ''}`}>
+                  {!isEditing ? (
+                    <>
+                      <div 
+                        className="shadow-preview" 
+                        style={{ 
+                          boxShadow: shadow.type === 'box-shadow' ? displayValue : 'none',
+                          textShadow: shadow.type === 'text-shadow' ? displayValue : 'none',
+                          padding: '8px',
+                          background: 'rgba(255, 255, 255, 0.05)',
+                          borderRadius: '4px'
+                        }}
+                      >
+                        {shadow.type === 'box-shadow' ? 'Box' : 'Text'}
+                      </div>
+                      <div className="shadow-info">
+                        <div className="shadow-type">{shadow.type}</div>
+                        <div className="shadow-value" title={displayValue}>
+                          {displayValue.length > 40 ? displayValue.substring(0, 40) + '...' : displayValue}
+                        </div>
+                        <div className="shadow-count">{shadow.count} uses</div>
+                        {edit && (
+                          <div className="shadow-edited-indicator">Customized</div>
+                        )}
+                      </div>
+                      <div className="shadow-actions">
+                        <button
+                          className="shadow-edit-btn"
+                          onClick={() => setEditingShadow(shadowKey)}
+                          title="Edit shadow"
+                        >
+                          <Edit2 size={12} />
+                        </button>
+                        <button
+                          className="shadow-copy-btn"
+                          onClick={() => copyToClipboard(displayValue)}
+                          title="Copy shadow value"
+                        >
+                          {copiedItem === shadow.value ? <Check size={12} /> : <Copy size={12} />}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="shadow-editor">
+                      <div className="shadow-controls">
+                        <div className="control-group">
+                          <label>Type</label>
+                          <div className="shadow-type-display">{shadow.type}</div>
+                        </div>
+                        <div className="control-group">
+                          <label>Shadow Value</label>
+                          <textarea
+                            value={edit?.value || shadow.value}
+                            onChange={(e) => handleShadowEdit(shadow.value, shadow.type, e.target.value)}
+                            className="shadow-textarea"
+                            placeholder={shadow.value}
+                            rows={3}
+                          />
+                          <div className="shadow-preview-large" style={{ 
+                            boxShadow: shadow.type === 'box-shadow' ? (edit?.value || shadow.value) : 'none',
+                            textShadow: shadow.type === 'text-shadow' ? (edit?.value || shadow.value) : 'none',
+                          }}>
+                            {shadow.type === 'box-shadow' ? 'Box Shadow Preview' : 'Text Shadow Preview'}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="editor-actions">
+                        <button
+                          className="save-btn"
+                          onClick={() => setEditingShadow(null)}
+                          title="Close editor"
+                        >
+                          <X size={12} />
+                          Close
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <div className="shadow-info">
-                  <div className="shadow-type">{shadow.type}</div>
-                  <div className="shadow-value" title={shadow.value}>
-                    {shadow.value.length > 40 ? shadow.value.substring(0, 40) + '...' : shadow.value}
-                  </div>
-                  <div className="shadow-count">{shadow.count} uses</div>
-                </div>
-                <button
-                  className="shadow-copy-btn"
-                  onClick={() => copyToClipboard(shadow.value)}
-                  title="Copy shadow value"
-                >
-                  {copiedItem === shadow.value ? <Check size={12} /> : <Copy size={12} />}
-                </button>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
