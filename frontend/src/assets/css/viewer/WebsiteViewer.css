@@ -796,6 +796,19 @@
 }
 
 /* Helper */
+/* Multi-View Container */
+.multi-view-container {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 60px; /* Increased gap for better visual separation */
+  transform-style: preserve-3d;
+  /* Ensure hardware acceleration for the container */
+  will-change: transform;
+  /* Prevent layout thrashing */
+  contain: layout style;
+}
+
 .spin {
   animation: spin 1s cubic-bezier(0.4, 0, 0.2, 1) infinite;
 }

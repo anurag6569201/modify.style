@@ -72,18 +72,51 @@ def proxy_resource(request):
     if not resource_url:
         return JsonResponse({'error': 'URL parameter is required'}, status=400)
     
-    content_iterator, content_type, headers_dict = ResourceProxyService.proxy_resource(resource_url)
+    return proxy_resource_logic(resource_url)
+
+
+@xframe_options_exempt
+@api_view(['GET', 'OPTIONS'])
+@permission_classes([AllowAny])
+def proxy_path_view(request, url):
+    """
+    Proxy endpoint using path-based routing for better relative URL resolution.
+    Captures requests like /api/proxy-path/https://example.com/script.js
+    """
+    if request.method == 'OPTIONS':
+        response = HttpResponse()
+        response['Access-Control-Allow-Origin'] = '*'
+        response['Access-Control-Allow-Methods'] = 'GET, OPTIONS'
+        response['Access-Control-Allow-Headers'] = '*'
+        response['Access-Control-Max-Age'] = '86400'
+        return response
     
-    if content_iterator is None:
+    # Reconstruct protocol if malformed by path converter
+    if url.startswith('http:/') and not url.startswith('http://'):
+        url = url.replace('http:/', 'http://', 1)
+    elif url.startswith('https:/') and not url.startswith('https://'):
+        url = url.replace('https:/', 'https://', 1)
+    
+    # Append query parameters if present (e.g. ?v=123)
+    if request.GET:
+        url += '?' + request.GET.urlencode()
+        
+    return proxy_resource_logic(url)
+
+def proxy_resource_logic(resource_url):
+    """Shared logic for proxying resources."""
+    content, content_type, headers_dict = ResourceProxyService.proxy_resource(resource_url)
+    
+    if content is None:
         return JsonResponse(headers_dict, status=500)
     
-    response = StreamingHttpResponse(content_iterator, content_type=content_type)
+    response = HttpResponse(content, content_type=content_type)
     
     for key, value in headers_dict.items():
-        response[key] = value
+        if key.lower() not in ['content-encoding', 'transfer-encoding']:
+            response[key] = value
     
     return response
-
 
 @xframe_options_exempt
 @api_view(['GET', 'POST'])
@@ -107,3 +140,4 @@ def proxy_website(request):
     response = JsonResponse(result)
     response['X-Frame-Options'] = 'ALLOWALL'
     return response
+

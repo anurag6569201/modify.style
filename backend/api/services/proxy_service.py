@@ -128,10 +128,11 @@ class ProxyService:
         ProxyService._remove_blocking_headers(soup)
         
         # Proxy all resources
-        ProxyService._proxy_resources(soup, base_url_str, parsed_url)
+        # Use full base_url for correct relative path resolution
+        ProxyService._proxy_resources(soup, base_url, parsed_url)
         
         # Add base tag and proxy rewrite script
-        ProxyService._add_base_and_scripts(soup, base_url_str)
+        ProxyService._add_base_and_scripts(soup, base_url)
         
         return str(soup)
     
@@ -175,11 +176,14 @@ class ProxyService:
         
         def proxy_url(url: str) -> str:
             """Convert absolute URL to proxy URL."""
-            if not url or url.startswith(('data:', 'blob:', '#', 'javascript:', 'mailto:', 'tel:', '/api/proxy-resource/', '{{PROXY_BASE}}')):
+            if not url or url.startswith(('data:', 'blob:', '#', 'javascript:', 'mailto:', 'tel:', '/api/proxy-resource/', '/api/proxy-path/', '{{PROXY_BASE}}')):
                 return url
             if url.startswith('//'):
                 url = f"{parsed_url.scheme}:{url}"
-            return f"{{{{PROXY_BASE}}}}/api/proxy-resource/?url={quote(url, safe='')}"
+            
+            # Use path-based proxy to enable relative path resolution
+            # The URL is appended to the path, allowing browser to resolve relative links
+            return f"{{{{PROXY_BASE}}}}/api/proxy-path/{url}"
         
         # Proxy stylesheets
         for link in soup.find_all('link', rel=True):
@@ -263,12 +267,15 @@ class ProxyService:
     @staticmethod
     def _add_base_and_scripts(soup: BeautifulSoup, base_url: str) -> None:
         """Add base tag and proxy rewrite script."""
+        # Use path-based proxy for the base URL to ensure relative requests go through proxy
+        proxy_base_href = f"{{{{PROXY_BASE}}}}/api/proxy-path/{base_url}"
+        
         if not soup.find('base'):
-            base_tag = soup.new_tag('base', href=base_url)
+            base_tag = soup.new_tag('base', href=proxy_base_href)
             if soup.head:
                 soup.head.insert(0, base_tag)
         else:
-            soup.find('base')['href'] = base_url
+            soup.find('base')['href'] = proxy_base_href
         
         if soup.head:
             # Add permissive CSP
@@ -283,6 +290,12 @@ class ProxyService:
 (function() {
     var proxyBase = window.location.origin;
     function rewriteProxyUrls() {
+        // Rewrite base tag
+        var baseTag = document.querySelector('base');
+        if (baseTag && baseTag.href.includes('{{PROXY_BASE}}')) {
+            baseTag.href = baseTag.href.replace(/\\{\\{PROXY_BASE\\}\\}/g, proxyBase);
+        }
+
         document.querySelectorAll('link[href*="{{PROXY_BASE}}"]').forEach(function(link) {
             link.href = link.href.replace(/\\{\\{PROXY_BASE\\}\\}/g, proxyBase);
         });
@@ -335,7 +348,7 @@ class ResourceProxyService:
             resource_url: URL of the resource to proxy
             
         Returns:
-            tuple: (content_iterator, content_type, headers_dict) or (None, None, error_dict)
+            tuple: (content, content_type, headers_dict) or (None, None, error_dict)
         """
         import requests
         
@@ -347,7 +360,8 @@ class ResourceProxyService:
                 'Referer': resource_url,
             }
             
-            response = requests.get(resource_url, headers=headers, timeout=30, stream=True, allow_redirects=True)
+            # Disable streaming to avoid Vite proxy chunking errors
+            response = requests.get(resource_url, headers=headers, timeout=30, stream=False, allow_redirects=True)
             response.raise_for_status()
             
             content_type = response.headers.get('Content-Type', 'application/octet-stream')
@@ -359,14 +373,12 @@ class ResourceProxyService:
                 'X-Frame-Options': 'ALLOWALL',
             }
             
-            if 'Content-Length' in response.headers:
-                headers_dict['Content-Length'] = response.headers['Content-Length']
             if 'Cache-Control' in response.headers:
                 headers_dict['Cache-Control'] = response.headers['Cache-Control']
             elif 'Expires' in response.headers:
                 headers_dict['Expires'] = response.headers['Expires']
             
-            return (response.iter_content(chunk_size=8192), content_type, headers_dict)
+            return (response.content, content_type, headers_dict)
             
         except requests.exceptions.RequestException as e:
             logger.error(f'Error fetching resource {resource_url}: {str(e)}')

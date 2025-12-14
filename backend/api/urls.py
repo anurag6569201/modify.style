@@ -19,6 +19,7 @@ urlpatterns = [
     # Proxy endpoints for website rendering
     path('proxy/', views.proxy_website, name='proxy-website'),
     path('proxy-resource/', views.proxy_resource, name='proxy-resource'),
+    path('proxy-path/<path:url>', views.proxy_path_view, name='proxy-path'),
     
     # ViewSet endpoints (examples)
     path('', include(router.urls)),

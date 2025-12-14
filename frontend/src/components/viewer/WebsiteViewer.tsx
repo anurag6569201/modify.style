@@ -20,9 +20,12 @@ import {
   Layout,
   Sparkles,
   Settings2,
-  Palette
+  Palette,
+  Shield,
+  ShieldAlert
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import apiService from '../../services/api';
 import { storage } from '../../utils/storage';
 import type { CustomDevice } from '../../utils/storage';
 import { generateColorReplacementCSS, applyColorReplacementsToDOM } from '../../utils/colorPalettes';
@@ -43,7 +46,6 @@ import {
   PREDEFINED_EFFECTS,
 } from '../';
 import type { PanelType } from '../';
-import apiService from '../../services/api';
 import '../../assets/css/viewer/WebsiteViewer.css';
 import '../../assets/css/ui/SpaceIndicator.css';
 
@@ -107,7 +109,21 @@ function WebsiteViewer() {
     });
     resetViewport();
     setPanPosition({ x: 0, y: 0 });
+    resetViewport();
+    setPanPosition({ x: 0, y: 0 });
     setShowCustomDevices(false);
+  };
+
+  const [isMultiView, setIsMultiView] = useState(false);
+  const [useProxy, setUseProxy] = useState(false);
+
+  const toggleMultiView = () => {
+    setIsMultiView(!isMultiView);
+    // Reset viewport when switching modes for better UX
+    setTimeout(() => {
+      resetViewport();
+      setPanPosition({ x: 0, y: 0 });
+    }, 50);
   };
 
   const handleDeviceModeChange = (mode: string) => {
@@ -167,11 +183,12 @@ function WebsiteViewer() {
     });
   }, [dispatch]);
 
-  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const iframeRefs = useRef<(HTMLIFrameElement | null)[]>([]);
 
   /**
-   * Load website using Django reverse proxy (Playwright-based)
-   * This provides full browser rendering with JavaScript execution
+   * Load website using hybrid strategy:
+   * 1. Direct Iframe: Fast, but subject to CSP/X-Frame-Options (default)
+   * 2. Proxy Mode: Slower, but bypasses restrictions (user toggle)
    */
   const loadWebsite = async () => {
     if (!state.view.url.trim()) {
@@ -179,56 +196,51 @@ function WebsiteViewer() {
       return;
     }
 
-    dispatch({ type: 'SET_LOADING', payload: true });
-    dispatch({ type: 'SET_ERROR', payload: null });
-    dispatch({ type: 'SET_HTML_CONTENT', payload: null });
-    dispatch({ type: 'SET_CURRENT_URL', payload: null });
+    let targetUrl = state.view.url.trim();
+    if (!targetUrl.match(/^https?:\/\//)) {
+      targetUrl = 'https://' + targetUrl;
+    }
 
-    try {
-      let targetUrl = state.view.url.trim();
-      if (!targetUrl.match(/^https?:\/\//)) {
-        targetUrl = 'https://' + targetUrl;
-      }
+    // Save to recent URLs
+    storage.saveRecentUrl(targetUrl);
+    storage.saveSettings({ lastUrl: targetUrl });
 
-      // Use Django backend proxy with Playwright for full browser rendering
-      const response = await apiService.proxyWebsite(targetUrl) as { html?: string; url?: string; status?: string; error?: string };
-      
-      if (response.error) {
-        throw new Error(response.error);
-      }
+    if (useProxy) {
+      // --- PROXY MODE ---
+      dispatch({ type: 'SET_LOADING', payload: true });
+      dispatch({ type: 'SET_ERROR', payload: null });
+      dispatch({ type: 'SET_HTML_CONTENT', payload: null });
+      dispatch({ type: 'SET_CURRENT_URL', payload: null });
 
-      if (!response.html) {
-        throw new Error('No HTML content received from server');
-      }
+      try {
+        const response = await apiService.proxyWebsite(targetUrl) as { html?: string; url?: string; status?: string; error?: string };
 
-      // The backend already processes HTML (removes CSP, fixes URLs, etc.)
-      // So we can use it directly
-      dispatch({ type: 'SET_HTML_CONTENT', payload: response.html });
-      dispatch({ type: 'SET_CURRENT_URL', payload: response.url || targetUrl });
+        if (response.error) {
+          throw new Error(response.error);
+        }
+        if (!response.html) {
+          throw new Error('No HTML content received from server');
+        }
 
-      // Save to recent URLs
-      storage.saveRecentUrl(response.url || targetUrl);
-      storage.saveSettings({ lastUrl: response.url || targetUrl });
-    } catch (err: unknown) {
-      console.error('Error loading website:', err);
-      let errorMessage = 'Failed to load website.';
-      
-      if (err instanceof Error) {
-        errorMessage = err.message;
-      } else if (typeof err === 'string') {
-        errorMessage = err;
+        dispatch({ type: 'SET_HTML_CONTENT', payload: response.html });
+        dispatch({ type: 'SET_CURRENT_URL', payload: response.url || targetUrl });
+
+      } catch (err: unknown) {
+        console.error('Error loading website via proxy:', err);
+        let errorMessage = 'Failed to load website.';
+        if (err instanceof Error) errorMessage = err.message;
+        if (typeof err === 'string') errorMessage = err;
+
+        dispatch({ type: 'SET_ERROR', payload: errorMessage });
+      } finally {
+        dispatch({ type: 'SET_LOADING', payload: false });
       }
-      
-      // Provide helpful error messages
-      if (errorMessage.includes('Failed to fetch') || errorMessage.includes('NetworkError')) {
-        errorMessage = 'Unable to connect to the server. Please ensure the backend is running on http://localhost:8000';
-      } else if (errorMessage.includes('timeout')) {
-        errorMessage = 'The website took too long to load. Please try again or check if the URL is correct.';
-      }
-      
-      dispatch({ type: 'SET_ERROR', payload: errorMessage });
-    } finally {
-      dispatch({ type: 'SET_LOADING', payload: false });
+    } else {
+      // --- DIRECT IFRAME MODE ---
+      dispatch({ type: 'SET_LOADING', payload: false }); // No loading state needed for direct iframe
+      dispatch({ type: 'SET_ERROR', payload: null });
+      dispatch({ type: 'SET_HTML_CONTENT', payload: null }); // Clear proxy content
+      dispatch({ type: 'SET_CURRENT_URL', payload: targetUrl });
     }
   };
 
@@ -279,48 +291,96 @@ function WebsiteViewer() {
       }
     }
 
-    // Inject combined CSS
+    // Inject combined CSS with high specificity to override defaults
     if (combinedCss.trim()) {
       const style = doc.createElement('style');
       style.id = 'custom-injected-css';
-      style.textContent = combinedCss;
+      // Wrap CSS to ensure it overrides default styles
+      style.textContent = `
+        /* Injected Custom CSS - High Priority */
+        ${combinedCss}
+      `;
+      // Append to head, or create head if it doesn't exist
+      if (!doc.head) {
+        const head = doc.createElement('head');
+        doc.documentElement.insertBefore(head, doc.documentElement.firstChild);
+      }
       doc.head.appendChild(style);
     }
   }, [state.editor.customCss, state.editor.activeEffects, state.editor.typographyCss, state.editor.colorMapping]);
 
 
+  // Effect for Proxy Content injection
   useEffect(() => {
-    if (state.view.htmlContent && iframeRef.current) {
-      const iframe = iframeRef.current;
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (state.view.htmlContent) {
+      iframeRefs.current.forEach((iframe) => {
+        if (!iframe) return;
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
 
-      if (iframeDoc) {
-        // Replace proxy URL placeholders with actual origin before writing
-        const proxyBase = window.location.origin;
-        const processedHtml = state.view.htmlContent.replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
-        
-        iframeDoc.open();
-        iframeDoc.write(processedHtml);
-        iframeDoc.close();
-        
-        injectCustomCss(iframeDoc);
-      }
+        if (iframeDoc) {
+          // Replace proxy URL placeholders with actual origin before writing
+          const proxyBase = window.location.origin;
+          const processedHtml = state.view.htmlContent!.replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
+
+          iframeDoc.open();
+          iframeDoc.write(processedHtml);
+          iframeDoc.close();
+
+          injectCustomCss(iframeDoc);
+        }
+      });
     }
   }, [state.view.htmlContent, injectCustomCss]);
 
+  // Effect for Direct Iframe Injection (Load & Reference)
   useEffect(() => {
-    if (iframeRef.current) {
-      const iframe = iframeRef.current;
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
-      if (iframeDoc) {
-        // Apply color replacements to DOM
-        if (state.editor.colorMapping) {
-          applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+    const handleIframeLoad = (iframe: HTMLIFrameElement) => {
+      try {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc && iframeDoc.readyState === 'complete') {
+          // Apply color replacements to DOM
+          if (state.editor.colorMapping) {
+            applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+          }
+          injectCustomCss(iframeDoc);
         }
-        injectCustomCss(iframeDoc);
+      } catch (e) {
+        // Cross-origin iframe - cannot inject CSS
+        console.warn('Cannot inject CSS into cross-origin iframe:', e);
       }
+    };
+
+    // Set up load handlers for all iframes (Direct Mode)
+    if (!state.view.htmlContent) {
+      iframeRefs.current.forEach((iframe) => {
+        if (!iframe) return;
+        // If iframe already loaded, inject immediately
+        if (iframe.contentDocument?.readyState === 'complete') {
+          handleIframeLoad(iframe);
+        } else {
+          // Otherwise, wait for load event
+          iframe.addEventListener('load', () => handleIframeLoad(iframe), { once: true });
+        }
+      });
     }
-  }, [state.editor.customCss, state.editor.showCssEditor, state.editor.colorMapping, injectCustomCss]);
+
+    // Also inject when CSS changes (for already loaded iframes - both modes)
+    iframeRefs.current.forEach((iframe) => {
+      if (!iframe) return;
+      try {
+        const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (iframeDoc && (iframeDoc.readyState === 'complete' || state.view.htmlContent)) {
+          if (state.editor.colorMapping) {
+            applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+          }
+          injectCustomCss(iframeDoc);
+        }
+      } catch (e) {
+        // Cross-origin
+      }
+    });
+
+  }, [state.view.currentUrl, state.view.htmlContent, state.editor.customCss, state.editor.showCssEditor, state.editor.colorMapping, state.editor.typographyCss, state.editor.activeEffects, injectCustomCss]);
 
   // Custom zoom functions with smooth scaling
   const handleZoomIn = useCallback(() => {
@@ -607,6 +667,109 @@ function WebsiteViewer() {
     setPanPosition({ x: 0, y: 0 });
   };
 
+  // Helper to render a single device frame
+  const renderFrame = (mode: string, index: number, customConfig?: CustomDevice | null) => {
+    const isCustom = mode.startsWith('custom-');
+    const config = isCustom ? null : DEFAULT_DEVICES[mode];
+
+    // Determine dimensions
+    let width = '100%';
+    let height = '100%';
+
+    if (state.viewport.isFullView) {
+      width = '100%';
+      height = '100%';
+    } else if (customConfig) {
+      width = `${customConfig.width}px`;
+      height = `${customConfig.height}px`;
+    } else if (config) {
+      width = config.width;
+      height = config.height;
+    }
+
+    // Determine frame class
+    const frameClass = `frame-wrapper ${customConfig ? customConfig.type : mode} ${state.viewport.isFullView ? 'full-view-frame' : ''}`;
+
+    // Calculate transform
+    // In Multi-view, the transform is applied to the container, not individual frames
+    // In Single-view, it's applied to the frame
+    const transformStyle = isMultiView
+      ? undefined
+      : (isDragging
+        ? `translate3d(${panPositionRef.current.x}px, ${panPositionRef.current.y}px, 0) scale(${zoomLevelRef.current})`
+        : `translate3d(${state.viewport.panPosition.x}px, ${state.viewport.panPosition.y}px, 0) scale(${state.viewport.zoomLevel})`);
+
+    return (
+      <div
+        key={`${mode}-${index}`}
+        ref={isMultiView ? null : frameRef} // Only attach main frame ref in single view for direct manipulation
+        className={frameClass}
+        style={{
+          width,
+          height,
+          transform: transformStyle,
+          transformOrigin: 'center center',
+          transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+          willChange: isDragging ? 'transform' : 'auto',
+          backfaceVisibility: 'hidden',
+          WebkitBackfaceVisibility: 'hidden',
+          perspective: 1000,
+          margin: isMultiView ? '0 40px' : 0 // Add spacing in multi-view
+        }}
+      >
+        {!state.viewport.isFullView && !isMultiView && (
+          <div className="frame-controls">
+            <button
+              className="frame-control-btn full-view-btn"
+              onClick={toggleFullView}
+              title="Enter Full View"
+            >
+              <Maximize2 size={16} />
+            </button>
+          </div>
+        )}
+        <iframe
+          ref={el => { iframeRefs.current[index] = el; }}
+          className="website-iframe"
+          title={`Site Preview - ${mode}`}
+          src={state.view.currentUrl || undefined}
+          sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
+          onLoad={(e) => {
+            const iframe = e.currentTarget;
+            try {
+              const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+              if (iframeDoc) {
+                // Apply color replacements to DOM
+                if (state.editor.colorMapping) {
+                  applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+                }
+                injectCustomCss(iframeDoc);
+              }
+            } catch (err) {
+              // Cross-origin iframe - cannot inject CSS
+              console.warn('Cannot inject CSS into cross-origin iframe');
+            }
+          }}
+        />
+        {/* Device Label for Multi-View */}
+        {isMultiView && (
+          <div style={{
+            position: 'absolute',
+            top: '-30px',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            color: 'rgba(255,255,255,0.5)',
+            fontSize: '12px',
+            fontWeight: 500,
+            whiteSpace: 'nowrap'
+          }}>
+            {customConfig ? customConfig.name : config?.label}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className={`website-viewer ${state.viewport.isFullView ? 'full-view-mode' : ''}`}>
       {/* Collapsible Left Panel with Design Tools */}
@@ -708,6 +871,17 @@ function WebsiteViewer() {
                 }}
               />
             </div>
+
+            {/* Proxy Toggle */}
+            <button
+              className={`action-button ${useProxy ? 'active-proxy' : ''}`}
+              onClick={() => setUseProxy(!useProxy)}
+              title={useProxy ? "Proxy Mode: ON (Secure, bypasses blocks)" : "Proxy Mode: OFF (Direct, faster)"}
+              style={{ color: useProxy ? '#4ade80' : 'rgba(255,255,255,0.6)' }}
+            >
+              {useProxy ? <Shield size={16} /> : <ShieldAlert size={16} />}
+            </button>
+
             <button
               className="action-button"
               onClick={loadWebsite}
@@ -751,89 +925,71 @@ function WebsiteViewer() {
           paddingLeft: state.viewport.isFullView ? 0 : (activePanel ? `${PANEL_WIDTH + ICON_MENU_WIDTH + 16}px` : `${ICON_MENU_WIDTH + 16}px`),
         }}
       >
-        {state.view.loading ? (
-          <div className="loading-state">
-            <div className="loader-container">
-              <div className="loader-spinner">
-                <div className="spinner-ring"></div>
-                <div className="spinner-ring"></div>
-                <div className="spinner-ring"></div>
-              </div>
-              <h3>Loading Website</h3>
-              <p>Rendering with Playwright...</p>
-            </div>
-          </div>
-        ) : state.view.error ? (
+        {state.view.error ? (
           <div className="error-state">
             <div className="error-icon">!</div>
             <h3>Unable to Load</h3>
             <p>{state.view.error}</p>
           </div>
-        ) : !state.view.htmlContent ? (
+        ) : !state.view.currentUrl ? (
           <div className="empty-state">
             <h2>Design. Prototype. Build.</h2>
             <p>Enter a URL to start customizing the web.</p>
           </div>
         ) : (
-          <div
-            ref={frameRef}
-            className={`frame-wrapper ${currentCustomDevice ? currentCustomDevice.type : state.viewport.deviceMode} ${state.viewport.isFullView ? 'full-view-frame' : ''}`}
-            style={{
-              width: state.viewport.isFullView
-                ? '100%'
-                : (currentCustomDevice
-                  ? `${currentCustomDevice.width}px`
-                  : (DEFAULT_DEVICES[state.viewport.deviceMode]?.width || '100%')),
-              height: state.viewport.isFullView
-                ? '100%'
-                : (state.viewport.deviceMode === 'desktop'
-                  ? '100%'
-                  : (currentCustomDevice
-                    ? `${currentCustomDevice.height}px`
-                    : (DEFAULT_DEVICES[state.viewport.deviceMode]?.height || '100%'))),
-              // Use refs during interaction, state when idle
-              transform: isDragging
-                ? `translate3d(${panPositionRef.current.x}px, ${panPositionRef.current.y}px, 0) scale(${zoomLevelRef.current})`
-                : `translate3d(${state.viewport.panPosition.x}px, ${state.viewport.panPosition.y}px, 0) scale(${state.viewport.zoomLevel})`,
-              transformOrigin: 'center center',
-              transition: isDragging ? 'none' : 'transform 0.1s ease-out',
-              willChange: isDragging ? 'transform' : 'auto',
-              backfaceVisibility: 'hidden',
-              WebkitBackfaceVisibility: 'hidden',
-              perspective: 1000
-            }}
-          >
-            {!state.viewport.isFullView && (
-              <div className="frame-controls">
-                <button
-                  className="frame-control-btn full-view-btn"
-                  onClick={toggleFullView}
-                  title="Enter Full View"
-                >
-                  <Maximize2 size={16} />
-                </button>
-              </div>
-            )}
-            <iframe
-              ref={iframeRef}
-              className="website-iframe"
-              title="Site Preview"
-              sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
-            />
-          </div>
+          /* Multi-View vs Single View Rendering */
+          isMultiView ? (
+            <div
+              ref={frameRef} // Attach logic ref to container for multi-view
+              className="multi-view-container"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transform: isDragging
+                  ? `translate3d(${panPositionRef.current.x}px, ${panPositionRef.current.y}px, 0) scale(${zoomLevelRef.current})`
+                  : `translate3d(${state.viewport.panPosition.x}px, ${state.viewport.panPosition.y}px, 0) scale(${state.viewport.zoomLevel})`,
+                transformOrigin: 'center center',
+                transition: isDragging ? 'none' : 'transform 0.1s ease-out',
+                willChange: isDragging ? 'transform' : 'auto',
+              }}
+            >
+              {renderFrame('mobile', 0)}
+              {renderFrame('tablet', 1)}
+              {renderFrame('laptop', 2)}
+            </div>
+          ) : (
+            renderFrame(currentDeviceMode, 0, currentCustomDevice)
+          )
         )}
       </div>
 
       {/* Floating Dock (Bottom) */}
       {!state.viewport.isFullView && (
         <div className="dock-container">
+          {/* Multi-View Toggle */}
+          <button
+            className={`dock-item ${isMultiView ? 'active' : ''}`}
+            onClick={toggleMultiView}
+            title="Multi-Device View"
+          >
+            <Layout size={20} strokeWidth={1.5} />
+            <span className="dock-tooltip">Multi-View</span>
+          </button>
+
+          <div className="dock-divider"></div>
+
           {Object.entries(DEFAULT_DEVICES).map(([mode, config]) => {
             const Icon = config.icon;
             return (
               <button
                 key={mode}
-                className={`dock-item ${currentDeviceMode === mode ? 'active' : ''}`}
-                onClick={() => handleDeviceModeChange(mode)}
+                className={`dock-item ${!isMultiView && currentDeviceMode === mode ? 'active' : ''}`}
+                onClick={() => {
+                  if (isMultiView) toggleMultiView();
+                  handleDeviceModeChange(mode);
+                }}
+                disabled={isMultiView}
               >
                 <Icon size={20} strokeWidth={1.5} />
                 <span className="dock-tooltip">{config.label}</span>
@@ -854,9 +1010,13 @@ function WebsiteViewer() {
             return (
               <button
                 key={modeKey}
-                className={`dock-item custom-device ${currentDeviceMode === modeKey ? 'active' : ''}`}
-                onClick={() => handleDeviceModeChange(modeKey)}
+                className={`dock-item custom-device ${!isMultiView && currentDeviceMode === modeKey ? 'active' : ''}`}
+                onClick={() => {
+                  if (isMultiView) toggleMultiView();
+                  handleDeviceModeChange(modeKey);
+                }}
                 title={`${custom.name} (${custom.width}×${custom.height})`}
+                disabled={isMultiView}
               >
                 <Icon size={20} strokeWidth={1.5} />
                 <span className="dock-tooltip">{custom.name}</span>
