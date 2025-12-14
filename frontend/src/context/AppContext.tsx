@@ -28,6 +28,7 @@ export interface EditorState {
   typographyCss: string;
   colorMapping: Record<string, string> | null; // Using Record instead of Map for serialization
   extractedColors: Array<{ color: string; usage: string[] }>;
+  effectMode: 'single' | 'multi';
 }
 
 export interface ViewportState {
@@ -88,7 +89,9 @@ type AppAction =
   | { type: 'CLEAR_ALL_EFFECTS' }
   | { type: 'SET_TYPOGRAPHY_CSS'; payload: string }
   | { type: 'SET_COLOR_MAPPING'; payload: Record<string, string> | null }
-  | { type: 'SET_EXTRACTED_COLORS'; payload: Array<{ color: string; usage: string[] }> };
+  | { type: 'SET_COLOR_MAPPING'; payload: Record<string, string> | null }
+  | { type: 'SET_EXTRACTED_COLORS'; payload: Array<{ color: string; usage: string[] }> }
+  | { type: 'SET_EFFECT_MODE'; payload: 'single' | 'multi' };
 
 // Load initial state from localStorage
 const loadInitialState = (): AppState => {
@@ -115,6 +118,7 @@ const loadInitialState = (): AppState => {
       typographyCss: savedEditor.typographyCss || '',
       colorMapping: null,
       extractedColors: [],
+      effectMode: 'multi', // Default to multi to support existing behavior
     },
     viewport: {
       deviceMode: savedViewport.deviceMode || 'desktop',
@@ -326,15 +330,34 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case 'TOGGLE_EFFECT':
       const effectId = action.payload;
       const currentEffects = state.editor.activeEffects;
-      const newEffects = currentEffects.includes(effectId)
-        ? currentEffects.filter(id => id !== effectId)
-        : [...currentEffects, effectId];
+      const isMulti = state.editor.effectMode === 'multi';
+
+      let newEffects: string[];
+      if (isMulti) {
+        newEffects = currentEffects.includes(effectId)
+          ? currentEffects.filter(id => id !== effectId)
+          : [...currentEffects, effectId];
+      } else {
+        // Single mode: Toggle off if same, otherwise replace
+        newEffects = currentEffects.includes(effectId) ? [] : [effectId];
+      }
+
       return {
         ...state,
         editor: {
           ...state.editor,
           activeEffects: newEffects,
         },
+      };
+
+    case 'SET_EFFECT_MODE':
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          effectMode: action.payload,
+          // Optional: clear effects when switching? keeping them seems friendlier
+        }
       };
     case 'CLEAR_ALL_EFFECTS':
       return {
@@ -395,6 +418,7 @@ interface AppContextType {
   setTypographyCss: (css: string) => void;
   setColorMapping: (mapping: Record<string, string> | null) => void;
   setExtractedColors: (colors: Array<{ color: string; usage: string[] }>) => void;
+  setEffectMode: (mode: 'single' | 'multi') => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -513,6 +537,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_EXTRACTED_COLORS', payload: colors });
   }, []);
 
+  const setEffectMode = useCallback((mode: 'single' | 'multi') => {
+    dispatch({ type: 'SET_EFFECT_MODE', payload: mode });
+  }, []);
+
   const value: AppContextType = {
     state,
     dispatch,
@@ -533,6 +561,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setTypographyCss,
     setColorMapping,
     setExtractedColors,
+    setEffectMode,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
@@ -546,3 +575,4 @@ export function useApp() {
   }
   return context;
 }
+

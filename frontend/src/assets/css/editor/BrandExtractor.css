@@ -246,6 +246,10 @@
   position: relative;
 }
 
+.color-input-wrapper {
+  position: relative;
+}
+
 .color-picker-input {
   position: absolute;
   top: 0;

@@ -267,12 +267,21 @@ class ProxyService:
     @staticmethod
     def _add_base_and_scripts(soup: BeautifulSoup, base_url: str) -> None:
         """Add base tag and proxy rewrite script."""
+        # Ensure base_url has trailing slash for proper relative path resolution
+        if not base_url.endswith('/'):
+            base_url = base_url + '/'
+        
         # Use path-based proxy for the base URL to ensure relative requests go through proxy
         proxy_base_href = f"{{{{PROXY_BASE}}}}/api/proxy-path/{base_url}"
         
         if not soup.find('base'):
             base_tag = soup.new_tag('base', href=proxy_base_href)
             if soup.head:
+                soup.head.insert(0, base_tag)
+            else:
+                # Create head if it doesn't exist
+                head = soup.new_tag('head')
+                soup.html.insert(0, head) if soup.html else None
                 soup.head.insert(0, base_tag)
         else:
             soup.find('base')['href'] = proxy_base_href
@@ -289,13 +298,39 @@ class ProxyService:
             proxy_rewrite_script.string = """
 (function() {
     var proxyBase = window.location.origin;
+    var originalBaseUrl = '';
+    
+    function extractOriginalUrl(proxyUrl) {
+        // Extract original URL from proxy path: /api/proxy-path/https://example.com/
+        var match = proxyUrl.match(/\\/api\\/proxy-path\\/(https?:\\/\\/[^\\/]+(?:\\/.*)?)/);
+        if (match && match[1]) {
+            var url = match[1];
+            // Ensure trailing slash
+            if (!url.endsWith('/')) {
+                url += '/';
+            }
+            return url;
+        }
+        return null;
+    }
+    
     function rewriteProxyUrls() {
-        // Rewrite base tag
+        // Rewrite base tag first
         var baseTag = document.querySelector('base');
-        if (baseTag && baseTag.href.includes('{{PROXY_BASE}}')) {
-            baseTag.href = baseTag.href.replace(/\\{\\{PROXY_BASE\\}\\}/g, proxyBase);
+        if (baseTag) {
+            if (baseTag.href.includes('{{PROXY_BASE}}')) {
+                baseTag.href = baseTag.href.replace(/\\{\\{PROXY_BASE\\}\\}/g, proxyBase);
+            }
+            // Extract original base URL from proxy path
+            if (baseTag.href) {
+                var extracted = extractOriginalUrl(baseTag.href);
+                if (extracted) {
+                    originalBaseUrl = extracted;
+                }
+            }
         }
 
+        // Rewrite all proxy placeholders
         document.querySelectorAll('link[href*="{{PROXY_BASE}}"]').forEach(function(link) {
             link.href = link.href.replace(/\\{\\{PROXY_BASE\\}\\}/g, proxyBase);
         });
@@ -311,13 +346,75 @@ class ProxyService:
         document.querySelectorAll('[style*="{{PROXY_BASE}}"]').forEach(function(el) {
             el.style.cssText = el.style.cssText.replace(/\\{\\{PROXY_BASE\\}\\}/g, proxyBase);
         });
+        
+        // Only fix relative URLs if we have the original base URL
+        if (!originalBaseUrl) {
+            return;
+        }
+        
+        // Fix any relative URLs that weren't properly proxied
+        function fixRelativeUrl(url) {
+            if (!url || url.startsWith('http://') || url.startsWith('https://') || 
+                url.startsWith('data:') || url.startsWith('blob:') || 
+                url.startsWith('/api/proxy') || url.startsWith('#')) {
+                return url;
+            }
+            try {
+                // Resolve relative URL against original website URL
+                var absoluteUrl = new URL(url, originalBaseUrl).href;
+                return proxyBase + '/api/proxy-path/' + absoluteUrl;
+            } catch (e) {
+                console.warn('Failed to fix relative URL:', url, e);
+                return url;
+            }
+        }
+        
+        // Fix relative image sources
+        document.querySelectorAll('img[src]').forEach(function(img) {
+            var src = img.getAttribute('src');
+            if (src) {
+                var fixedSrc = fixRelativeUrl(src);
+                if (fixedSrc !== src) {
+                    img.src = fixedSrc;
+                }
+            }
+        });
+        
+        // Fix relative sources in media elements
+        ['source', 'video', 'audio'].forEach(function(tagName) {
+            document.querySelectorAll(tagName + '[src]').forEach(function(el) {
+                var src = el.getAttribute('src');
+                if (src) {
+                    var fixedSrc = fixRelativeUrl(src);
+                    if (fixedSrc !== src) {
+                        el.src = fixedSrc;
+                    }
+                }
+            });
+        });
+        
+        // Fix relative stylesheet links
+        document.querySelectorAll('link[rel="stylesheet"]').forEach(function(link) {
+            var href = link.getAttribute('href');
+            if (href) {
+                var fixedHref = fixRelativeUrl(href);
+                if (fixedHref !== href) {
+                    link.href = fixedHref;
+                }
+            }
+        });
     }
+    
+    // Run immediately and on DOM ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', rewriteProxyUrls);
     } else {
         rewriteProxyUrls();
     }
+    
+    // Also run after a short delay to catch dynamically loaded content
     setTimeout(rewriteProxyUrls, 100);
+    setTimeout(rewriteProxyUrls, 500);
 })();
 """
             soup.head.insert(0, proxy_rewrite_script)

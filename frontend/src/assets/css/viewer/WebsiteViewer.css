@@ -189,6 +189,14 @@
   transform: translateY(-1px);
 }
 
+.action-button.active,
+.action-button.active-proxy {
+  background: rgba(100, 108, 255, 0.2);
+  border-color: rgba(100, 108, 255, 0.5);
+  color: #fff;
+  box-shadow: 0 0 10px rgba(100, 108, 255, 0.2);
+}
+
 /* Floating Dock (Bottom) */
 .dock-container {
   position: absolute;
@@ -478,18 +486,13 @@
 }
 
 /* Frame Controls Overlay */
-.frame-controls {
-  position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 200;
-  display: flex;
-  gap: 0.5rem;
-  opacity: 0;
-  transition: opacity 0.3s ease;
+.frame-actions {
+  /* Defined inline in component for dynamic values, but global styles here */
+  z-index: 100;
+  transition: opacity 0.2s;
 }
 
-.frame-wrapper:hover .frame-controls {
+.frame-wrapper:hover .frame-actions {
   opacity: 1;
 }
 
@@ -1009,3 +1012,65 @@
   left: 0;
   color: var(--accent-color);
 }
+
+/* Comparison Slider Handle - Optimized for smooth dragging */
+.comparison-slider-handle {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: #3b82f6;
+  z-index: 10;
+  cursor: ew-resize;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  /* GPU acceleration for ultra-smooth movement */
+  will-change: left;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  transform: translateX(-50%) translateZ(0);
+  -webkit-transform: translateX(-50%) translateZ(0);
+  /* No transitions during drag - instant updates */
+  transition: none;
+  /* Optimize compositing */
+  isolation: isolate;
+  contain: layout style paint;
+}
+
+.comparison-slider-handle:active {
+  cursor: ew-resize;
+}
+
+.comparison-slider-handle:hover {
+  background: #2563eb;
+}
+
+.comparison-slider-handle > div {
+  width: 24px;
+  height: 24px;
+  background: #3b82f6;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.4);
+  color: white;
+  pointer-events: none;
+  transition: transform 0.1s ease, box-shadow 0.1s ease;
+}
+
+.comparison-slider-handle:hover > div {
+  transform: scale(1.1);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.6);
+}
+
+.comparison-slider-handle:active > div {
+  transform: scale(0.95);
+}
+
+
