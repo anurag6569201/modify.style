@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import {
   Type,
   Sparkles,
-  Layout,
   FileText,
   Bold,
   Italic,
@@ -19,9 +18,9 @@ import { PREDEFINED_EFFECTS } from './EffectsPanel';
 
 interface DesignPanelProps {
   activeEffects: string[];
-  effectMode: 'single' | 'multi';
+  effectMode: 'single';
   onToggleEffect: (effectId: string) => void;
-  onSetEffectMode: (mode: 'single' | 'multi') => void;
+  onSetEffectMode: (mode: 'single') => void;
   onTypographyChange: (css: string) => void;
 }
 
@@ -30,15 +29,10 @@ interface TypographySettings {
   fontWeight: string;
   fontFamily: string;
   fontStyle: string;
-  lineHeight: string;
   letterSpacing: string;
   textAlign: string;
   textTransform: string;
   textDecoration: string;
-  color: string;
-  backgroundColor: string;
-  maxWidth: string;
-
 }
 
 const DesignPanel: React.FC<DesignPanelProps> = ({
@@ -53,15 +47,10 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
     fontWeight: '400',
     fontFamily: '',
     fontStyle: 'normal',
-    lineHeight: '',
     letterSpacing: '',
     textAlign: 'left',
     textTransform: 'none',
     textDecoration: 'none',
-    color: '',
-    backgroundColor: '',
-    maxWidth: '',
-
   });
 
   // Debounce effect
@@ -73,20 +62,13 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
       if (typography.fontWeight && typography.fontWeight !== '400') cssRules.push(`font-weight: ${typography.fontWeight} !important;`);
       if (typography.fontFamily) cssRules.push(`font-family: ${typography.fontFamily} !important;`);
       if (typography.fontStyle && typography.fontStyle !== 'normal') cssRules.push(`font-style: ${typography.fontStyle} !important;`);
-      if (typography.lineHeight) cssRules.push(`line-height: ${typography.lineHeight} !important;`);
       if (typography.letterSpacing) cssRules.push(`letter-spacing: ${typography.letterSpacing} !important;`);
       if (typography.textAlign && typography.textAlign !== 'left') cssRules.push(`text-align: ${typography.textAlign} !important;`);
       if (typography.textTransform && typography.textTransform !== 'none') cssRules.push(`text-transform: ${typography.textTransform} !important;`);
       if (typography.textDecoration && typography.textDecoration !== 'none') cssRules.push(`text-decoration: ${typography.textDecoration} !important;`);
-      if (typography.color) cssRules.push(`color: ${typography.color} !important;`);
-      if (typography.backgroundColor) cssRules.push(`background-color: ${typography.backgroundColor} !important;`);
-
-      const bodyRules: string[] = [];
-      if (typography.maxWidth) bodyRules.push(`max-width: ${typography.maxWidth} !important; margin: 0 auto !important;`);
 
       let css = '';
       if (cssRules.length > 0) css += `body, * { ${cssRules.join(' ')} } `;
-      if (bodyRules.length > 0) css += `body { ${bodyRules.join(' ')} } `;
 
       onTypographyChange(css);
     }, 150); // 150ms debounce
@@ -231,18 +213,6 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
             <Sparkles size={16} />
             <span>Effects</span>
           </div>
-          <div className="mode-toggle">
-            <button
-              className={`toggle-xs ${effectMode === 'single' ? 'active' : ''}`}
-              onClick={() => onSetEffectMode('single')}
-              title="Single Effect Mode (Exclusive)"
-            >1</button>
-            <button
-              className={`toggle-xs ${effectMode === 'multi' ? 'active' : ''}`}
-              onClick={() => onSetEffectMode('multi')}
-              title="Multi Effect Mode (Stackable)"
-            >+</button>
-          </div>
         </div>
         <div className="section-content">
           <div className="effects-grid-new">
@@ -288,73 +258,6 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
         </div>
       </div>
 
-      {/* Colors Section */}
-      <div className="design-section">
-        <div className="section-title">
-          <Palette size={16} />
-          <span>Colors</span>
-        </div>
-        <div className="section-content">
-          <div className="control-row">
-            <div className="control-group half">
-              <label>Text</label>
-              <div className="color-input-wrapper">
-                <input
-                  type="color"
-                  className="color-picker-input"
-                  value={typography.color || '#000000'}
-                  onChange={(e) => updateTypography('color', e.target.value)}
-                />
-                <div className="color-preview" style={{ background: typography.color || '#000000' }} />
-              </div>
-            </div>
-            <div className="control-group half">
-              <label>Background</label>
-              <div className="color-input-wrapper">
-                <input
-                  type="color"
-                  className="color-picker-input"
-                  value={typography.backgroundColor || '#ffffff'}
-                  onChange={(e) => updateTypography('backgroundColor', e.target.value)}
-                />
-                <div className="color-preview" style={{ background: typography.backgroundColor || '#ffffff' }} />
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Layout Section */}
-      <div className="design-section">
-        <div className="section-title">
-          <Layout size={16} />
-          <span>Layout</span>
-        </div>
-        <div className="section-content">
-          <div className="control-group">
-            <label>Max Width</label>
-            <input
-              type="text"
-              placeholder="1200px"
-              className="modern-input"
-              value={typography.maxWidth}
-              onChange={(e) => updateTypography('maxWidth', e.target.value)}
-            />
-          </div>
-          <div className="control-group">
-            <label>Line Height</label>
-            <input
-              type="range"
-              min="1"
-              max="2"
-              step="0.1"
-              value={typography.lineHeight || '1.5'}
-              onChange={(e) => updateTypography('lineHeight', e.target.value)}
-              className="modern-range"
-            />
-          </div>
-        </div>
-      </div>
 
     </div>
   );

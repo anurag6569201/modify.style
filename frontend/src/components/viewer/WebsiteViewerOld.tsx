@@ -52,9 +52,7 @@ function WebsiteViewer() {
   const [deviceMode, setDeviceMode] = useState<DeviceMode>('desktop');
   const [showCssEditor, setShowCssEditor] = useState(false);
   const [isFullView, setIsFullView] = useState(false);
-  const [customCss, setCustomCss] = useState(`/* Add your custom CSS here */
-/* Example: */
-/* body { background-color: #f0f0f0 !important; } */`);
+  const [customCss, setCustomCss] = useState(`/* Add your custom CSS here */`);
 
   // Zoom & Pan States
   const [zoomLevel, setZoomLevel] = useState(1);

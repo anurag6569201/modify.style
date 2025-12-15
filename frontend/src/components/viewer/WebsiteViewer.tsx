@@ -33,7 +33,7 @@ import { useApp } from '../../context/AppContext';
 import apiService from '../../services/api';
 import { storage } from '../../utils/storage';
 import type { CustomDevice } from '../../utils/storage';
-import { generateColorReplacementCSS, applyColorReplacementsToDOM } from '../../utils/colorPalettes';
+import { applyColorReplacementsToDOM } from '../../utils/colorPalettes';
 import {
   DraggablePanel,
   CSSEditor,
@@ -48,7 +48,6 @@ import {
   DesignPanel,
   EffectsPanel,
   BrandExtractor,
-  PREDEFINED_EFFECTS,
 } from '../';
 import type { PanelType } from '../';
 import '../../assets/css/viewer/WebsiteViewer.css';
@@ -561,69 +560,31 @@ function WebsiteViewer() {
 
     setIsIframeRestricted(false);
 
-    if (!state.editor.customCss && !state.editor.typographyCss && state.editor.activeEffects.length === 0) return;
-
-    const styleId = 'modify-style-custom-css';
-    let styleEl = doc.getElementById(styleId) as HTMLStyleElement;
-    if (styleEl) styleEl.remove();
-
-    // Remove existing effects CSS
-    const existingEffectsStyle = doc.getElementById('effects-injected-css');
-    if (existingEffectsStyle) existingEffectsStyle.remove();
-
-    // Combine custom CSS, typography CSS, effects CSS, and color replacement CSS
-    let combinedCss = '';
-
-    // Add color replacement CSS
-    if (state.editor.colorMapping) {
-      const colorCss = generateColorReplacementCSS(state.editor.colorMapping);
-      if (colorCss.trim()) {
-        combinedCss += '\n/* Color Palette Replacement */\n' + colorCss;
-      }
+    // Remove any existing injected styles
+    const existingStyle = doc.getElementById('modify-style-injected-css');
+    if (existingStyle) {
+      existingStyle.remove();
     }
 
-    // Add typography CSS
-    if (state.editor.typographyCss.trim()) {
-      combinedCss += state.editor.typographyCss + '\n';
-    }
+    // Custom CSS already contains effects/typography/color sections
+    const combinedCss = state.editor.customCss.trim();
 
-    // Add custom CSS
-    if (state.editor.customCss.trim()) {
-      combinedCss += state.editor.customCss + '\n';
-    }
-
-    // Add effects CSS
-    if (state.editor.activeEffects.length > 0) {
-      const effectsCss = state.editor.activeEffects
-        .map(effectId => {
-          const effect = PREDEFINED_EFFECTS.find(e => e.id === effectId);
-          return effect ? effect.css : '';
-        })
-        .filter(css => css.trim())
-        .join('\n');
-
-      if (effectsCss.trim()) {
-        combinedCss += '\n/* Effects CSS */\n' + effectsCss;
-      }
-    }
-
-    // Inject combined CSS with high specificity to override defaults
+    // Inject combined CSS only if there's something to inject
     if (combinedCss.trim()) {
       const style = doc.createElement('style');
-      style.id = 'custom-injected-css';
-      // Wrap CSS to ensure it overrides default styles
-      style.textContent = `
-        /* Injected Custom CSS - High Priority */
-        ${combinedCss}
-      `;
-      // Append to head, or create head if it doesn't exist
+      style.id = 'modify-style-injected-css';
+      style.textContent = combinedCss;
+      
+      // Ensure head exists
       if (!doc.head) {
         const head = doc.createElement('head');
         doc.documentElement.insertBefore(head, doc.documentElement.firstChild);
       }
+      
+      // Append to head
       doc.head.appendChild(style);
     }
-  }, [state.editor.customCss, state.editor.activeEffects, state.editor.typographyCss, state.editor.colorMapping]);
+  }, [state.editor.customCss]);
 
 
   const [isEditMode, setIsEditMode] = useState(false);
@@ -2199,7 +2160,7 @@ function WebsiteViewer() {
             {
               id: 'design',
               icon: <Layout size={20} />,
-              label: 'Design',
+              label: 'Global Design',
               component: (
                 <DesignPanel
                   activeEffects={state.editor.activeEffects}

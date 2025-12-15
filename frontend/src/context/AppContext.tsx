@@ -6,6 +6,76 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { storage } from '../utils/storage';
+import { PREDEFINED_EFFECTS } from '../components/editor/EffectsPanel';
+import { generateColorReplacementCSS } from '../utils/colorPalettes';
+
+// Helpers to manage auto-generated CSS sections (effects, typography, color palette)
+const EFFECT_CSS_MARKER_START = '/* Effects CSS - Auto-generated - Do not edit manually */';
+const EFFECT_CSS_MARKER_END = '/* End Effects CSS */';
+const TYPOGRAPHY_CSS_MARKER_START = '/* Typography CSS - Auto-generated - Do not edit manually */';
+const TYPOGRAPHY_CSS_MARKER_END = '/* End Typography CSS */';
+const COLOR_CSS_MARKER_START = '/* Color Palette CSS - Auto-generated - Do not edit manually */';
+const COLOR_CSS_MARKER_END = '/* End Color Palette CSS */';
+
+const stripSection = (css: string, start: string, end: string): string => {
+  const startIndex = css.indexOf(start);
+  if (startIndex === -1) return css;
+  const endIndex = css.indexOf(end, startIndex);
+  if (endIndex === -1) return css.substring(0, startIndex).trim();
+  const before = css.substring(0, startIndex).trim();
+  const after = css.substring(endIndex + end.length).trim();
+  return [before, after].filter(Boolean).join('\n\n');
+};
+
+const removeAutoSections = (css: string): string => {
+  let result = css;
+  result = stripSection(result, EFFECT_CSS_MARKER_START, EFFECT_CSS_MARKER_END);
+  result = stripSection(result, TYPOGRAPHY_CSS_MARKER_START, TYPOGRAPHY_CSS_MARKER_END);
+  result = stripSection(result, COLOR_CSS_MARKER_START, COLOR_CSS_MARKER_END);
+  return result;
+};
+
+const appendSection = (css: string, start: string, end: string, content: string): string => {
+  if (!content.trim()) return css.trim();
+  const base = css.trim();
+  const section = `${start}\n${content.trim()}\n${end}`;
+  return base ? `${base}\n\n${section}` : section;
+};
+
+const buildCustomCssWithAuto = (
+  baseCss: string,
+  activeEffects: string[],
+  typographyCss: string,
+  colorMapping: Record<string, string> | null
+): string => {
+  let result = removeAutoSections(baseCss);
+
+  // Color palette CSS
+  if (colorMapping) {
+    const colorCss = generateColorReplacementCSS(colorMapping).trim();
+    result = appendSection(result, COLOR_CSS_MARKER_START, COLOR_CSS_MARKER_END, colorCss);
+  }
+
+  // Typography CSS
+  if (typographyCss.trim()) {
+    result = appendSection(result, TYPOGRAPHY_CSS_MARKER_START, TYPOGRAPHY_CSS_MARKER_END, typographyCss);
+  }
+
+  // Effects CSS
+  if (activeEffects.length > 0) {
+    const effectsCss = activeEffects
+      .map(id => {
+        const effect = PREDEFINED_EFFECTS.find(e => e.id === id);
+        return effect ? effect.css : '';
+      })
+      .filter(css => css.trim())
+      .join('\n\n');
+
+    result = appendSection(result, EFFECT_CSS_MARKER_START, EFFECT_CSS_MARKER_END, effectsCss);
+  }
+
+  return result.trim();
+};
 
 // Types
 export type DeviceMode = 'mobile' | 'tablet' | 'laptop' | 'desktop';
@@ -99,6 +169,22 @@ const loadInitialState = (): AppState => {
   const savedSettings = storage.getSettings();
   const savedCss = storage.getCustomCss();
 
+  // Get saved active effects
+  const savedActiveEffects = savedEditor.activeEffects || [];
+  
+  // Base user CSS (strip any auto-generated sections first)
+  const baseCustomCss = removeAutoSections(
+    savedCss || savedEditor.customCss || '/* Add your custom CSS here */'
+  );
+  
+  // Rebuild CSS with all auto-generated sections (effects, typography, colors)
+  const finalCustomCss = buildCustomCssWithAuto(
+    baseCustomCss,
+    savedActiveEffects,
+    savedEditor.typographyCss || '',
+    savedEditor.colorMapping || null
+  );
+
   return {
     view: {
       url: savedSettings.lastUrl || '',
@@ -108,14 +194,14 @@ const loadInitialState = (): AppState => {
       error: null,
     },
     editor: {
-      customCss: savedCss || savedEditor.customCss || '/* Add your custom CSS here */\n/* Example: */\n/* body { background-color: #f0f0f0 !important; } */',
+      customCss: finalCustomCss,
       showCssEditor: savedEditor.showCssEditor || false,
       showInspector: savedEditor.showInspector || false,
       showSettings: false,
       selectedElement: null,
-      activeEffects: savedEditor.activeEffects || [],
+      activeEffects: savedActiveEffects,
       typographyCss: savedEditor.typographyCss || '',
-      colorMapping: null,
+      colorMapping: savedEditor.colorMapping || null,
       extractedColors: [],
       effectMode: 'multi', // Default to multi to support existing behavior
     },
@@ -131,7 +217,7 @@ const loadInitialState = (): AppState => {
     },
     history: {
       past: [],
-      present: savedCss || savedEditor.customCss || '/* Add your custom CSS here */\n/* Example: */\n/* body { background-color: #f0f0f0 !important; } */',
+      present: finalCustomCss,
       future: [],
     },
     activeTab: 0,
@@ -176,9 +262,17 @@ function appReducer(state: AppState, action: AppAction): AppState {
         view: { ...state.view, error: action.payload },
       };
     case 'SET_CUSTOM_CSS':
+      // When user edits CSS, preserve auto-generated sections (effects, typography, colors)
+      const userCss = removeAutoSections(action.payload);
+      const cssWithEffects = buildCustomCssWithAuto(
+        userCss,
+        state.editor.activeEffects,
+        state.editor.typographyCss,
+        state.editor.colorMapping
+      );
       return {
         ...state,
-        editor: { ...state.editor, customCss: action.payload },
+        editor: { ...state.editor, customCss: cssWithEffects },
       };
     case 'TOGGLE_CSS_EDITOR':
       return {
@@ -341,11 +435,21 @@ function appReducer(state: AppState, action: AppAction): AppState {
         newEffects = currentEffects.includes(effectId) ? [] : [effectId];
       }
 
+      // Sync auto CSS (effects + others) with customCss
+      const baseCssForEffects = removeAutoSections(state.editor.customCss);
+      const updatedCustomCss = buildCustomCssWithAuto(
+        baseCssForEffects,
+        newEffects,
+        state.editor.typographyCss,
+        state.editor.colorMapping
+      );
+
       return {
         ...state,
         editor: {
           ...state.editor,
           activeEffects: newEffects,
+          customCss: updatedCustomCss,
         },
       };
 
@@ -359,11 +463,20 @@ function appReducer(state: AppState, action: AppAction): AppState {
         }
       };
     case 'CLEAR_ALL_EFFECTS':
+      // Remove effects CSS from customCss, keep other auto sections
+      const baseCssWithoutEffects = removeAutoSections(state.editor.customCss);
+      const clearedCustomCss = buildCustomCssWithAuto(
+        baseCssWithoutEffects,
+        [],
+        state.editor.typographyCss,
+        state.editor.colorMapping
+      );
       return {
         ...state,
         editor: {
           ...state.editor,
           activeEffects: [],
+          customCss: clearedCustomCss,
         },
       };
     case 'SET_TYPOGRAPHY_CSS':
@@ -372,6 +485,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         editor: {
           ...state.editor,
           typographyCss: action.payload,
+          customCss: buildCustomCssWithAuto(
+            removeAutoSections(state.editor.customCss),
+            state.editor.activeEffects,
+            action.payload,
+            state.editor.colorMapping
+          ),
         },
       };
     case 'SET_COLOR_MAPPING':
@@ -380,6 +499,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         editor: {
           ...state.editor,
           colorMapping: action.payload,
+          customCss: buildCustomCssWithAuto(
+            removeAutoSections(state.editor.customCss),
+            state.editor.activeEffects,
+            state.editor.typographyCss,
+            action.payload
+          ),
         },
       };
     case 'SET_EXTRACTED_COLORS':

@@ -51,8 +51,47 @@
 .css-editor-wrapper {
   position: relative;
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   display: flex;
+  min-height: 0;
+}
+
+/* Monaco Editor customizations */
+.css-editor-wrapper .monaco-editor {
+  background: transparent !important;
+}
+
+.css-editor-wrapper .monaco-editor .margin {
+  background-color: rgba(10, 10, 15, 0.5) !important;
+}
+
+.css-editor-wrapper .monaco-editor .monaco-editor-background {
+  background-color: transparent !important;
+}
+
+.css-editor-wrapper .monaco-editor .current-line {
+  background-color: rgba(255, 255, 255, 0.03) !important;
+}
+
+.css-editor-wrapper .monaco-editor .line-numbers {
+  color: rgba(255, 255, 255, 0.4) !important;
+}
+
+.css-editor-wrapper .monaco-editor .line-numbers.active-line-number {
+  color: rgba(255, 255, 255, 0.6) !important;
+}
+
+/* Light theme overrides */
+.css-editor-wrapper .monaco-editor.vs .margin {
+  background-color: rgba(243, 243, 243, 0.5) !important;
+}
+
+.css-editor-wrapper .monaco-editor.vs .line-numbers {
+  color: rgba(0, 0, 0, 0.4) !important;
+}
+
+.css-editor-wrapper .monaco-editor.vs .line-numbers.active-line-number {
+  color: rgba(0, 0, 0, 0.6) !important;
 }
 
 .css-editor-line-numbers {
