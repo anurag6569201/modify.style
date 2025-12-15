@@ -44,9 +44,10 @@ export default function BoxModelViewer({ element }: BoxModelViewerProps) {
         return;
       }
       const computed = window.getComputedStyle(el);
-      
+
       const parseValue = (value: string): number => {
-        return parseFloat(value) || 0;
+        const float = parseFloat(value);
+        return isNaN(float) ? 0 : float;
       };
 
       setBoxModel({
@@ -104,110 +105,44 @@ export default function BoxModelViewer({ element }: BoxModelViewerProps) {
     );
   }
 
-  const totalWidth = boxModel.margin.left + boxModel.border.left + boxModel.padding.left + 
-                     boxModel.width + boxModel.padding.right + boxModel.border.right + boxModel.margin.right;
-  const totalHeight = boxModel.margin.top + boxModel.border.top + boxModel.padding.top + 
-                      boxModel.height + boxModel.padding.bottom + boxModel.border.bottom + boxModel.margin.bottom;
-
   return (
     <div className="box-model-viewer">
-      <div className="box-model-title">Box Model</div>
-      <div className="box-model-visualization">
+      <div className="box-model-container">
         {/* Margin */}
-        <div className="box-layer margin-layer">
-          <div className="box-label margin-label">margin</div>
-          <div className="box-value margin-value">
-            <div className="box-value-item">
-              <span className="box-value-label">top</span>
-              <span className="box-value-number">{boxModel.margin.top}px</span>
-            </div>
-            <div className="box-value-item">
-              <span className="box-value-label">right</span>
-              <span className="box-value-number">{boxModel.margin.right}px</span>
-            </div>
-            <div className="box-value-item">
-              <span className="box-value-label">bottom</span>
-              <span className="box-value-number">{boxModel.margin.bottom}px</span>
-            </div>
-            <div className="box-value-item">
-              <span className="box-value-label">left</span>
-              <span className="box-value-number">{boxModel.margin.left}px</span>
-            </div>
-          </div>
-          
+        <div className="box-layer margin">
+          <span className="layer-label">margin</span>
+          <span className="box-value top">{boxModel.margin.top === 0 ? '-' : Math.round(boxModel.margin.top)}</span>
+          <span className="box-value right">{boxModel.margin.right === 0 ? '-' : Math.round(boxModel.margin.right)}</span>
+          <span className="box-value bottom">{boxModel.margin.bottom === 0 ? '-' : Math.round(boxModel.margin.bottom)}</span>
+          <span className="box-value left">{boxModel.margin.left === 0 ? '-' : Math.round(boxModel.margin.left)}</span>
+
           {/* Border */}
-          <div className="box-layer border-layer">
-            <div className="box-label border-label">border</div>
-            <div className="box-value border-value">
-              <div className="box-value-item">
-                <span className="box-value-label">top</span>
-                <span className="box-value-number">{boxModel.border.top}px</span>
-              </div>
-              <div className="box-value-item">
-                <span className="box-value-label">right</span>
-                <span className="box-value-number">{boxModel.border.right}px</span>
-              </div>
-              <div className="box-value-item">
-                <span className="box-value-label">bottom</span>
-                <span className="box-value-number">{boxModel.border.bottom}px</span>
-              </div>
-              <div className="box-value-item">
-                <span className="box-value-label">left</span>
-                <span className="box-value-number">{boxModel.border.left}px</span>
-              </div>
-            </div>
-            
+          <div className="box-layer border">
+            <span className="layer-label">border</span>
+            <span className="box-value top">{boxModel.border.top === 0 ? '-' : Math.round(boxModel.border.top)}</span>
+            <span className="box-value right">{boxModel.border.right === 0 ? '-' : Math.round(boxModel.border.right)}</span>
+            <span className="box-value bottom">{boxModel.border.bottom === 0 ? '-' : Math.round(boxModel.border.bottom)}</span>
+            <span className="box-value left">{boxModel.border.left === 0 ? '-' : Math.round(boxModel.border.left)}</span>
+
             {/* Padding */}
-            <div className="box-layer padding-layer">
-              <div className="box-label padding-label">padding</div>
-              <div className="box-value padding-value">
-                <div className="box-value-item">
-                  <span className="box-value-label">top</span>
-                  <span className="box-value-number">{boxModel.padding.top}px</span>
-                </div>
-                <div className="box-value-item">
-                  <span className="box-value-label">right</span>
-                  <span className="box-value-number">{boxModel.padding.right}px</span>
-                </div>
-                <div className="box-value-item">
-                  <span className="box-value-label">bottom</span>
-                  <span className="box-value-number">{boxModel.padding.bottom}px</span>
-                </div>
-                <div className="box-value-item">
-                  <span className="box-value-label">left</span>
-                  <span className="box-value-number">{boxModel.padding.left}px</span>
-                </div>
-              </div>
-              
+            <div className="box-layer padding">
+              <span className="layer-label">padding</span>
+              <span className="box-value top">{boxModel.padding.top === 0 ? '-' : Math.round(boxModel.padding.top)}</span>
+              <span className="box-value right">{boxModel.padding.right === 0 ? '-' : Math.round(boxModel.padding.right)}</span>
+              <span className="box-value bottom">{boxModel.padding.bottom === 0 ? '-' : Math.round(boxModel.padding.bottom)}</span>
+              <span className="box-value left">{boxModel.padding.left === 0 ? '-' : Math.round(boxModel.padding.left)}</span>
+
               {/* Content */}
-              <div className="box-layer content-layer">
-                <div className="box-label content-label">content</div>
-                <div className="box-value content-value">
-                  <div className="box-value-item">
-                    <span className="box-value-label">width</span>
-                    <span className="box-value-number">{Math.round(boxModel.width)}px</span>
-                  </div>
-                  <div className="box-value-item">
-                    <span className="box-value-label">height</span>
-                    <span className="box-value-number">{Math.round(boxModel.height)}px</span>
-                  </div>
-                </div>
+              <div className="box-layer content">
+                <span className="content-dimensions">
+                  {Math.round(boxModel.width)} × {Math.round(boxModel.height)}
+                </span>
               </div>
             </div>
           </div>
-        </div>
-      </div>
-      
-      <div className="box-model-summary">
-        <div className="summary-item">
-          <span className="summary-label">Total Width:</span>
-          <span className="summary-value">{Math.round(totalWidth)}px</span>
-        </div>
-        <div className="summary-item">
-          <span className="summary-label">Total Height:</span>
-          <span className="summary-value">{Math.round(totalHeight)}px</span>
         </div>
       </div>
     </div>
   );
 }
+

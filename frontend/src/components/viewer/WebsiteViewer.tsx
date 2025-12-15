@@ -18,11 +18,8 @@ import {
   Eye,
   Plus,
   Layout,
-  Sparkles,
   Settings2,
   Palette,
-  Shield,
-  ShieldAlert,
   Edit,
   SplitSquareHorizontal,
   Link2,
@@ -46,7 +43,7 @@ import {
   PANEL_WIDTH,
   ICON_MENU_WIDTH,
   DesignPanel,
-  EffectsPanel,
+
   BrandExtractor,
 } from '../';
 import type { PanelType } from '../';
@@ -74,7 +71,7 @@ const DEFAULT_DEVICES: Record<string, DeviceConfig> = {
 
 function WebsiteViewer() {
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const { state, dispatch, setUrl, toggleCssEditor, toggleInspector, toggleSettings, setZoomLevel, resetViewport, toggleEffect, setTypographyCss, setEffectMode } = useApp();
+  const { state, dispatch, setUrl, toggleCssEditor, toggleInspector, toggleSettings, setZoomLevel, resetViewport, toggleEffect, setTypographyCss, setEffectMode, setCustomCss } = useApp();
 
   // Local state for pan/drag - minimal state updates
   const [isDragging, setIsDragging] = useState(false);
@@ -118,11 +115,11 @@ function WebsiteViewer() {
   };
 
   const [isMultiView, setIsMultiView] = useState(false);
-  const [useProxy, setUseProxy] = useState(true); // Always default to Proxy Mode
   const [isComparisonMode, setIsComparisonMode] = useState(false);
   const [comparisonSplit, setComparisonSplit] = useState(50); // 50% split
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isIframeRestricted, setIsIframeRestricted] = useState(false);
+
   // IMPROVEMENT 3: Scroll sync toggle and status
   const [isScrollSyncEnabled, setIsScrollSyncEnabled] = useState(true);
   const [scrollSyncStatus, setScrollSyncStatus] = useState<'synced' | 'unsynced' | 'error'>('synced');
@@ -143,10 +140,10 @@ function WebsiteViewer() {
     // IMPROVEMENT 1 & 5: Add transition feedback and ensure content visibility
     setIsDeviceTransitioning(true);
     setIframeOpacity(0.3); // Fade out slightly during transition
-    
+
     const previousMode = currentDeviceMode;
     previousDeviceModeRef.current = previousMode;
-    
+
     setCurrentDeviceMode(mode);
 
     if (mode.startsWith('custom-')) {
@@ -165,7 +162,7 @@ function WebsiteViewer() {
     requestAnimationFrame(() => {
       resetViewport();
       dispatch({ type: 'SET_PAN_POSITION', payload: { x: 0, y: 0 } });
-      
+
       // IMPROVEMENT 1: Force re-injection of content for new iframe after device change
       // Use a longer timeout to ensure React has rendered the new iframe element
       setTimeout(() => {
@@ -176,23 +173,23 @@ function WebsiteViewer() {
           try {
             const iframeDoc = newIframe.contentDocument || newIframe.contentWindow?.document;
             const hasContent = iframeDoc && (iframeDoc.body?.children.length > 0 || iframeDoc.documentElement?.children.length > 0);
-            
+
             // Only re-inject if iframe is empty or not initialized
             if (!hasContent || !initializedIframesRef.current.has(newIframe)) {
               // Remove from initialized set to force re-injection
               initializedIframesRef.current.delete(newIframe);
-              
+
               // Force content re-injection
               if (iframeDoc) {
                 const proxyBase = window.location.origin;
                 const processedHtml = state.view.htmlContent.replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
-                
+
                 iframeDoc.open();
                 iframeDoc.write(processedHtml);
                 iframeDoc.close();
-                
+
                 initializedIframesRef.current.add(newIframe);
-                
+
                 // Re-apply styles and fixes
                 setTimeout(() => {
                   fixAllAssetUrls(newIframe);
@@ -203,7 +200,7 @@ function WebsiteViewer() {
                   if (isEditMode) {
                     iframeDoc.designMode = 'on';
                   }
-                  
+
                   // IMPROVEMENT 3 & 4: Fade in smoothly after content is ready
                   setIframeOpacity(1);
                   setIsDeviceTransitioning(false);
@@ -351,17 +348,17 @@ function WebsiteViewer() {
       clearInterval(progressInterval);
       setLoadingProgress(0);
       console.error('Error loading website via proxy:', err);
-      
+
       let errorMessage = 'Failed to load website.';
       if (err instanceof Error) errorMessage = err.message;
       if (typeof err === 'string') errorMessage = err;
 
       // Retry logic for network errors (max 2 retries)
-      const isNetworkError = errorMessage.includes('network') || 
-                            errorMessage.includes('fetch') || 
-                            errorMessage.includes('timeout') ||
-                            errorMessage.includes('ERR');
-      
+      const isNetworkError = errorMessage.includes('network') ||
+        errorMessage.includes('fetch') ||
+        errorMessage.includes('timeout') ||
+        errorMessage.includes('ERR');
+
       if (isNetworkError && retryAttempt < 2) {
         // Keep loading state true during retry
         setTimeout(() => {
@@ -574,13 +571,13 @@ function WebsiteViewer() {
       const style = doc.createElement('style');
       style.id = 'modify-style-injected-css';
       style.textContent = combinedCss;
-      
+
       // Ensure head exists
       if (!doc.head) {
         const head = doc.createElement('head');
         doc.documentElement.insertBefore(head, doc.documentElement.firstChild);
       }
-      
+
       // Append to head
       doc.head.appendChild(style);
     }
@@ -621,8 +618,8 @@ function WebsiteViewer() {
         // }
 
         // IMPROVEMENT 1: Check if device mode changed - if so, force re-injection
-        const shouldForceReinit = previousDeviceModeRef.current !== currentDeviceMode && 
-                                   iframe.getAttribute('data-mode') === 'modified';
+        const shouldForceReinit = previousDeviceModeRef.current !== currentDeviceMode &&
+          iframe.getAttribute('data-mode') === 'modified';
 
         // Skip if this iframe has already been initialized (prevents reload on device mode/comparison mode toggle)
         // UNLESS we're forcing re-init due to device change
@@ -631,7 +628,7 @@ function WebsiteViewer() {
           injectCustomCss(iframe);
           return;
         }
-        
+
         // IMPROVEMENT 1: Remove from initialized set if forcing re-init
         if (shouldForceReinit) {
           initializedIframesRef.current.delete(iframe);
@@ -722,12 +719,12 @@ function WebsiteViewer() {
           }
 
           injectCustomCss(iframe);
-          
+
           // IMPROVEMENT 4: Ensure iframe is visible after content injection
           if (iframe.style.opacity !== '1') {
             iframe.style.opacity = '1';
           }
-          
+
           // IMPROVEMENT 1: Update transition state when content is ready
           if (shouldForceReinit) {
             setTimeout(() => {
@@ -839,7 +836,7 @@ function WebsiteViewer() {
   // IMPROVEMENT 1: Effect to ensure iframe content is maintained when device mode changes
   useEffect(() => {
     if (!state.view.htmlContent || !state.view.currentUrl) return;
-    
+
     // Wait for React to render the new iframe after device change
     const timeoutId = setTimeout(() => {
       const iframe = iframeRefs.current[0];
@@ -848,23 +845,23 @@ function WebsiteViewer() {
           const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
           // Check if iframe is empty or needs content injection
           const hasContent = iframeDoc && (
-            iframeDoc.body?.children.length > 0 || 
+            iframeDoc.body?.children.length > 0 ||
             iframeDoc.documentElement?.children.length > 0 ||
             iframeDoc.readyState === 'complete'
           );
-          
+
           // If iframe is empty or not initialized, inject content
           if (!hasContent || !initializedIframesRef.current.has(iframe)) {
             const proxyBase = window.location.origin;
             const processedHtml = (state.view.htmlContent || '').replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
-            
+
             if (iframeDoc) {
               iframeDoc.open();
               iframeDoc.write(processedHtml);
               iframeDoc.close();
-              
+
               initializedIframesRef.current.add(iframe);
-              
+
               // Re-apply all styles and fixes
               setTimeout(() => {
                 if (iframeDoc) {
@@ -893,7 +890,7 @@ function WebsiteViewer() {
         }
       }
     }, 200); // Give React time to render new iframe
-    
+
     return () => clearTimeout(timeoutId);
   }, [currentDeviceMode, state.view.htmlContent, state.view.currentUrl, injectCustomCss, fixAllAssetUrls, isEditMode, state.editor.colorMapping]);
 
@@ -1096,11 +1093,11 @@ function WebsiteViewer() {
         };
         modifiedFrame.addEventListener('load', loadHandler, { once: true });
         originalFrame.addEventListener('load', loadHandler, { once: true });
-        
+
         // Multiple retry attempts with longer delays for multi-view
         const retryDelays = isMultiView ? [300, 800, 1500, 2500, 4000] : [200, 500, 1000, 2000];
         retryDelays.forEach((delay) => {
-          setTimeout(() => { 
+          setTimeout(() => {
             if (!isAttached) {
               attach(0);
             }
@@ -1158,7 +1155,7 @@ function WebsiteViewer() {
   // IMPROVEMENT 5: Scroll position reset function
   const resetScrollPositions = useCallback(() => {
     if (!isComparisonMode) return;
-    
+
     const framePairs: { modified: number; original: number }[] = [];
     if (isMultiView) {
       // Multi-view: 6 device pairs
@@ -1175,7 +1172,7 @@ function WebsiteViewer() {
     framePairs.forEach(pair => {
       const modifiedFrame = iframeRefs.current[pair.modified];
       const originalFrame = iframeRefs.current[pair.original];
-      
+
       if (modifiedFrame && originalFrame) {
         try {
           const modWin = modifiedFrame.contentWindow;
@@ -1223,16 +1220,16 @@ function WebsiteViewer() {
   // Works in both single and multi-view modes
   useEffect(() => {
     if (!isComparisonMode) return;
-    
+
     // Wait for DOM to be ready
     const handle = sliderHandleRef.current;
     if (!handle) return;
-    
+
     // In multi-view, we use the canvas container; in single view, use the frame container
-    const container = isMultiView 
-      ? canvasContainerRef.current 
+    const container = isMultiView
+      ? canvasContainerRef.current
       : sliderContainerRef.current;
-    
+
     if (!container) return;
     const dragStateRef = {
       isActive: false,
@@ -1307,7 +1304,7 @@ function WebsiteViewer() {
         // Get container bounds for accurate calculation
         const containerRect = container.getBoundingClientRect();
         const containerWidth = containerRect.width || 1;
-        
+
         // Calculate position relative to container
         const relativeX = e.clientX - containerRect.left;
         const newSplit = Math.min(100, Math.max(0, (relativeX / containerWidth) * 100));
@@ -1757,7 +1754,7 @@ function WebsiteViewer() {
           transform: !isMultiView ? transformStyle : undefined,
           transformOrigin: 'center center',
           // IMPROVEMENT 3: Smooth transition for device changes (width/height changes)
-          transition: isDragging ? 'none' : isDeviceTransitioning 
+          transition: isDragging ? 'none' : isDeviceTransitioning
             ? 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)'
             : 'transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
           willChange: isDragging ? 'transform' : 'auto',
@@ -1870,7 +1867,7 @@ function WebsiteViewer() {
               }}>Switching device...</div>
             </div>
           )}
-          
+
           {/* Normal / Modified Frame */}
           <iframe
             ref={(el) => {
@@ -1912,12 +1909,12 @@ function WebsiteViewer() {
                   setTimeout(() => fixAllAssetUrls(iframe), 100);
                   setTimeout(() => fixAllAssetUrls(iframe), 500);
                   setTimeout(() => fixAllAssetUrls(iframe), 1500);
-                  
+
                   // IMPROVEMENT 4: Ensure iframe is fully visible after load
                   setIframeOpacity(1);
                   setIsDeviceTransitioning(false);
                 }
-              } catch (err) { 
+              } catch (err) {
                 // IMPROVEMENT 4: Even on error, ensure visibility
                 setIframeOpacity(1);
                 setIsDeviceTransitioning(false);
@@ -1964,47 +1961,47 @@ function WebsiteViewer() {
                 ref={!isMultiView ? sliderHandleRef : null}
                 className="comparison-slider-handle"
                 style={{
-                    position: 'absolute',
-                    top: 0,
-                    bottom: 0,
-                    left: `${comparisonSplit}%`,
-                    width: '4px',
-                    background: '#3b82f6',
-                    zIndex: 10,
-                    cursor: 'ew-resize',
-                    transform: 'translateX(-50%)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    touchAction: 'pan-y pinch-zoom', // Allow vertical scrolling and pinch zoom
-                    userSelect: 'none',
-                    WebkitUserSelect: 'none',
-                    // GPU acceleration for smooth movement
-                    willChange: 'left',
-                    backfaceVisibility: 'hidden',
-                    WebkitBackfaceVisibility: 'hidden',
-                    // Prevent any delays
-                    transition: 'none',
-                    // Allow pointer events
-                    pointerEvents: 'auto'
-                  }}
-                >
-                  <div style={{
-                    width: '24px',
-                    height: '24px',
-                    background: '#3b82f6',
-                    borderRadius: '50%',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
-                    color: 'white',
-                    pointerEvents: 'auto', // Make the knob itself interactive
-                    transition: 'transform 0.1s ease'
-                  }}>
-                    <SplitSquareHorizontal size={14} />
-                  </div>
+                  position: 'absolute',
+                  top: 0,
+                  bottom: 0,
+                  left: `${comparisonSplit}%`,
+                  width: '4px',
+                  background: '#3b82f6',
+                  zIndex: 10,
+                  cursor: 'ew-resize',
+                  transform: 'translateX(-50%)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  touchAction: 'pan-y pinch-zoom', // Allow vertical scrolling and pinch zoom
+                  userSelect: 'none',
+                  WebkitUserSelect: 'none',
+                  // GPU acceleration for smooth movement
+                  willChange: 'left',
+                  backfaceVisibility: 'hidden',
+                  WebkitBackfaceVisibility: 'hidden',
+                  // Prevent any delays
+                  transition: 'none',
+                  // Allow pointer events
+                  pointerEvents: 'auto'
+                }}
+              >
+                <div style={{
+                  width: '24px',
+                  height: '24px',
+                  background: '#3b82f6',
+                  borderRadius: '50%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
+                  color: 'white',
+                  pointerEvents: 'auto', // Make the knob itself interactive
+                  transition: 'transform 0.1s ease'
+                }}>
+                  <SplitSquareHorizontal size={14} />
                 </div>
+              </div>
 
               <div style={{
                 position: 'absolute', top: '10px', left: '10px',
@@ -2042,8 +2039,8 @@ function WebsiteViewer() {
                   onClick={() => setIsScrollSyncEnabled(!isScrollSyncEnabled)}
                   title={isScrollSyncEnabled ? 'Disable Scroll Sync' : 'Enable Scroll Sync'}
                   style={{
-                    background: isScrollSyncEnabled 
-                      ? 'rgba(59, 130, 246, 0.2)' 
+                    background: isScrollSyncEnabled
+                      ? 'rgba(59, 130, 246, 0.2)'
                       : 'rgba(255, 255, 255, 0.05)',
                     border: `1px solid ${isScrollSyncEnabled ? 'rgba(59, 130, 246, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
                     color: isScrollSyncEnabled ? '#60a5fa' : 'rgba(255, 255, 255, 0.5)',
@@ -2058,13 +2055,13 @@ function WebsiteViewer() {
                     pointerEvents: 'auto'
                   }}
                   onMouseEnter={(e) => {
-                    e.currentTarget.style.background = isScrollSyncEnabled 
-                      ? 'rgba(59, 130, 246, 0.3)' 
+                    e.currentTarget.style.background = isScrollSyncEnabled
+                      ? 'rgba(59, 130, 246, 0.3)'
                       : 'rgba(255, 255, 255, 0.1)';
                   }}
                   onMouseLeave={(e) => {
-                    e.currentTarget.style.background = isScrollSyncEnabled 
-                      ? 'rgba(59, 130, 246, 0.2)' 
+                    e.currentTarget.style.background = isScrollSyncEnabled
+                      ? 'rgba(59, 130, 246, 0.2)'
                       : 'rgba(255, 255, 255, 0.05)';
                   }}
                 >
@@ -2077,22 +2074,22 @@ function WebsiteViewer() {
                   width: '8px',
                   height: '8px',
                   borderRadius: '50%',
-                  background: scrollSyncStatus === 'synced' 
-                    ? '#10b981' 
-                    : scrollSyncStatus === 'error' 
-                    ? '#ef4444' 
-                    : '#6b7280',
-                  boxShadow: scrollSyncStatus === 'synced' 
-                    ? '0 0 8px rgba(16, 185, 129, 0.5)' 
+                  background: scrollSyncStatus === 'synced'
+                    ? '#10b981'
+                    : scrollSyncStatus === 'error'
+                      ? '#ef4444'
+                      : '#6b7280',
+                  boxShadow: scrollSyncStatus === 'synced'
+                    ? '0 0 8px rgba(16, 185, 129, 0.5)'
                     : 'none',
                   pointerEvents: 'none',
                   transition: 'all 0.3s'
                 }} title={
-                  scrollSyncStatus === 'synced' 
-                    ? 'Scroll sync active' 
-                    : scrollSyncStatus === 'error' 
-                    ? 'Scroll sync error' 
-                    : 'Scroll sync disabled'
+                  scrollSyncStatus === 'synced'
+                    ? 'Scroll sync active'
+                    : scrollSyncStatus === 'error'
+                      ? 'Scroll sync error'
+                      : 'Scroll sync disabled'
                 } />
 
                 {/* Reset Scroll Position Button */}
@@ -2164,24 +2161,14 @@ function WebsiteViewer() {
               component: (
                 <DesignPanel
                   activeEffects={state.editor.activeEffects}
-                  effectMode={state.editor.effectMode || 'multi'}
+
                   onToggleEffect={toggleEffect}
-                  onSetEffectMode={setEffectMode}
+
                   onTypographyChange={setTypographyCss}
                 />
               ),
             },
-            {
-              id: 'effects',
-              icon: <Sparkles size={20} />,
-              label: 'Effects',
-              component: (
-                <EffectsPanel
-                  activeEffects={state.editor.activeEffects}
-                  onToggleEffect={toggleEffect}
-                />
-              ),
-            },
+
             {
               id: 'brand',
               icon: <Palette size={20} />,
@@ -2311,7 +2298,7 @@ function WebsiteViewer() {
             <div className="error-icon">!</div>
             <h3>Unable to Load</h3>
             <p>{state.view.error}</p>
-            <button 
+            <button
               className="retry-btn"
               onClick={(e) => {
                 e.preventDefault();
@@ -2346,9 +2333,9 @@ function WebsiteViewer() {
             </div>
             {loadingProgress > 0 && (
               <div style={{ width: '200px', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
-                <div style={{ 
-                  width: `${loadingProgress}%`, 
-                  height: '100%', 
+                <div style={{
+                  width: `${loadingProgress}%`,
+                  height: '100%',
                   background: '#646cff',
                   transition: 'width 0.3s ease'
                 }} />
@@ -2389,7 +2376,7 @@ function WebsiteViewer() {
               {renderFrame('tablet-pro', 3)}
               {renderFrame('laptop', 4)}
               {renderFrame('laptop-hd', 5)}
-              
+
               {/* Global Slider Handle for Multi-View */}
               {isComparisonMode && (
                 <div

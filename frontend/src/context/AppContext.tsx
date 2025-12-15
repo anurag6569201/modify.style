@@ -6,25 +6,31 @@
 import React, { createContext, useContext, useReducer, useCallback, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import { storage } from '../utils/storage';
-import { PREDEFINED_EFFECTS } from '../components/editor/EffectsPanel';
+import { PREDEFINED_EFFECTS } from '../components/editor/effects';
 import { generateColorReplacementCSS } from '../utils/colorPalettes';
 
-// Helpers to manage auto-generated CSS sections (effects, typography, color palette)
+// Helpers to manage auto-generated CSS sections (effects, typography, color palette, global design)
 const EFFECT_CSS_MARKER_START = '/* Effects CSS - Auto-generated - Do not edit manually */';
 const EFFECT_CSS_MARKER_END = '/* End Effects CSS */';
 const TYPOGRAPHY_CSS_MARKER_START = '/* Typography CSS - Auto-generated - Do not edit manually */';
 const TYPOGRAPHY_CSS_MARKER_END = '/* End Typography CSS */';
 const COLOR_CSS_MARKER_START = '/* Color Palette CSS - Auto-generated - Do not edit manually */';
 const COLOR_CSS_MARKER_END = '/* End Color Palette CSS */';
+const GLOBAL_DESIGN_CSS_MARKER_START = '/* Global Design CSS - Auto-generated - Do not edit manually */';
+const GLOBAL_DESIGN_CSS_MARKER_END = '/* End Global Design CSS */';
 
 const stripSection = (css: string, start: string, end: string): string => {
-  const startIndex = css.indexOf(start);
-  if (startIndex === -1) return css;
-  const endIndex = css.indexOf(end, startIndex);
-  if (endIndex === -1) return css.substring(0, startIndex).trim();
-  const before = css.substring(0, startIndex).trim();
-  const after = css.substring(endIndex + end.length).trim();
-  return [before, after].filter(Boolean).join('\n\n');
+  // Use regex to find the section, allowing for potential whitespace variations
+  // Escape special characters in start and end markers for regex
+  const escapeRegExp = (string: string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const startPattern = escapeRegExp(start);
+  const endPattern = escapeRegExp(end);
+
+  // Creates a pattern that matches start...end, including newlines
+  // s flag (dotAll) is not standard in all environments, so we use [\s\S]*?
+  const regex = new RegExp(`${startPattern}[\\s\\S]*?${endPattern}`, 'g');
+
+  return css.replace(regex, '').trim();
 };
 
 const removeAutoSections = (css: string): string => {
@@ -32,6 +38,7 @@ const removeAutoSections = (css: string): string => {
   result = stripSection(result, EFFECT_CSS_MARKER_START, EFFECT_CSS_MARKER_END);
   result = stripSection(result, TYPOGRAPHY_CSS_MARKER_START, TYPOGRAPHY_CSS_MARKER_END);
   result = stripSection(result, COLOR_CSS_MARKER_START, COLOR_CSS_MARKER_END);
+  result = stripSection(result, GLOBAL_DESIGN_CSS_MARKER_START, GLOBAL_DESIGN_CSS_MARKER_END);
   return result;
 };
 
@@ -46,7 +53,12 @@ const buildCustomCssWithAuto = (
   baseCss: string,
   activeEffects: string[],
   typographyCss: string,
-  colorMapping: Record<string, string> | null
+  colorMapping: Record<string, string> | null,
+  backgroundOverlay: { enabled: boolean; color: string; opacity: number },
+  gridSystem: { enabled: boolean; size: number; color: string; opacity: number },
+  colorBlindness: { enabled: boolean; type: 'protanopia' | 'deuteranopia' | 'tritanopia' | 'none' },
+  colorAdjustments: { brightness: number; contrast: number; saturation: number },
+  outlineMode: boolean
 ): string => {
   let result = removeAutoSections(baseCss);
 
@@ -60,7 +72,6 @@ const buildCustomCssWithAuto = (
   if (typographyCss.trim()) {
     result = appendSection(result, TYPOGRAPHY_CSS_MARKER_START, TYPOGRAPHY_CSS_MARKER_END, typographyCss);
   }
-
   // Effects CSS
   if (activeEffects.length > 0) {
     const effectsCss = activeEffects
@@ -72,6 +83,81 @@ const buildCustomCssWithAuto = (
       .join('\n\n');
 
     result = appendSection(result, EFFECT_CSS_MARKER_START, EFFECT_CSS_MARKER_END, effectsCss);
+  }
+
+  // Global design CSS (overlays, grids, filters, outlines)
+  const globalRules: string[] = [];
+
+  if (backgroundOverlay.enabled && backgroundOverlay.opacity > 0) {
+    globalRules.push(`
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: ${backgroundOverlay.color};
+  opacity: ${backgroundOverlay.opacity};
+  mix-blend-mode: multiply;
+  z-index: 999999;
+}`.trim());
+  }
+
+  if (gridSystem.enabled && gridSystem.size > 0) {
+    globalRules.push(`
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, ${gridSystem.color} 1px, transparent 1px),
+    linear-gradient(to bottom, ${gridSystem.color} 1px, transparent 1px);
+  background-size: ${gridSystem.size}px ${gridSystem.size}px;
+  opacity: ${gridSystem.opacity};
+  z-index: 999998;
+}`.trim());
+  }
+
+  const filters: string[] = [];
+
+  if (colorAdjustments) {
+    if (colorAdjustments.brightness !== 100) {
+      filters.push(`brightness(${colorAdjustments.brightness}%)`);
+    }
+    if (colorAdjustments.contrast !== 100) {
+      filters.push(`contrast(${colorAdjustments.contrast}%)`);
+    }
+    if (colorAdjustments.saturation !== 100) {
+      filters.push(`saturate(${colorAdjustments.saturation}%)`);
+    }
+  }
+
+  if (colorBlindness.enabled && colorBlindness.type !== 'none') {
+    // Simple approximations for color blindness simulation
+    if (colorBlindness.type === 'protanopia') {
+      filters.push('grayscale(0.6)');
+    } else if (colorBlindness.type === 'deuteranopia') {
+      filters.push('grayscale(0.5) contrast(1.1)');
+    } else if (colorBlindness.type === 'tritanopia') {
+      filters.push('grayscale(0.4) contrast(1.05)');
+    }
+  }
+
+  if (filters.length > 0) {
+    globalRules.push(`html { filter: ${filters.join(' ')} !important; }`);
+  }
+
+  if (outlineMode) {
+    globalRules.push(`
+* {
+  outline: 1px solid rgba(56, 189, 248, 0.7) !important;
+  outline-offset: -1px;
+}`.trim());
+  }
+
+  if (globalRules.length > 0) {
+    const globalCss = globalRules.join('\n\n');
+    result = appendSection(result, GLOBAL_DESIGN_CSS_MARKER_START, GLOBAL_DESIGN_CSS_MARKER_END, globalCss);
   }
 
   return result.trim();
@@ -99,6 +185,12 @@ export interface EditorState {
   colorMapping: Record<string, string> | null; // Using Record instead of Map for serialization
   extractedColors: Array<{ color: string; usage: string[] }>;
   effectMode: 'single' | 'multi';
+  // Global design features
+  backgroundOverlay: { enabled: boolean; color: string; opacity: number };
+  gridSystem: { enabled: boolean; size: number; color: string; opacity: number };
+  colorBlindness: { enabled: boolean; type: 'protanopia' | 'deuteranopia' | 'tritanopia' | 'none' };
+  colorAdjustments: { brightness: number; contrast: number; saturation: number };
+  outlineMode: boolean;
 }
 
 export interface ViewportState {
@@ -160,7 +252,12 @@ type AppAction =
   | { type: 'SET_TYPOGRAPHY_CSS'; payload: string }
   | { type: 'SET_COLOR_MAPPING'; payload: Record<string, string> | null }
   | { type: 'SET_EXTRACTED_COLORS'; payload: Array<{ color: string; usage: string[] }> }
-  | { type: 'SET_EFFECT_MODE'; payload: 'single' | 'multi' };
+  | { type: 'SET_EFFECT_MODE'; payload: 'single' | 'multi' }
+  | { type: 'SET_BACKGROUND_OVERLAY'; payload: { enabled: boolean; color: string; opacity: number } }
+  | { type: 'SET_GRID_SYSTEM'; payload: { enabled: boolean; size: number; color: string; opacity: number } }
+  | { type: 'SET_COLOR_BLINDNESS'; payload: { enabled: boolean; type: 'protanopia' | 'deuteranopia' | 'tritanopia' | 'none' } }
+  | { type: 'SET_COLOR_ADJUSTMENTS'; payload: { brightness: number; contrast: number; saturation: number } }
+  | { type: 'SET_OUTLINE_MODE'; payload: boolean };
 
 // Load initial state from localStorage
 const loadInitialState = (): AppState => {
@@ -171,18 +268,33 @@ const loadInitialState = (): AppState => {
 
   // Get saved active effects
   const savedActiveEffects = savedEditor.activeEffects || [];
-  
+
+  const initialBackgroundOverlay =
+    savedEditor.backgroundOverlay || { enabled: false, color: 'rgba(15, 23, 42, 0.9)', opacity: 0.3 };
+  const initialGridSystem =
+    savedEditor.gridSystem || { enabled: false, size: 8, color: 'rgba(148, 163, 184, 0.6)', opacity: 0.45 };
+  const initialColorBlindness =
+    savedEditor.colorBlindness || { enabled: false, type: 'none' as const };
+  const initialColorAdjustments =
+    savedEditor.colorAdjustments || { brightness: 100, contrast: 100, saturation: 100 };
+  const initialOutlineMode = savedEditor.outlineMode ?? false;
+
   // Base user CSS (strip any auto-generated sections first)
   const baseCustomCss = removeAutoSections(
     savedCss || savedEditor.customCss || '/* Add your custom CSS here */'
   );
-  
+
   // Rebuild CSS with all auto-generated sections (effects, typography, colors)
   const finalCustomCss = buildCustomCssWithAuto(
     baseCustomCss,
     savedActiveEffects,
     savedEditor.typographyCss || '',
-    savedEditor.colorMapping || null
+    savedEditor.colorMapping || null,
+    initialBackgroundOverlay,
+    initialGridSystem,
+    initialColorBlindness,
+    initialColorAdjustments,
+    initialOutlineMode
   );
 
   return {
@@ -203,7 +315,12 @@ const loadInitialState = (): AppState => {
       typographyCss: savedEditor.typographyCss || '',
       colorMapping: savedEditor.colorMapping || null,
       extractedColors: [],
-      effectMode: 'multi', // Default to multi to support existing behavior
+      effectMode: 'single', // Default to single as requested
+      backgroundOverlay: initialBackgroundOverlay,
+      gridSystem: initialGridSystem,
+      colorBlindness: initialColorBlindness,
+      colorAdjustments: initialColorAdjustments,
+      outlineMode: initialOutlineMode,
     },
     viewport: {
       deviceMode: savedViewport.deviceMode || 'desktop',
@@ -268,7 +385,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         userCss,
         state.editor.activeEffects,
         state.editor.typographyCss,
-        state.editor.colorMapping
+        state.editor.colorMapping,
+        state.editor.backgroundOverlay,
+        state.editor.gridSystem,
+        state.editor.colorBlindness,
+        state.editor.colorAdjustments,
+        state.editor.outlineMode
       );
       return {
         ...state,
@@ -432,7 +554,13 @@ function appReducer(state: AppState, action: AppAction): AppState {
           : [...currentEffects, effectId];
       } else {
         // Single mode: Toggle off if same, otherwise replace
-        newEffects = currentEffects.includes(effectId) ? [] : [effectId];
+        // If clicking the same effect, toggle it off (empty array)
+        if (currentEffects.includes(effectId)) {
+          newEffects = [];
+        } else {
+          // If clicking a new effect, replace the entire array with just this one
+          newEffects = [effectId];
+        }
       }
 
       // Sync auto CSS (effects + others) with customCss
@@ -441,7 +569,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         baseCssForEffects,
         newEffects,
         state.editor.typographyCss,
-        state.editor.colorMapping
+        state.editor.colorMapping,
+        state.editor.backgroundOverlay,
+        state.editor.gridSystem,
+        state.editor.colorBlindness,
+        state.editor.colorAdjustments,
+        state.editor.outlineMode
       );
 
       return {
@@ -469,7 +602,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
         baseCssWithoutEffects,
         [],
         state.editor.typographyCss,
-        state.editor.colorMapping
+        state.editor.colorMapping,
+        state.editor.backgroundOverlay,
+        state.editor.gridSystem,
+        state.editor.colorBlindness,
+        state.editor.colorAdjustments,
+        state.editor.outlineMode
       );
       return {
         ...state,
@@ -489,7 +627,12 @@ function appReducer(state: AppState, action: AppAction): AppState {
             removeAutoSections(state.editor.customCss),
             state.editor.activeEffects,
             action.payload,
-            state.editor.colorMapping
+            state.editor.colorMapping,
+            state.editor.backgroundOverlay,
+            state.editor.gridSystem,
+            state.editor.colorBlindness,
+            state.editor.colorAdjustments,
+            state.editor.outlineMode
           ),
         },
       };
@@ -503,10 +646,125 @@ function appReducer(state: AppState, action: AppAction): AppState {
             removeAutoSections(state.editor.customCss),
             state.editor.activeEffects,
             state.editor.typographyCss,
-            action.payload
+            action.payload,
+            state.editor.backgroundOverlay,
+            state.editor.gridSystem,
+            state.editor.colorBlindness,
+            state.editor.colorAdjustments,
+            state.editor.outlineMode
           ),
         },
       };
+    case 'SET_BACKGROUND_OVERLAY': {
+      const baseCss = removeAutoSections(state.editor.customCss);
+      const updatedCustomCss = buildCustomCssWithAuto(
+        baseCss,
+        state.editor.activeEffects,
+        state.editor.typographyCss,
+        state.editor.colorMapping,
+        action.payload,
+        state.editor.gridSystem,
+        state.editor.colorBlindness,
+        state.editor.colorAdjustments,
+        state.editor.outlineMode
+      );
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          backgroundOverlay: action.payload,
+          customCss: updatedCustomCss,
+        },
+      };
+    }
+    case 'SET_GRID_SYSTEM': {
+      const baseCss = removeAutoSections(state.editor.customCss);
+      const updatedCustomCss = buildCustomCssWithAuto(
+        baseCss,
+        state.editor.activeEffects,
+        state.editor.typographyCss,
+        state.editor.colorMapping,
+        state.editor.backgroundOverlay,
+        action.payload,
+        state.editor.colorBlindness,
+        state.editor.colorAdjustments,
+        state.editor.outlineMode
+      );
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          gridSystem: action.payload,
+          customCss: updatedCustomCss,
+        },
+      };
+    }
+    case 'SET_COLOR_BLINDNESS': {
+      const baseCss = removeAutoSections(state.editor.customCss);
+      const updatedCustomCss = buildCustomCssWithAuto(
+        baseCss,
+        state.editor.activeEffects,
+        state.editor.typographyCss,
+        state.editor.colorMapping,
+        state.editor.backgroundOverlay,
+        state.editor.gridSystem,
+        action.payload,
+        state.editor.colorAdjustments,
+        state.editor.outlineMode
+      );
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          colorBlindness: action.payload,
+          customCss: updatedCustomCss,
+        },
+      };
+    }
+    case 'SET_COLOR_ADJUSTMENTS': {
+      const baseCss = removeAutoSections(state.editor.customCss);
+      const updatedCustomCss = buildCustomCssWithAuto(
+        baseCss,
+        state.editor.activeEffects,
+        state.editor.typographyCss,
+        state.editor.colorMapping,
+        state.editor.backgroundOverlay,
+        state.editor.gridSystem,
+        state.editor.colorBlindness,
+        action.payload,
+        state.editor.outlineMode
+      );
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          colorAdjustments: action.payload,
+          customCss: updatedCustomCss,
+        },
+      };
+    }
+    case 'SET_OUTLINE_MODE': {
+      const baseCss = removeAutoSections(state.editor.customCss);
+      const updatedCustomCss = buildCustomCssWithAuto(
+        baseCss,
+        state.editor.activeEffects,
+        state.editor.typographyCss,
+        state.editor.colorMapping,
+        state.editor.backgroundOverlay,
+        state.editor.gridSystem,
+        state.editor.colorBlindness,
+        state.editor.colorAdjustments,
+        action.payload
+      );
+      return {
+        ...state,
+        editor: {
+          ...state.editor,
+          outlineMode: action.payload,
+          customCss: updatedCustomCss,
+        },
+      };
+    }
     case 'SET_EXTRACTED_COLORS':
       return {
         ...state,
@@ -543,6 +801,11 @@ interface AppContextType {
   setColorMapping: (mapping: Record<string, string> | null) => void;
   setExtractedColors: (colors: Array<{ color: string; usage: string[] }>) => void;
   setEffectMode: (mode: 'single' | 'multi') => void;
+  setBackgroundOverlay: (overlay: { enabled: boolean; color: string; opacity: number }) => void;
+  setGridSystem: (grid: { enabled: boolean; size: number; color: string; opacity: number }) => void;
+  setColorBlindness: (options: { enabled: boolean; type: 'protanopia' | 'deuteranopia' | 'tritanopia' | 'none' }) => void;
+  setColorAdjustments: (adjustments: { brightness: number; contrast: number; saturation: number }) => void;
+  setOutlineMode: (enabled: boolean) => void;
 }
 
 const AppContext = createContext<AppContextType | undefined>(undefined);
@@ -665,6 +928,29 @@ export function AppProvider({ children }: { children: ReactNode }) {
     dispatch({ type: 'SET_EFFECT_MODE', payload: mode });
   }, []);
 
+  const setBackgroundOverlay = useCallback((overlay: { enabled: boolean; color: string; opacity: number }) => {
+    dispatch({ type: 'SET_BACKGROUND_OVERLAY', payload: overlay });
+  }, []);
+
+  const setGridSystem = useCallback((grid: { enabled: boolean; size: number; color: string; opacity: number }) => {
+    dispatch({ type: 'SET_GRID_SYSTEM', payload: grid });
+  }, []);
+
+  const setColorBlindness = useCallback(
+    (options: { enabled: boolean; type: 'protanopia' | 'deuteranopia' | 'tritanopia' | 'none' }) => {
+      dispatch({ type: 'SET_COLOR_BLINDNESS', payload: options });
+    },
+    []
+  );
+
+  const setColorAdjustments = useCallback((adjustments: { brightness: number; contrast: number; saturation: number }) => {
+    dispatch({ type: 'SET_COLOR_ADJUSTMENTS', payload: adjustments });
+  }, []);
+
+  const setOutlineMode = useCallback((enabled: boolean) => {
+    dispatch({ type: 'SET_OUTLINE_MODE', payload: enabled });
+  }, []);
+
   const value: AppContextType = {
     state,
     dispatch,
@@ -686,6 +972,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setColorMapping,
     setExtractedColors,
     setEffectMode,
+    setBackgroundOverlay,
+    setGridSystem,
+    setColorBlindness,
+    setColorAdjustments,
+    setOutlineMode,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

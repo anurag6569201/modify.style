@@ -1,8 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import {
   Type,
-  Sparkles,
-  FileText,
   Bold,
   Italic,
   Underline,
@@ -10,17 +8,21 @@ import {
   AlignCenter,
   AlignRight,
   AlignJustify,
-  Palette
+  Sparkles,
+  Palette,
+  Eye,
+  Layout
 } from 'lucide-react';
 import { motion } from 'framer-motion';
 import '../../assets/css/editor/DesignPanel.css';
-import { PREDEFINED_EFFECTS } from './EffectsPanel';
+import { PREDEFINED_EFFECTS } from './effects';
+import { useApp } from '../../context/AppContext';
 
 interface DesignPanelProps {
   activeEffects: string[];
-  effectMode: 'single';
+
   onToggleEffect: (effectId: string) => void;
-  onSetEffectMode: (mode: 'single') => void;
+
   onTypographyChange: (css: string) => void;
 }
 
@@ -35,13 +37,22 @@ interface TypographySettings {
   textDecoration: string;
 }
 
+
 const DesignPanel: React.FC<DesignPanelProps> = ({
   activeEffects,
-  effectMode,
   onToggleEffect,
-  onSetEffectMode,
   onTypographyChange,
 }) => {
+  const {
+    state,
+    setBackgroundOverlay,
+    setGridSystem,
+    setColorBlindness,
+    setColorAdjustments,
+    setOutlineMode,
+  } = useApp();
+
+
   const [typography, setTypography] = useState<TypographySettings>({
     fontSize: '',
     fontWeight: '400',
@@ -58,14 +69,14 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
     const handler = setTimeout(() => {
       // Generate CSS
       const cssRules: string[] = [];
-      if (typography.fontSize) cssRules.push(`font-size: ${typography.fontSize} !important;`);
-      if (typography.fontWeight && typography.fontWeight !== '400') cssRules.push(`font-weight: ${typography.fontWeight} !important;`);
-      if (typography.fontFamily) cssRules.push(`font-family: ${typography.fontFamily} !important;`);
-      if (typography.fontStyle && typography.fontStyle !== 'normal') cssRules.push(`font-style: ${typography.fontStyle} !important;`);
-      if (typography.letterSpacing) cssRules.push(`letter-spacing: ${typography.letterSpacing} !important;`);
-      if (typography.textAlign && typography.textAlign !== 'left') cssRules.push(`text-align: ${typography.textAlign} !important;`);
-      if (typography.textTransform && typography.textTransform !== 'none') cssRules.push(`text-transform: ${typography.textTransform} !important;`);
-      if (typography.textDecoration && typography.textDecoration !== 'none') cssRules.push(`text-decoration: ${typography.textDecoration} !important;`);
+      if (typography.fontSize) cssRules.push(`font - size: ${typography.fontSize} !important; `);
+      if (typography.fontWeight && typography.fontWeight !== '400') cssRules.push(`font - weight: ${typography.fontWeight} !important; `);
+      if (typography.fontFamily) cssRules.push(`font-family: ${typography.fontFamily} !important; `);
+      if (typography.fontStyle && typography.fontStyle !== 'normal') cssRules.push(`font - style: ${typography.fontStyle} !important; `);
+      if (typography.letterSpacing) cssRules.push(`letter - spacing: ${typography.letterSpacing} !important; `);
+      if (typography.textAlign && typography.textAlign !== 'left') cssRules.push(`text - align: ${typography.textAlign} !important; `);
+      if (typography.textTransform && typography.textTransform !== 'none') cssRules.push(`text - transform: ${typography.textTransform} !important; `);
+      if (typography.textDecoration && typography.textDecoration !== 'none') cssRules.push(`text - decoration: ${typography.textDecoration} !important; `);
 
       let css = '';
       if (cssRules.length > 0) css += `body, * { ${cssRules.join(' ')} } `;
@@ -78,6 +89,8 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
     };
   }, [typography, onTypographyChange]);
 
+  const { backgroundOverlay, gridSystem, colorBlindness, colorAdjustments, outlineMode } = state.editor;
+
   const updateTypography = (field: keyof TypographySettings, value: string) => {
     setTypography(prev => ({ ...prev, [field]: value }));
   };
@@ -89,8 +102,15 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
     'Montserrat, sans-serif',
     'Open Sans, sans-serif',
     'Lato, sans-serif',
+    'Poppins, sans-serif',
+    'Nunito, sans-serif',
+    'Source Sans Pro, sans-serif',
+    'Merriweather, serif',
+    'Fira Sans, sans-serif',
+    'Space Grotesk, sans-serif',
     'Courier New, monospace',
   ];
+
 
   return (
     <div className="design-panel">
@@ -153,19 +173,19 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
             <label>Style</label>
             <div className="toggle-group">
               <button
-                className={`toggle-btn ${typography.fontWeight === '700' ? 'active' : ''}`}
+                className={`toggle - btn ${typography.fontWeight === '700' ? 'active' : ''} `}
                 onClick={() => updateTypography('fontWeight', typography.fontWeight === '700' ? '400' : '700')}
               >
                 <Bold size={16} />
               </button>
               <button
-                className={`toggle-btn ${typography.fontStyle === 'italic' ? 'active' : ''}`}
+                className={`toggle - btn ${typography.fontStyle === 'italic' ? 'active' : ''} `}
                 onClick={() => updateTypography('fontStyle', typography.fontStyle === 'italic' ? 'normal' : 'italic')}
               >
                 <Italic size={16} />
               </button>
               <button
-                className={`toggle-btn ${typography.textDecoration === 'underline' ? 'active' : ''}`}
+                className={`toggle - btn ${typography.textDecoration === 'underline' ? 'active' : ''} `}
                 onClick={() => updateTypography('textDecoration', typography.textDecoration === 'underline' ? 'none' : 'underline')}
               >
                 <Underline size={16} />
@@ -178,25 +198,25 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
             <label>Align</label>
             <div className="toggle-group">
               <button
-                className={`toggle-btn ${typography.textAlign === 'left' ? 'active' : ''}`}
+                className={`toggle - btn ${typography.textAlign === 'left' ? 'active' : ''} `}
                 onClick={() => updateTypography('textAlign', 'left')}
               >
                 <AlignLeft size={16} />
               </button>
               <button
-                className={`toggle-btn ${typography.textAlign === 'center' ? 'active' : ''}`}
+                className={`toggle - btn ${typography.textAlign === 'center' ? 'active' : ''} `}
                 onClick={() => updateTypography('textAlign', 'center')}
               >
                 <AlignCenter size={16} />
               </button>
               <button
-                className={`toggle-btn ${typography.textAlign === 'right' ? 'active' : ''}`}
+                className={`toggle - btn ${typography.textAlign === 'right' ? 'active' : ''} `}
                 onClick={() => updateTypography('textAlign', 'right')}
               >
                 <AlignRight size={16} />
               </button>
               <button
-                className={`toggle-btn ${typography.textAlign === 'justify' ? 'active' : ''}`}
+                className={`toggle - btn ${typography.textAlign === 'justify' ? 'active' : ''} `}
                 onClick={() => updateTypography('textAlign', 'justify')}
               >
                 <AlignJustify size={16} />
@@ -221,7 +241,7 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
               return (
                 <motion.button
                   key={effect.id}
-                  className={`effect-card-new ${isActive ? 'active' : ''}`}
+                  className={`effect-card-new ${isActive ? 'active' : ''} `}
                   onClick={() => onToggleEffect(effect.id)}
                   whileHover={{ scale: 1.02 }}
                   whileTap={{ scale: 0.98 }}
@@ -240,23 +260,233 @@ const DesignPanel: React.FC<DesignPanelProps> = ({
         </div>
       </div>
 
-      {/* Templates Section */}
+      {/* Global Layout & Overlays */}
       <div className="design-section">
         <div className="section-title">
-          <FileText size={16} />
-          <span>Templates</span>
+          <Layout size={16} />
+          <span>Layout & Overlays</span>
         </div>
         <div className="section-content">
-          <div className="templates-list-modern">
-            {['Modern Blog', 'Corporate', 'Creative', 'Minimalist'].map(t => (
-              <div key={t} className="template-item-modern">
-                <div className="template-preview" />
-                <span>{t}</span>
+          {/* Grid System */}
+          <div className="control-group">
+            <label>Grid Overlay</label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={gridSystem.enabled}
+                onChange={(e) =>
+                  setGridSystem({
+                    ...gridSystem,
+                    enabled: e.target.checked,
+                  })
+                }
+              />
+              <span>Show baseline grid across the page</span>
+            </label>
+            {gridSystem.enabled && (
+              <>
+                <div className="slider-row">
+                  <span className="slider-label">Size</span>
+                  <input
+                    type="range"
+                    min={4}
+                    max={64}
+                    value={gridSystem.size}
+                    onChange={(e) =>
+                      setGridSystem({
+                        ...gridSystem,
+                        size: Number(e.target.value),
+                      })
+                    }
+                  />
+                  <span className="slider-value">{gridSystem.size}px</span>
+                </div>
+                <div className="control-row">
+                  <div className="control-group half">
+                    <label>Color</label>
+                    <input
+                      type="color"
+                      value="#ffffff"
+                      onChange={() =>
+                        setGridSystem({
+                          ...gridSystem,
+                          color: `rgba(255, 255, 255, ${gridSystem.opacity})`,
+                        })
+                      }
+                    />
+                  </div>
+                  <div className="control-group half">
+                    <label>Opacity</label>
+                    <input
+                      type="range"
+                      min={0}
+                      max={1}
+                      step={0.05}
+                      value={gridSystem.opacity}
+                      onChange={(e) =>
+                        setGridSystem({
+                          ...gridSystem,
+                          opacity: Number(e.target.value),
+                        })
+                      }
+                    />
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Background Overlay */}
+          <div className="control-group">
+            <label>Background Tint</label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={backgroundOverlay.enabled}
+                onChange={(e) =>
+                  setBackgroundOverlay({
+                    ...backgroundOverlay,
+                    enabled: e.target.checked,
+                  })
+                }
+              />
+              <span>Dim / tint entire page</span>
+            </label>
+            {backgroundOverlay.enabled && (
+              <div className="control-row">
+                <div className="control-group half">
+                  <label>Color</label>
+                  <input
+                    type="color"
+                    value="#0f172a"
+                    onChange={(e) =>
+                      setBackgroundOverlay({
+                        ...backgroundOverlay,
+                        color: backgroundOverlay.color || e.target.value,
+                      })
+                    }
+                  />
+                </div>
+                <div className="control-group half">
+                  <label>Opacity</label>
+                  <input
+                    type="range"
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    value={backgroundOverlay.opacity}
+                    onChange={(e) =>
+                      setBackgroundOverlay({
+                        ...backgroundOverlay,
+                        opacity: Number(e.target.value),
+                      })
+                    }
+                  />
+                </div>
               </div>
-            ))}
+            )}
           </div>
         </div>
       </div>
+
+      {/* Accessibility & Color Testing */}
+      <div className="design-section">
+        <div className="section-title">
+          <Eye size={16} />
+          <span>Visual Testing</span>
+        </div>
+        <div className="section-content">
+          {/* Color Blindness Simulation */}
+          <div className="control-group">
+            <label>Color Blindness</label>
+            <label className="checkbox-row">
+              <input
+                type="checkbox"
+                checked={colorBlindness.enabled}
+                onChange={(e) =>
+                  setColorBlindness({
+                    ...colorBlindness,
+                    enabled: e.target.checked,
+                  })
+                }
+              />
+              <span>Simulate vision deficiency</span>
+            </label>
+            {colorBlindness.enabled && (
+              <select
+                className="modern-select full"
+                value={colorBlindness.type}
+                onChange={(e) =>
+                  setColorBlindness({
+                    ...colorBlindness,
+                    type: e.target.value as any,
+                  })
+                }
+              >
+                <option value="protanopia">Protanopia</option>
+                <option value="deuteranopia">Deuteranopia</option>
+                <option value="tritanopia">Tritanopia</option>
+              </select>
+            )}
+          </div>
+
+          {/* Global Color Adjustments */}
+          <div className="control-group">
+            <label>Color Adjustments</label>
+            <div className="slider-row">
+              <span className="slider-label">Brightness</span>
+              <input
+                type="range"
+                min={50}
+                max={150}
+                value={colorAdjustments.brightness}
+                onChange={(e) =>
+                  setColorAdjustments({
+                    ...colorAdjustments,
+                    brightness: Number(e.target.value),
+                  })
+                }
+              />
+              <span className="slider-value">{colorAdjustments.brightness}%</span>
+            </div>
+            <div className="slider-row">
+              <span className="slider-label">Contrast</span>
+              <input
+                type="range"
+                min={50}
+                max={150}
+                value={colorAdjustments.contrast}
+                onChange={(e) =>
+                  setColorAdjustments({
+                    ...colorAdjustments,
+                    contrast: Number(e.target.value),
+                  })
+                }
+              />
+              <span className="slider-value">{colorAdjustments.contrast}%</span>
+            </div>
+            <div className="slider-row">
+              <span className="slider-label">Saturation</span>
+              <input
+                type="range"
+                min={0}
+                max={200}
+                value={colorAdjustments.saturation}
+                onChange={(e) =>
+                  setColorAdjustments({
+                    ...colorAdjustments,
+                    saturation: Number(e.target.value),
+                  })
+                }
+              />
+              <span className="slider-value">{colorAdjustments.saturation}%</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      {/* Templates Section */}
 
 
     </div>

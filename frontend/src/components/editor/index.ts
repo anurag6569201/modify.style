@@ -6,7 +6,5 @@ export { default as CSSEditor } from './CSSEditor';
 export { default as StyleEditor } from './StyleEditor';
 export { default as ElementInspector } from './ElementInspector';
 export { default as DesignPanel } from './DesignPanel';
-export { default as EffectsPanel, PREDEFINED_EFFECTS } from './EffectsPanel';
 export { default as BrandExtractor } from './BrandExtractor';
 export { default as BoxModelViewer } from './BoxModelViewer';
-

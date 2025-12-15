@@ -24,6 +24,12 @@ export interface EditorState {
   showSettings: boolean;
   activeEffects?: string[];
   typographyCss?: string;
+   colorMapping?: Record<string, string> | null;
+   backgroundOverlay?: { enabled: boolean; color: string; opacity: number };
+   gridSystem?: { enabled: boolean; size: number; color: string; opacity: number };
+   colorBlindness?: { enabled: boolean; type: 'protanopia' | 'deuteranopia' | 'tritanopia' | 'none' };
+   colorAdjustments?: { brightness: number; contrast: number; saturation: number };
+   outlineMode?: boolean;
 }
 
 export interface AppSettings {

@@ -683,11 +683,7 @@ export default function ElementInspector() {
 
   return (
     <div className="element-inspector">
-      <div className="inspector-header">
-        <div className="inspector-title">
-          <Eye size={16} />
-          <span>Element Inspector</span>
-        </div>
+      <div className="inspector-header" style={{display:'flex',justifyContent:'right',width:'full'}}>
         <div className="inspector-actions">
           <button
             className={`inspector-btn ${selectionMode ? 'active' : ''}`}
@@ -702,17 +698,6 @@ export default function ElementInspector() {
             title={highlighted ? 'Hide Highlight' : 'Show Highlight'}
           >
             {highlighted ? <Eye size={14} /> : <EyeOff size={14} />}
-          </button>
-          <button
-            className="inspector-btn"
-            onClick={() => {
-              dispatch({ type: 'TOGGLE_INSPECTOR' });
-              dispatch({ type: 'SET_SELECTED_ELEMENT', payload: null });
-              setSelectionMode(false);
-            }}
-            title="Close"
-          >
-            <X size={14} />
           </button>
         </div>
       </div>
