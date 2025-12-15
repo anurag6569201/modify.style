@@ -89,7 +89,6 @@ type AppAction =
   | { type: 'CLEAR_ALL_EFFECTS' }
   | { type: 'SET_TYPOGRAPHY_CSS'; payload: string }
   | { type: 'SET_COLOR_MAPPING'; payload: Record<string, string> | null }
-  | { type: 'SET_COLOR_MAPPING'; payload: Record<string, string> | null }
   | { type: 'SET_EXTRACTED_COLORS'; payload: Array<{ color: string; usage: string[] }> }
   | { type: 'SET_EFFECT_MODE'; payload: 'single' | 'multi' };
 

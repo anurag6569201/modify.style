@@ -328,7 +328,6 @@
   align-items: center;
   justify-content: center;
   perspective: 1000px;
-  padding-top: 3.5rem; /* Space for top bar */
   padding-bottom: 3.5rem; /* Space for bottom dock */
   overflow: hidden;
   background: 
@@ -348,6 +347,7 @@
   -webkit-transform: translateZ(0);
   /* Optimize pointer events */
   pointer-events: auto;
+  padding-left: 0 !important;
 }
 
 .viewer-canvas::-webkit-scrollbar {
@@ -801,15 +801,43 @@
 /* Helper */
 /* Multi-View Container */
 .multi-view-container {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 60px; /* Increased gap for better visual separation */
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-items: start;
+  justify-items: center;
+  gap: 40px;
+  padding: 40px;
+  width: 100%;
+  max-width: 100%;
   transform-style: preserve-3d;
   /* Ensure hardware acceleration for the container */
   will-change: transform;
   /* Prevent layout thrashing */
   contain: layout style;
+}
+
+@media (max-width: 1400px) {
+  .multi-view-container {
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 30px;
+    padding: 30px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .multi-view-container {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 20px;
+    padding: 20px;
+  }
+}
+
+@media (max-width: 768px) {
+  .multi-view-container {
+    grid-template-columns: 1fr;
+    gap: 20px;
+    padding: 20px;
+  }
 }
 
 .spin {
@@ -914,7 +942,7 @@
 
 .empty-state h2 {
   font-size: 3.5rem;
-  font-weight:  000;
+  font-weight: 700;
   letter-spacing: -0.05em;
   background: linear-gradient(135deg, white, #666);
   -webkit-background-clip: text;
@@ -1071,6 +1099,66 @@
 
 .comparison-slider-handle:active > div {
   transform: scale(0.95);
+}
+
+/* IMPROVEMENT 2: Loading Skeleton Animation */
+.iframe-loading-skeleton {
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInOut {
+  0%, 100% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.95);
+  }
+  50% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+/* IMPROVEMENT 3: Smooth iframe transitions */
+.website-iframe {
+  transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* IMPROVEMENT 4: Ensure iframe container maintains visibility */
+.iframe-container {
+  position: relative;
+  min-height: 100px; /* Prevent collapse */
+}
+
+/* IMPROVEMENT 3: Frame wrapper smooth dimension transitions */
+.frame-wrapper {
+  transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              height 0.3s cubic-bezier(0.4, 0, 0.2, 1),
+              transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+/* Prevent blank screen flash */
+.frame-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: white;
+  z-index: 0;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+
+.frame-wrapper:not(:has(.website-iframe[style*="opacity: 1"]))::before {
+  opacity: 1;
+  z-index: 1;
 }
 
 

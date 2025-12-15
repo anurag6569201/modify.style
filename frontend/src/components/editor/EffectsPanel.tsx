@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Sparkles, X, Check } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Sparkles, X, Check, Eye } from 'lucide-react';
 import '../../assets/css/editor/EffectsPanel.css';
 
 export interface CSSEffect {
@@ -217,6 +217,8 @@ interface EffectsPanelProps {
 const EffectsPanel: React.FC<EffectsPanelProps> = ({ activeEffects, onToggleEffect }) => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string>('all');
+  const [previewingEffect, setPreviewingEffect] = useState<string | null>(null);
+  const previewTimeoutRef = useRef<number | null>(null);
 
   const categories = ['all', ...Array.from(new Set(PREDEFINED_EFFECTS.map(e => e.category)))];
 
@@ -230,6 +232,36 @@ const EffectsPanel: React.FC<EffectsPanelProps> = ({ activeEffects, onToggleEffe
   const getCategoryLabel = (category: string) => {
     return category === 'all' ? 'All Effects' : category.charAt(0).toUpperCase() + category.slice(1);
   };
+
+  // Preview effect on hover
+  const handleEffectHover = (effectId: string) => {
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current);
+    }
+    
+    setPreviewingEffect(effectId);
+    
+    // Auto-remove preview after 3 seconds
+    previewTimeoutRef.current = window.setTimeout(() => {
+      setPreviewingEffect(null);
+    }, 3000);
+  };
+
+  const handleEffectLeave = () => {
+    if (previewTimeoutRef.current) {
+      clearTimeout(previewTimeoutRef.current);
+    }
+    setPreviewingEffect(null);
+  };
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (previewTimeoutRef.current) {
+        clearTimeout(previewTimeoutRef.current);
+      }
+    };
+  }, []);
 
   return (
     <div className="effects-panel">
@@ -266,16 +298,31 @@ const EffectsPanel: React.FC<EffectsPanelProps> = ({ activeEffects, onToggleEffe
             return (
               <div
                 key={effect.id}
-                className={`effect-item ${isActive ? 'active' : ''}`}
+                className={`effect-item ${isActive ? 'active' : ''} ${previewingEffect === effect.id ? 'previewing' : ''}`}
                 onClick={() => onToggleEffect(effect.id)}
+                onMouseEnter={() => handleEffectHover(effect.id)}
+                onMouseLeave={handleEffectLeave}
+                title={previewingEffect === effect.id ? 'Previewing...' : 'Hover to preview'}
               >
                 <div className="effect-item-content">
                   <div className="effect-item-info">
                     <div className="effect-item-name">
                       {effect.name}
                       {isActive && <span className="active-dot"></span>}
+                      {previewingEffect === effect.id && !isActive && (
+                        <Eye size={12} style={{ marginLeft: '6px', opacity: 0.7 }} />
+                      )}
                     </div>
                     <div className="effect-item-description">{effect.description}</div>
+                    <div className="effect-item-category" style={{ 
+                      fontSize: '10px', 
+                      opacity: 0.6, 
+                      marginTop: '4px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px'
+                    }}>
+                      {effect.category}
+                    </div>
                   </div>
                   <div className={`effect-item-toggle ${isActive ? 'active' : ''}`}>
                     {isActive ? <Check size={14} /> : null}

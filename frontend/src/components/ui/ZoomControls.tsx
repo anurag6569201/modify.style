@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ZoomIn, ZoomOut } from 'lucide-react';
+import { ZoomIn, ZoomOut, RotateCcw, RotateCw } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import '../../assets/css/ui/ZoomControls.css';
 
@@ -8,6 +8,8 @@ export default function ZoomControls() {
   const [isEditing, setIsEditing] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const zoomHistoryRef = useRef<number[]>([1]); // Track zoom history
+  const historyIndexRef = useRef<number>(0);
 
   const zoomLevel = state.viewport.zoomLevel;
   const zoomPercentage = Math.round(zoomLevel * 100);
@@ -19,9 +21,31 @@ export default function ZoomControls() {
     }
   }, [zoomPercentage, isEditing]);
 
+  // Add to zoom history
+  const addToHistory = (level: number) => {
+    const history = zoomHistoryRef.current;
+    const index = historyIndexRef.current;
+    
+    // Remove any future history if we're not at the end
+    if (index < history.length - 1) {
+      history.splice(index + 1);
+    }
+    
+    // Add new zoom level
+    history.push(level);
+    historyIndexRef.current = history.length - 1;
+    
+    // Limit history size
+    if (history.length > 10) {
+      history.shift();
+      historyIndexRef.current = history.length - 1;
+    }
+  };
+
   const handleSliderChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = parseFloat(e.target.value);
+    const value = parseFloat(e.target.value) / 100;
     setZoomLevel(value);
+    addToHistory(value);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -31,7 +55,9 @@ export default function ZoomControls() {
   const handleInputBlur = () => {
     const value = parseFloat(inputValue);
     if (!isNaN(value) && value >= 10 && value <= 500) {
-      setZoomLevel(value / 100);
+      const newZoom = value / 100;
+      setZoomLevel(newZoom);
+      addToHistory(newZoom);
     } else {
       setInputValue(zoomPercentage.toString());
     }
@@ -57,12 +83,34 @@ export default function ZoomControls() {
     // Smooth zoom in - increase by 10% or to next nice number
     const newZoom = Math.min(zoomLevel * 1.1, 5);
     setZoomLevel(newZoom);
+    addToHistory(newZoom);
   };
 
   const handleZoomOut = () => {
     // Smooth zoom out - decrease by 10% or to next nice number
     const newZoom = Math.max(zoomLevel / 1.1, 0.1);
     setZoomLevel(newZoom);
+    addToHistory(newZoom);
+  };
+
+  const handleZoomBack = () => {
+    const history = zoomHistoryRef.current;
+    const index = historyIndexRef.current;
+    
+    if (index > 0) {
+      historyIndexRef.current = index - 1;
+      setZoomLevel(history[historyIndexRef.current]);
+    }
+  };
+
+  const handleZoomForward = () => {
+    const history = zoomHistoryRef.current;
+    const index = historyIndexRef.current;
+    
+    if (index < history.length - 1) {
+      historyIndexRef.current = index + 1;
+      setZoomLevel(history[historyIndexRef.current]);
+    }
   };
 
   const handleReset = () => {
@@ -76,13 +124,33 @@ export default function ZoomControls() {
     <div className="zoom-controls">
       <div className="zoom-controls-header">
         <span className="zoom-label">Zoom</span>
-        <button
-          className="zoom-reset-btn"
-          onClick={handleReset}
-          title="Reset to 100%"
-        >
-          Reset
-        </button>
+        <div style={{ display: 'flex', gap: '4px' }}>
+          <button
+            className="zoom-reset-btn"
+            onClick={handleZoomBack}
+            disabled={historyIndexRef.current === 0}
+            title="Previous zoom level"
+            style={{ padding: '4px 8px', fontSize: '12px' }}
+          >
+            <RotateCcw size={12} />
+          </button>
+          <button
+            className="zoom-reset-btn"
+            onClick={handleZoomForward}
+            disabled={historyIndexRef.current >= zoomHistoryRef.current.length - 1}
+            title="Next zoom level"
+            style={{ padding: '4px 8px', fontSize: '12px' }}
+          >
+            <RotateCw size={12} />
+          </button>
+          <button
+            className="zoom-reset-btn"
+            onClick={handleReset}
+            title="Reset to 100%"
+          >
+            Reset
+          </button>
+        </div>
       </div>
 
       <div className="zoom-slider-container">
@@ -144,7 +212,11 @@ export default function ZoomControls() {
           <button
             key={preset}
             className={`zoom-preset-btn ${zoomPercentage === preset ? 'active' : ''}`}
-            onClick={() => setZoomLevel(preset / 100)}
+            onClick={() => {
+              const newZoom = preset / 100;
+              setZoomLevel(newZoom);
+              addToHistory(newZoom);
+            }}
             title={`Zoom to ${preset}%`}
           >
             {preset}%

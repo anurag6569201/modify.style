@@ -34,15 +34,15 @@ class ApiService {
     try {
       const response = await fetch(url, config);
       
-      // Try to parse JSON response even if status is not ok
-      let errorData: any = {};
-      try {
-        errorData = await response.json();
-      } catch {
-        // If JSON parsing fails, use empty object
-      }
-      
       if (!response.ok) {
+        // Try to parse JSON error response
+        let errorData: any = {};
+        try {
+          errorData = await response.json();
+        } catch {
+          // If JSON parsing fails, use empty object
+        }
+        
         // If the response has an error field, use it
         if (errorData.error) {
           throw new Error(errorData.error);
@@ -50,7 +50,9 @@ class ApiService {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
 
-      return errorData as T;
+      // Parse successful response
+      const data = await response.json();
+      return data as T;
     } catch (error: any) {
       console.error('API request failed:', error);
       // Re-throw with more context if it's a network error

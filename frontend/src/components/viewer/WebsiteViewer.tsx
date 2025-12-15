@@ -24,7 +24,10 @@ import {
   Shield,
   ShieldAlert,
   Edit,
-  SplitSquareHorizontal
+  SplitSquareHorizontal,
+  Link2,
+  Link2Off,
+  ArrowUpToLine
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import apiService from '../../services/api';
@@ -62,8 +65,11 @@ interface DeviceConfig {
 
 const DEFAULT_DEVICES: Record<string, DeviceConfig> = {
   mobile: { icon: Smartphone, label: 'Mobile', width: '375px', height: '667px' },
+  'mobile-large': { icon: Smartphone, label: 'Mobile Large', width: '414px', height: '896px' },
   tablet: { icon: Tablet, label: 'Tablet', width: '768px', height: '1024px' },
+  'tablet-pro': { icon: Tablet, label: 'Tablet Pro', width: '1024px', height: '1366px' },
   laptop: { icon: Laptop, label: 'Laptop', width: '1366px', height: '768px' },
+  'laptop-hd': { icon: Laptop, label: 'Laptop HD', width: '1920px', height: '1080px' },
   desktop: { icon: Monitor, label: 'Desktop', width: '100%', height: '100%' },
 };
 
@@ -74,8 +80,6 @@ function WebsiteViewer() {
   // Local state for pan/drag - minimal state updates
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  const [_panPosition, setPanPosition] = useState({ x: 0, y: 0 });
   const [showRecentUrls, setShowRecentUrls] = useState(false);
   const [showCustomDevices, setShowCustomDevices] = useState(false);
   const [customDevices, setCustomDevices] = useState<CustomDevice[]>([]);
@@ -110,9 +114,7 @@ function WebsiteViewer() {
       payload: device.type as any // Use the type for frame styling
     });
     resetViewport();
-    setPanPosition({ x: 0, y: 0 });
-    resetViewport();
-    setPanPosition({ x: 0, y: 0 });
+    dispatch({ type: 'SET_PAN_POSITION', payload: { x: 0, y: 0 } });
     setShowCustomDevices(false);
   };
 
@@ -122,19 +124,29 @@ function WebsiteViewer() {
   const [comparisonSplit, setComparisonSplit] = useState(50); // 50% split
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isIframeRestricted, setIsIframeRestricted] = useState(false);
+  // IMPROVEMENT 3: Scroll sync toggle and status
+  const [isScrollSyncEnabled, setIsScrollSyncEnabled] = useState(true);
+  const [scrollSyncStatus, setScrollSyncStatus] = useState<'synced' | 'unsynced' | 'error'>('synced');
 
   const toggleMultiView = () => {
     setIsMultiView(!isMultiView);
     // Reset viewport when switching modes for better UX
     setTimeout(() => {
       resetViewport();
-      setPanPosition({ x: 0, y: 0 });
+      dispatch({ type: 'SET_PAN_POSITION', payload: { x: 0, y: 0 } });
     }, 50);
   };
 
   const handleDeviceModeChange = (mode: string) => {
     // Prevent unnecessary reloads - only update if mode actually changed
     if (currentDeviceMode === mode) return;
+
+    // IMPROVEMENT 1 & 5: Add transition feedback and ensure content visibility
+    setIsDeviceTransitioning(true);
+    setIframeOpacity(0.3); // Fade out slightly during transition
+    
+    const previousMode = currentDeviceMode;
+    previousDeviceModeRef.current = previousMode;
     
     setCurrentDeviceMode(mode);
 
@@ -153,7 +165,74 @@ function WebsiteViewer() {
     // Smooth transition - use requestAnimationFrame for better performance
     requestAnimationFrame(() => {
       resetViewport();
-      setPanPosition({ x: 0, y: 0 });
+      dispatch({ type: 'SET_PAN_POSITION', payload: { x: 0, y: 0 } });
+      
+      // IMPROVEMENT 1: Force re-injection of content for new iframe after device change
+      // Use a longer timeout to ensure React has rendered the new iframe element
+      setTimeout(() => {
+        // Find the new iframe and ensure content is injected
+        const newIframe = iframeRefs.current[0];
+        if (newIframe && state.view.htmlContent) {
+          // Check if iframe already has content
+          try {
+            const iframeDoc = newIframe.contentDocument || newIframe.contentWindow?.document;
+            const hasContent = iframeDoc && (iframeDoc.body?.children.length > 0 || iframeDoc.documentElement?.children.length > 0);
+            
+            // Only re-inject if iframe is empty or not initialized
+            if (!hasContent || !initializedIframesRef.current.has(newIframe)) {
+              // Remove from initialized set to force re-injection
+              initializedIframesRef.current.delete(newIframe);
+              
+              // Force content re-injection
+              if (iframeDoc) {
+                const proxyBase = window.location.origin;
+                const processedHtml = state.view.htmlContent.replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
+                
+                iframeDoc.open();
+                iframeDoc.write(processedHtml);
+                iframeDoc.close();
+                
+                initializedIframesRef.current.add(newIframe);
+                
+                // Re-apply styles and fixes
+                setTimeout(() => {
+                  fixAllAssetUrls(newIframe);
+                  injectCustomCss(newIframe);
+                  if (state.editor.colorMapping) {
+                    applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+                  }
+                  if (isEditMode) {
+                    iframeDoc.designMode = 'on';
+                  }
+                  
+                  // IMPROVEMENT 3 & 4: Fade in smoothly after content is ready
+                  setIframeOpacity(1);
+                  setIsDeviceTransitioning(false);
+                }, 100);
+              }
+            } else {
+              // Content already exists, just ensure visibility and re-apply styles
+              setTimeout(() => {
+                fixAllAssetUrls(newIframe);
+                injectCustomCss(newIframe);
+                if (state.editor.colorMapping && iframeDoc) {
+                  applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+                }
+                setIframeOpacity(1);
+                setIsDeviceTransitioning(false);
+              }, 50);
+            }
+          } catch (e) {
+            // If direct injection fails, let the effect handle it
+            setIframeOpacity(1);
+            setIsDeviceTransitioning(false);
+          }
+        } else {
+          // No content to inject, just fade in
+          setIframeOpacity(1);
+          setIsDeviceTransitioning(false);
+        }
+      }, 100); // Increased timeout to ensure React has rendered
     });
   };
 
@@ -201,23 +280,28 @@ function WebsiteViewer() {
 
   const iframeRefs = useRef<(HTMLIFrameElement | null)[]>([]);
   const initializedIframesRef = useRef<Set<HTMLIFrameElement>>(new Set()); // Track which iframes have been initialized
+  const mutationObserversRef = useRef<Map<HTMLIFrameElement, MutationObserver>>(new Map()); // Track MutationObservers for cleanup
 
-  // Clear initialized iframes when URL changes (new website loaded)
+  // Clear initialized iframes and observers when URL changes (new website loaded)
   useEffect(() => {
+    // Clean up all MutationObservers
+    mutationObserversRef.current.forEach((observer) => {
+      observer.disconnect();
+    });
+    mutationObserversRef.current.clear();
     initializedIframesRef.current.clear();
   }, [state.view.currentUrl]);
 
+  const [retryCount, setRetryCount] = useState(0);
+  const [loadingProgress, setLoadingProgress] = useState(0);
+
   /**
    * Load website using hybrid strategy:
    * 1. Direct Iframe: Fast, but subject to CSP/X-Frame-Options (default)
    * 2. Proxy Mode: Slower, but bypasses restrictions (user toggle)
+   * Enhanced with retry mechanism and better error handling
    */
-  /**
-   * Load website using hybrid strategy:
-   * 1. Direct Iframe: Fast, but subject to CSP/X-Frame-Options (default)
-   * 2. Proxy Mode: Slower, but bypasses restrictions (user toggle)
-   */
-  const loadWebsite = async () => {
+  const loadWebsite = async (retryAttempt = 0) => {
     if (!state.view.url.trim()) {
       dispatch({ type: 'SET_ERROR', payload: 'Please enter a URL' });
       return;
@@ -233,36 +317,64 @@ function WebsiteViewer() {
     storage.saveSettings({ lastUrl: targetUrl });
 
     // Always use Proxy Mode
-    if (true) {
-      // --- PROXY MODE ---
-      dispatch({ type: 'SET_LOADING', payload: true });
-      dispatch({ type: 'SET_ERROR', payload: null });
-      dispatch({ type: 'SET_HTML_CONTENT', payload: null });
-      dispatch({ type: 'SET_CURRENT_URL', payload: null });
+    // --- PROXY MODE ---
+    dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({ type: 'SET_ERROR', payload: null });
+    dispatch({ type: 'SET_HTML_CONTENT', payload: null });
+    dispatch({ type: 'SET_CURRENT_URL', payload: null });
+    setLoadingProgress(0);
 
-      try {
-        const response = await apiService.proxyWebsite(targetUrl) as { html?: string; url?: string; status?: string; error?: string };
+    // Simulate progress for better UX
+    const progressInterval = setInterval(() => {
+      setLoadingProgress(prev => Math.min(prev + 10, 90));
+    }, 200);
 
-        if (response.error) {
-          throw new Error(response.error);
-        }
-        if (!response.html) {
-          throw new Error('No HTML content received from server');
-        }
+    try {
+      const response = await apiService.proxyWebsite(targetUrl) as { html?: string; url?: string; status?: string; error?: string };
 
-        dispatch({ type: 'SET_HTML_CONTENT', payload: response.html });
-        dispatch({ type: 'SET_CURRENT_URL', payload: response.url || targetUrl });
+      clearInterval(progressInterval);
+      setLoadingProgress(100);
 
-      } catch (err: unknown) {
-        console.error('Error loading website via proxy:', err);
-        let errorMessage = 'Failed to load website.';
-        if (err instanceof Error) errorMessage = err.message;
-        if (typeof err === 'string') errorMessage = err;
-
-        dispatch({ type: 'SET_ERROR', payload: errorMessage });
-      } finally {
-        dispatch({ type: 'SET_LOADING', payload: false });
+      if (response.error) {
+        throw new Error(response.error);
       }
+      if (!response.html) {
+        throw new Error('No HTML content received from server');
+      }
+
+      dispatch({ type: 'SET_HTML_CONTENT', payload: response.html });
+      dispatch({ type: 'SET_CURRENT_URL', payload: response.url || targetUrl });
+      setRetryCount(0);
+      setLoadingProgress(0);
+      dispatch({ type: 'SET_LOADING', payload: false });
+
+    } catch (err: unknown) {
+      clearInterval(progressInterval);
+      setLoadingProgress(0);
+      console.error('Error loading website via proxy:', err);
+      
+      let errorMessage = 'Failed to load website.';
+      if (err instanceof Error) errorMessage = err.message;
+      if (typeof err === 'string') errorMessage = err;
+
+      // Retry logic for network errors (max 2 retries)
+      const isNetworkError = errorMessage.includes('network') || 
+                            errorMessage.includes('fetch') || 
+                            errorMessage.includes('timeout') ||
+                            errorMessage.includes('ERR');
+      
+      if (isNetworkError && retryAttempt < 2) {
+        // Keep loading state true during retry
+        setTimeout(() => {
+          setRetryCount(retryAttempt + 1);
+          loadWebsite(retryAttempt + 1);
+        }, 1000 * (retryAttempt + 1)); // Exponential backoff
+        return;
+      }
+
+      dispatch({ type: 'SET_ERROR', payload: errorMessage });
+      dispatch({ type: 'SET_LOADING', payload: false });
+      setRetryCount(0);
     }
   };
 
@@ -344,18 +456,19 @@ function WebsiteViewer() {
 
       // Fix relative sources in other elements
       ['source', 'video', 'audio'].forEach(tagName => {
-        doc.querySelectorAll(tagName).forEach((el: HTMLSourceElement | HTMLVideoElement | HTMLAudioElement) => {
-          const src = el.getAttribute('src');
+        doc.querySelectorAll(tagName).forEach((el) => {
+          const element = el as HTMLSourceElement | HTMLVideoElement | HTMLAudioElement;
+          const src = element.getAttribute('src');
           if (src) {
             const fixedSrc = fixRelativeUrl(src);
             if (fixedSrc !== src) {
-              el.src = fixedSrc;
+              element.src = fixedSrc;
               fixedCount++;
             }
           }
 
           // Fix srcset for source elements
-          const srcset = el.getAttribute('srcset');
+          const srcset = element.getAttribute('srcset');
           if (srcset) {
             const fixedSrcset = srcset.split(',').map(part => {
               const trimmed = part.trim();
@@ -371,7 +484,7 @@ function WebsiteViewer() {
             }).join(', ');
 
             if (fixedSrcset !== srcset) {
-              el.setAttribute('srcset', fixedSrcset);
+              element.setAttribute('srcset', fixedSrcset);
               fixedCount++;
             }
           }
@@ -379,7 +492,8 @@ function WebsiteViewer() {
       });
 
       // Fix relative links in stylesheets and other resources
-      doc.querySelectorAll('link[href]').forEach((link: HTMLLinkElement) => {
+      doc.querySelectorAll('link[href]').forEach((el) => {
+        const link = el as HTMLLinkElement;
         const href = link.getAttribute('href');
         if (href) {
           const fixedHref = fixRelativeUrl(href);
@@ -391,7 +505,8 @@ function WebsiteViewer() {
       });
 
       // Fix relative script sources
-      doc.querySelectorAll('script[src]').forEach((script: HTMLScriptElement) => {
+      doc.querySelectorAll('script[src]').forEach((el) => {
+        const script = el as HTMLScriptElement;
         const src = script.getAttribute('src');
         if (src) {
           const fixedSrc = fixRelativeUrl(src);
@@ -403,8 +518,9 @@ function WebsiteViewer() {
       });
 
       // Fix background images in inline styles
-      doc.querySelectorAll('[style*="url("]').forEach((el: HTMLElement) => {
-        const style = el.getAttribute('style');
+      doc.querySelectorAll('[style*="url("]').forEach((el) => {
+        const element = el as HTMLElement;
+        const style = element.getAttribute('style');
         if (style) {
           const fixedStyle = style.replace(/url\((['"]?)([^'")]+)\1\)/g, (match, quote, url) => {
             const fixedUrl = fixRelativeUrl(url.trim());
@@ -412,7 +528,7 @@ function WebsiteViewer() {
           });
 
           if (fixedStyle !== style) {
-            el.setAttribute('style', fixedStyle);
+            element.setAttribute('style', fixedStyle);
             fixedCount++;
           }
         }
@@ -538,15 +654,26 @@ function WebsiteViewer() {
         if (!iframe) return;
 
         // Skip original iframes - they use src attribute and load naturally
-        if (iframe.getAttribute('data-mode') === 'original') {
-          return;
-        }
+        // MODIFICATION: Allow original iframes to use proxy content for Sync Scroll support
+        // if (iframe.getAttribute('data-mode') === 'original') {
+        //   return;
+        // }
+
+        // IMPROVEMENT 1: Check if device mode changed - if so, force re-injection
+        const shouldForceReinit = previousDeviceModeRef.current !== currentDeviceMode && 
+                                   iframe.getAttribute('data-mode') === 'modified';
 
         // Skip if this iframe has already been initialized (prevents reload on device mode/comparison mode toggle)
-        if (initializedIframesRef.current.has(iframe)) {
+        // UNLESS we're forcing re-init due to device change
+        if (initializedIframesRef.current.has(iframe) && !shouldForceReinit) {
           // Just re-inject CSS/styles if needed, don't reload
           injectCustomCss(iframe);
           return;
+        }
+        
+        // IMPROVEMENT 1: Remove from initialized set if forcing re-init
+        if (shouldForceReinit) {
+          initializedIframesRef.current.delete(iframe);
         }
 
         const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
@@ -589,6 +716,13 @@ function WebsiteViewer() {
               }
 
               // Set up MutationObserver to watch for dynamically added elements
+              // Clean up existing observer for this iframe if any
+              const existingObserver = mutationObserversRef.current.get(iframe);
+              if (existingObserver) {
+                existingObserver.disconnect();
+                mutationObserversRef.current.delete(iframe);
+              }
+
               const observer = new MutationObserver((mutations) => {
                 let shouldFix = false;
                 mutations.forEach((mutation) => {
@@ -600,6 +734,9 @@ function WebsiteViewer() {
                   setTimeout(() => fixAllAssetUrls(iframe), 100);
                 }
               });
+
+              // Store observer for cleanup
+              mutationObserversRef.current.set(iframe, observer);
 
               // Start observing after a short delay
               setTimeout(() => {
@@ -624,10 +761,23 @@ function WebsiteViewer() {
           }
 
           injectCustomCss(iframe);
+          
+          // IMPROVEMENT 4: Ensure iframe is visible after content injection
+          if (iframe.style.opacity !== '1') {
+            iframe.style.opacity = '1';
+          }
+          
+          // IMPROVEMENT 1: Update transition state when content is ready
+          if (shouldForceReinit) {
+            setTimeout(() => {
+              setIframeOpacity(1);
+              setIsDeviceTransitioning(false);
+            }, 100);
+          }
         }
       });
     }
-  }, [state.view.htmlContent, isMultiView, isComparisonMode, injectCustomCss, isEditMode]);
+  }, [state.view.htmlContent, isMultiView, isComparisonMode, injectCustomCss, isEditMode, fixAllAssetUrls, currentDeviceMode]);
 
   // Dedicated Effect for Edit Mode Toggling
   useEffect(() => {
@@ -725,307 +875,404 @@ function WebsiteViewer() {
     });
   }, [injectCustomCss, state.editor.customCss, state.editor.typographyCss, state.editor.activeEffects, state.editor.colorMapping]);
 
-  // Effect for Scroll Synchronization in Comparison Mode - Bidirectional sync
-  // Works in both single and multi-view modes
-  // Both Modified and Original frames scroll together for effective comparison
+  // IMPROVEMENT 1: Effect to ensure iframe content is maintained when device mode changes
   useEffect(() => {
-    if (!isComparisonMode) return;
-
-    // Get the Modified (Source) and Original (Target) frames
-    // In single view: Modified is at [0] and Original at [1]
-    // In multi-view: Modified frames are at [0,1,2] and Original frames at [10,11,12]
-    const modifiedFrame = iframeRefs.current[0];
-    const originalFrame = isMultiView ? iframeRefs.current[10] : iframeRefs.current[1];
-
-    if (!modifiedFrame || !originalFrame) return;
-
-    // Use separate flags for each direction to prevent infinite loops
-    let isSyncingFromModified = false;
-    let isSyncingFromOriginal = false;
-    let rafIdModified: number | null = null;
-    let rafIdOriginal: number | null = null;
-
-    // Function to sync scroll from Modified to Original
-    const handleScrollFromModified = () => {
-      if (isSyncingFromModified || isSyncingFromOriginal) return;
-
-      try {
-        const srcWindow = modifiedFrame.contentWindow;
-        const tgtWindow = originalFrame.contentWindow;
-        const srcDoc = modifiedFrame.contentDocument || srcWindow?.document;
-
-        if (srcWindow && tgtWindow && srcDoc) {
-          if (rafIdModified !== null) {
-            cancelAnimationFrame(rafIdModified);
-          }
-
-          isSyncingFromModified = true;
-
-          rafIdModified = requestAnimationFrame(() => {
-            try {
-              const scrollTop = srcWindow.scrollY || srcDoc.documentElement.scrollTop || srcDoc.body.scrollTop || 0;
-              const scrollLeft = srcWindow.scrollX || srcDoc.documentElement.scrollLeft || srcDoc.body.scrollLeft || 0;
-
-              tgtWindow.scrollTo({
-                top: scrollTop,
-                left: scrollLeft,
-                behavior: 'instant'
-              });
-            } catch (e) {
-              // Ignore cross-origin errors
-            } finally {
-              isSyncingFromModified = false;
-              rafIdModified = null;
+    if (!state.view.htmlContent || !state.view.currentUrl) return;
+    
+    // Wait for React to render the new iframe after device change
+    const timeoutId = setTimeout(() => {
+      const iframe = iframeRefs.current[0];
+      if (iframe) {
+        try {
+          const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+          // Check if iframe is empty or needs content injection
+          const hasContent = iframeDoc && (
+            iframeDoc.body?.children.length > 0 || 
+            iframeDoc.documentElement?.children.length > 0 ||
+            iframeDoc.readyState === 'complete'
+          );
+          
+          // If iframe is empty or not initialized, inject content
+          if (!hasContent || !initializedIframesRef.current.has(iframe)) {
+            const proxyBase = window.location.origin;
+            const processedHtml = (state.view.htmlContent || '').replace(/\{\{PROXY_BASE\}\}/g, proxyBase);
+            
+            if (iframeDoc) {
+              iframeDoc.open();
+              iframeDoc.write(processedHtml);
+              iframeDoc.close();
+              
+              initializedIframesRef.current.add(iframe);
+              
+              // Re-apply all styles and fixes
+              setTimeout(() => {
+                if (iframeDoc) {
+                  fixAllAssetUrls(iframe);
+                  injectCustomCss(iframe);
+                  if (state.editor.colorMapping) {
+                    applyColorReplacementsToDOM(iframeDoc, state.editor.colorMapping);
+                  }
+                  if (isEditMode) {
+                    iframeDoc.designMode = 'on';
+                  }
+                }
+                setIframeOpacity(1);
+                setIsDeviceTransitioning(false);
+              }, 150);
             }
-          });
-        }
-      } catch (e) {
-        isSyncingFromModified = false;
-        if (rafIdModified !== null) {
-          cancelAnimationFrame(rafIdModified);
-          rafIdModified = null;
+          } else {
+            // Content exists, just ensure visibility
+            setIframeOpacity(1);
+            setIsDeviceTransitioning(false);
+          }
+        } catch (e) {
+          // Cross-origin or other error, just ensure visibility
+          setIframeOpacity(1);
+          setIsDeviceTransitioning(false);
         }
       }
-    };
+    }, 200); // Give React time to render new iframe
+    
+    return () => clearTimeout(timeoutId);
+  }, [currentDeviceMode, state.view.htmlContent, state.view.currentUrl, injectCustomCss, fixAllAssetUrls, isEditMode, state.editor.colorMapping]);
 
-    // Function to sync scroll from Original to Modified (bidirectional)
-    const handleScrollFromOriginal = () => {
-      if (isSyncingFromOriginal || isSyncingFromModified) return;
+  // NEW APPROACH: Ultra-fast direct scroll sync with RAF throttling (no debouncing)
+  // Uses immediate scroll position sync with single RAF per direction for smooth 60fps updates
+  useEffect(() => {
+    if (!isComparisonMode || !isScrollSyncEnabled) {
+      setScrollSyncStatus('unsynced');
+      return;
+    }
 
-      try {
-        const srcWindow = originalFrame.contentWindow;
-        const tgtWindow = modifiedFrame.contentWindow;
-        const srcDoc = originalFrame.contentDocument || srcWindow?.document;
+    const framePairs: { modified: number; original: number }[] = [];
+    if (isMultiView) {
+      // Multi-view: 6 device pairs (mobile, mobile-large, tablet, tablet-pro, laptop, laptop-hd)
+      framePairs.push({ modified: 0, original: 10 }); // mobile
+      framePairs.push({ modified: 1, original: 11 }); // mobile-large
+      framePairs.push({ modified: 2, original: 12 }); // tablet
+      framePairs.push({ modified: 3, original: 13 }); // tablet-pro
+      framePairs.push({ modified: 4, original: 14 }); // laptop
+      framePairs.push({ modified: 5, original: 15 }); // laptop-hd
+    } else {
+      framePairs.push({ modified: 0, original: 1 });
+    }
 
-        if (srcWindow && tgtWindow && srcDoc) {
-          if (rafIdOriginal !== null) {
-            cancelAnimationFrame(rafIdOriginal);
-          }
+    const cleanups: (() => void)[] = [];
+    let attachedPairs = 0;
 
-          isSyncingFromOriginal = true;
+    const createSyncForPair = (modIdx: number, origIdx: number) => {
+      const modifiedFrame = iframeRefs.current[modIdx];
+      const originalFrame = iframeRefs.current[origIdx];
 
-          rafIdOriginal = requestAnimationFrame(() => {
-            try {
-              const scrollTop = srcWindow.scrollY || srcDoc.documentElement.scrollTop || srcDoc.body.scrollTop || 0;
-              const scrollLeft = srcWindow.scrollX || srcDoc.documentElement.scrollLeft || srcDoc.body.scrollLeft || 0;
+      if (!modifiedFrame || !originalFrame) return null;
 
-              tgtWindow.scrollTo({
-                top: scrollTop,
-                left: scrollLeft,
-                behavior: 'instant'
-              });
-            } catch (e) {
-              // Ignore cross-origin errors
-            } finally {
-              isSyncingFromOriginal = false;
+      // Single RAF per direction - cancels previous if new scroll comes in
+      let rafIdModified: number | null = null;
+      let rafIdOriginal: number | null = null;
+      let isAttached = false;
+      const maxRetries = 8;
+
+      // Direct, immediate scroll sync - no debouncing, just RAF throttling
+      const syncScroll = (sourceFrame: HTMLIFrameElement, targetFrame: HTMLIFrameElement, isFromModified: boolean) => {
+        // Cancel pending RAF if exists
+        const currentRaf = isFromModified ? rafIdModified : rafIdOriginal;
+        if (currentRaf !== null) {
+          cancelAnimationFrame(currentRaf);
+        }
+
+        // Use RAF to batch updates but execute immediately (no delay)
+        const rafId = requestAnimationFrame(() => {
+          try {
+            const srcWindow = sourceFrame.contentWindow;
+            const tgtWindow = targetFrame.contentWindow;
+            const srcDoc = sourceFrame.contentDocument || srcWindow?.document;
+            const tgtDoc = targetFrame.contentDocument || tgtWindow?.document;
+
+            if (!srcWindow || !tgtWindow || !srcDoc || !tgtDoc) {
+              if (isFromModified) {
+                rafIdModified = null;
+              } else {
+                rafIdOriginal = null;
+              }
+              return;
+            }
+
+            // Get scroll position - try multiple methods for compatibility
+            const scrollTop = srcWindow.scrollY ?? srcWindow.pageYOffset ?? srcDoc.documentElement.scrollTop ?? srcDoc.body.scrollTop ?? 0;
+            const scrollLeft = srcWindow.scrollX ?? srcWindow.pageXOffset ?? srcDoc.documentElement.scrollLeft ?? srcDoc.body.scrollLeft ?? 0;
+
+            // Direct scroll sync - immediate and fast
+            tgtWindow.scrollTo({
+              top: scrollTop,
+              left: scrollLeft,
+              behavior: 'instant'
+            });
+
+            // Clear RAF ID
+            if (isFromModified) {
+              rafIdModified = null;
+            } else {
               rafIdOriginal = null;
             }
-          });
-        }
-      } catch (e) {
-        isSyncingFromOriginal = false;
-        if (rafIdOriginal !== null) {
-          cancelAnimationFrame(rafIdOriginal);
-          rafIdOriginal = null;
-        }
-      }
-    };
 
-    // Enhanced attachment function with retry logic - bidirectional
-    const attachListeners = () => {
-      let bothReady = false;
+            // Update status on successful sync
+            if (!isAttached) {
+              attachedPairs++;
+              if (attachedPairs >= framePairs.length) {
+                setScrollSyncStatus('synced');
+              }
+            } else {
+              // Keep status synced if already attached
+              setScrollSyncStatus('synced');
+            }
 
-      try {
-        const modWin = modifiedFrame.contentWindow;
-        const modDoc = modifiedFrame.contentDocument || modWin?.document;
-        const origWin = originalFrame.contentWindow;
-        const origDoc = originalFrame.contentDocument || origWin?.document;
-
-        // Check if both frames are ready
-        if (modWin && modDoc && origWin && origDoc && 
-            (modDoc.readyState === 'complete' || modDoc.readyState === 'interactive') &&
-            (origDoc.readyState === 'complete' || origDoc.readyState === 'interactive')) {
-          
-          // Remove any existing listeners first
-          modWin.removeEventListener('scroll', handleScrollFromModified);
-          modDoc.removeEventListener('scroll', handleScrollFromModified, true);
-          modWin.removeEventListener('wheel', handleScrollFromModified);
-          
-          origWin.removeEventListener('scroll', handleScrollFromOriginal);
-          origDoc.removeEventListener('scroll', handleScrollFromOriginal, true);
-          origWin.removeEventListener('wheel', handleScrollFromOriginal);
-
-          // Attach listeners to Modified frame (syncs to Original)
-          modWin.addEventListener('scroll', handleScrollFromModified, { passive: true, capture: false });
-          modDoc.addEventListener('scroll', handleScrollFromModified, { passive: true, capture: true });
-          if (modDoc.body) {
-            modDoc.body.addEventListener('scroll', handleScrollFromModified, { passive: true, capture: true });
+          } catch (e) {
+            if (isFromModified) {
+              rafIdModified = null;
+            } else {
+              rafIdOriginal = null;
+            }
+            setScrollSyncStatus('error');
           }
-          modWin.addEventListener('wheel', handleScrollFromModified, { passive: true, capture: false });
+        });
 
-          // Attach listeners to Original frame (syncs to Modified) - bidirectional
-          origWin.addEventListener('scroll', handleScrollFromOriginal, { passive: true, capture: false });
-          origDoc.addEventListener('scroll', handleScrollFromOriginal, { passive: true, capture: true });
-          if (origDoc.body) {
-            origDoc.body.addEventListener('scroll', handleScrollFromOriginal, { passive: true, capture: true });
-          }
-          origWin.addEventListener('wheel', handleScrollFromOriginal, { passive: true, capture: false });
-
-          // Initial sync after a brief delay to ensure both frames are ready
-          setTimeout(() => {
-            handleScrollFromModified();
-          }, 150);
-
-          bothReady = true;
+        // Store RAF ID
+        if (isFromModified) {
+          rafIdModified = rafId;
+        } else {
+          rafIdOriginal = rafId;
         }
-      } catch (e) {
-        // Cross-origin or not ready
-      }
-      return bothReady;
-    };
-
-    // Try to attach immediately
-    if (!attachListeners()) {
-      // Retry when iframes load
-      const loadHandlerModified = () => {
-        attachListeners();
       };
-      const loadHandlerOriginal = () => {
-        attachListeners();
+
+      const handleScrollFromModified = () => {
+        if (isScrollSyncEnabled) {
+          syncScroll(modifiedFrame, originalFrame, true);
+        }
       };
-      
-      modifiedFrame.addEventListener('load', loadHandlerModified);
-      originalFrame.addEventListener('load', loadHandlerOriginal);
 
-      // Also retry after a delay in case load event already fired
-      const retryTimeout = setTimeout(() => {
-        attachListeners();
-      }, 500);
+      const handleScrollFromOriginal = () => {
+        if (isScrollSyncEnabled) {
+          syncScroll(originalFrame, modifiedFrame, false);
+        }
+      };
 
-      return () => {
-        clearTimeout(retryTimeout);
-        modifiedFrame.removeEventListener('load', loadHandlerModified);
-        originalFrame.removeEventListener('load', loadHandlerOriginal);
-        
-        // Cleanup listeners
+      // Attach event listeners with retry logic
+      const attach = (attempt = 0): boolean => {
         try {
           const modWin = modifiedFrame.contentWindow;
-          const modDoc = modifiedFrame.contentDocument || modWin?.document;
           const origWin = originalFrame.contentWindow;
+          const modDoc = modifiedFrame.contentDocument || modWin?.document;
           const origDoc = originalFrame.contentDocument || origWin?.document;
-          
+
+          if (!modWin || !origWin || !modDoc || !origDoc) {
+            if (attempt < maxRetries && !isAttached) {
+              const delay = Math.min(100 * (attempt + 1), 1000);
+              setTimeout(() => attach(attempt + 1), delay);
+            } else if (!isAttached) {
+              setScrollSyncStatus('error');
+            }
+            return false;
+          }
+
+          // Remove any existing listeners first
+          modWin.removeEventListener('scroll', handleScrollFromModified, true);
+          modWin.removeEventListener('wheel', handleScrollFromModified, true);
+          modWin.removeEventListener('touchmove', handleScrollFromModified, true);
+          modDoc.removeEventListener('scroll', handleScrollFromModified, true);
+          modDoc.documentElement.removeEventListener('scroll', handleScrollFromModified, true);
+          modDoc.body.removeEventListener('scroll', handleScrollFromModified, true);
+
+          origWin.removeEventListener('scroll', handleScrollFromOriginal, true);
+          origWin.removeEventListener('wheel', handleScrollFromOriginal, true);
+          origWin.removeEventListener('touchmove', handleScrollFromOriginal, true);
+          origDoc.removeEventListener('scroll', handleScrollFromOriginal, true);
+          origDoc.documentElement.removeEventListener('scroll', handleScrollFromOriginal, true);
+          origDoc.body.removeEventListener('scroll', handleScrollFromOriginal, true);
+
+          // Attach listeners with capture phase for better event catching
+          modWin.addEventListener('scroll', handleScrollFromModified, { passive: true, capture: true });
+          modWin.addEventListener('wheel', handleScrollFromModified, { passive: true, capture: true });
+          modWin.addEventListener('touchmove', handleScrollFromModified, { passive: true, capture: true });
+          modDoc.addEventListener('scroll', handleScrollFromModified, { passive: true, capture: true });
+          modDoc.documentElement.addEventListener('scroll', handleScrollFromModified, { passive: true, capture: true });
+          modDoc.body.addEventListener('scroll', handleScrollFromModified, { passive: true, capture: true });
+
+          origWin.addEventListener('scroll', handleScrollFromOriginal, { passive: true, capture: true });
+          origWin.addEventListener('wheel', handleScrollFromOriginal, { passive: true, capture: true });
+          origWin.addEventListener('touchmove', handleScrollFromOriginal, { passive: true, capture: true });
+          origDoc.addEventListener('scroll', handleScrollFromOriginal, { passive: true, capture: true });
+          origDoc.documentElement.addEventListener('scroll', handleScrollFromOriginal, { passive: true, capture: true });
+          origDoc.body.addEventListener('scroll', handleScrollFromOriginal, { passive: true, capture: true });
+
+          // Initial sync
+          setTimeout(() => {
+            if (isScrollSyncEnabled) {
+              handleScrollFromModified();
+            }
+          }, 100);
+
+          isAttached = true;
+          return true;
+        } catch (e) {
+          if (attempt < maxRetries && !isAttached) {
+            const delay = Math.min(100 * (attempt + 1), 1000);
+            setTimeout(() => attach(attempt + 1), delay);
+            return false;
+          }
+          if (!isAttached) {
+            setScrollSyncStatus('error');
+          }
+          return false;
+        }
+      };
+
+      // Try to attach immediately
+      if (!attach(0)) {
+        const loadHandler = () => {
+          if (!isAttached) {
+            attach(0);
+          }
+        };
+        modifiedFrame.addEventListener('load', loadHandler, { once: true });
+        originalFrame.addEventListener('load', loadHandler, { once: true });
+        
+        // Multiple retry attempts with longer delays for multi-view
+        const retryDelays = isMultiView ? [300, 800, 1500, 2500, 4000] : [200, 500, 1000, 2000];
+        retryDelays.forEach((delay) => {
+          setTimeout(() => { 
+            if (!isAttached) {
+              attach(0);
+            }
+          }, delay);
+        });
+      }
+
+      // Cleanup function
+      return () => {
+        try {
+          const modWin = modifiedFrame.contentWindow;
+          const origWin = originalFrame.contentWindow;
+          const modDoc = modifiedFrame.contentDocument || modWin?.document;
+          const origDoc = originalFrame.contentDocument || origWin?.document;
+
           if (modWin) {
-            modWin.removeEventListener('scroll', handleScrollFromModified);
-            modWin.removeEventListener('wheel', handleScrollFromModified);
+            modWin.removeEventListener('scroll', handleScrollFromModified, true);
+            modWin.removeEventListener('wheel', handleScrollFromModified, true);
+            modWin.removeEventListener('touchmove', handleScrollFromModified, true);
+          }
+          if (origWin) {
+            origWin.removeEventListener('scroll', handleScrollFromOriginal, true);
+            origWin.removeEventListener('wheel', handleScrollFromOriginal, true);
+            origWin.removeEventListener('touchmove', handleScrollFromOriginal, true);
           }
           if (modDoc) {
             modDoc.removeEventListener('scroll', handleScrollFromModified, true);
-            if (modDoc.body) {
-              modDoc.body.removeEventListener('scroll', handleScrollFromModified, true);
-            }
-          }
-          
-          if (origWin) {
-            origWin.removeEventListener('scroll', handleScrollFromOriginal);
-            origWin.removeEventListener('wheel', handleScrollFromOriginal);
+            modDoc.documentElement.removeEventListener('scroll', handleScrollFromModified, true);
+            modDoc.body.removeEventListener('scroll', handleScrollFromModified, true);
           }
           if (origDoc) {
             origDoc.removeEventListener('scroll', handleScrollFromOriginal, true);
-            if (origDoc.body) {
-              origDoc.body.removeEventListener('scroll', handleScrollFromOriginal, true);
-            }
-          }
-        } catch (e) {
-          // Ignore cleanup errors
-        }
-        
-        if (rafIdModified !== null) {
-          cancelAnimationFrame(rafIdModified);
-        }
-        if (rafIdOriginal !== null) {
-          cancelAnimationFrame(rafIdOriginal);
-        }
-      };
-    }
-
-    return () => {
-      // Cleanup listeners
-      try {
-        const modWin = modifiedFrame.contentWindow;
-        const modDoc = modifiedFrame.contentDocument || modWin?.document;
-        const origWin = originalFrame.contentWindow;
-        const origDoc = originalFrame.contentDocument || origWin?.document;
-        
-        if (modWin) {
-          modWin.removeEventListener('scroll', handleScrollFromModified);
-          modWin.removeEventListener('wheel', handleScrollFromModified);
-        }
-        if (modDoc) {
-          modDoc.removeEventListener('scroll', handleScrollFromModified, true);
-          if (modDoc.body) {
-            modDoc.body.removeEventListener('scroll', handleScrollFromModified, true);
-          }
-        }
-        
-        if (origWin) {
-          origWin.removeEventListener('scroll', handleScrollFromOriginal);
-          origWin.removeEventListener('wheel', handleScrollFromOriginal);
-        }
-        if (origDoc) {
-          origDoc.removeEventListener('scroll', handleScrollFromOriginal, true);
-          if (origDoc.body) {
+            origDoc.documentElement.removeEventListener('scroll', handleScrollFromOriginal, true);
             origDoc.body.removeEventListener('scroll', handleScrollFromOriginal, true);
           }
-        }
-      } catch (e) {
-        // Ignore cleanup errors
-      }
-      
-      if (rafIdModified !== null) {
-        cancelAnimationFrame(rafIdModified);
-      }
-      if (rafIdOriginal !== null) {
-        cancelAnimationFrame(rafIdOriginal);
-      }
+          if (rafIdModified) cancelAnimationFrame(rafIdModified);
+          if (rafIdOriginal) cancelAnimationFrame(rafIdOriginal);
+        } catch (e) { /* ignore */ }
+      };
     };
-  }, [isComparisonMode, isMultiView, state.view.currentUrl, state.view.htmlContent]); // Re-bind when content changes or mode changes
+
+    // Create sync for each pair
+    framePairs.forEach(pair => {
+      const cleanup = createSyncForPair(pair.modified, pair.original);
+      if (cleanup) cleanups.push(cleanup);
+    });
+
+    return () => {
+      cleanups.forEach(c => c());
+      setScrollSyncStatus('unsynced');
+      attachedPairs = 0;
+    };
+  }, [isComparisonMode, isMultiView, isScrollSyncEnabled, state.view.currentUrl, state.view.htmlContent]);
+
+  // IMPROVEMENT 5: Scroll position reset function
+  const resetScrollPositions = useCallback(() => {
+    if (!isComparisonMode) return;
+    
+    const framePairs: { modified: number; original: number }[] = [];
+    if (isMultiView) {
+      // Multi-view: 6 device pairs
+      framePairs.push({ modified: 0, original: 10 }); // mobile
+      framePairs.push({ modified: 1, original: 11 }); // mobile-large
+      framePairs.push({ modified: 2, original: 12 }); // tablet
+      framePairs.push({ modified: 3, original: 13 }); // tablet-pro
+      framePairs.push({ modified: 4, original: 14 }); // laptop
+      framePairs.push({ modified: 5, original: 15 }); // laptop-hd
+    } else {
+      framePairs.push({ modified: 0, original: 1 });
+    }
+
+    framePairs.forEach(pair => {
+      const modifiedFrame = iframeRefs.current[pair.modified];
+      const originalFrame = iframeRefs.current[pair.original];
+      
+      if (modifiedFrame && originalFrame) {
+        try {
+          const modWin = modifiedFrame.contentWindow;
+          const origWin = originalFrame.contentWindow;
+          if (modWin) modWin.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+          if (origWin) origWin.scrollTo({ top: 0, left: 0, behavior: 'smooth' });
+        } catch (e) { /* ignore */ }
+      }
+    });
+  }, [isComparisonMode, isMultiView]);
 
   // Sync comparisonSplit to ref and update DOM when not dragging
   // Works for both single and multi-view modes
   useEffect(() => {
+    // Update ref immediately
     comparisonSplitRef.current = comparisonSplit;
 
     // Only update DOM if not currently dragging (to avoid conflicts)
-    if (!isDraggingSliderRef.current) {
-      if (sliderHandleRef.current) {
-        sliderHandleRef.current.style.left = `${comparisonSplit}%`;
-      }
-      // Update all original frames (single view uses [1], multi-view uses [10,11,12])
-      if (isMultiView) {
-        [10, 11, 12].forEach(idx => {
-          const frame = iframeRefs.current[idx];
-          if (frame) {
-            frame.style.clipPath = `inset(0 ${100 - comparisonSplit}% 0 0)`;
-          }
-        });
-      } else {
-        const originalFrame = iframeRefs.current[1];
-        if (originalFrame) {
-          originalFrame.style.clipPath = `inset(0 ${100 - comparisonSplit}% 0 0)`;
+    if (!isDraggingSliderRef.current && isComparisonMode) {
+      // Use requestAnimationFrame to batch DOM updates and avoid race conditions
+      requestAnimationFrame(() => {
+        if (sliderHandleRef.current && !isDraggingSliderRef.current) {
+          sliderHandleRef.current.style.left = `${comparisonSplit}%`;
         }
-      }
+        // Update all original frames (single view uses [1], multi-view uses [10,11,12,13,14,15])
+        if (isMultiView) {
+          // Multi-view: indices 10-15 for original frames (0-5 are modified)
+          [10, 11, 12, 13, 14, 15].forEach(idx => {
+            const frame = iframeRefs.current[idx];
+            if (frame) {
+              frame.style.clipPath = `inset(0 ${100 - comparisonSplit}% 0 0)`;
+            }
+          });
+        } else {
+          const originalFrame = iframeRefs.current[1];
+          if (originalFrame) {
+            originalFrame.style.clipPath = `inset(0 ${100 - comparisonSplit}% 0 0)`;
+          }
+        }
+      });
     }
-  }, [comparisonSplit, isMultiView]);
+  }, [comparisonSplit, isMultiView, isComparisonMode]);
 
   // Ultra-smooth slider using direct DOM updates (NO RAF, NO delays)
-  // Works in single view mode (slider handle only available in single view)
+  // Works in both single and multi-view modes
   useEffect(() => {
     if (!isComparisonMode) return;
-    if (isMultiView) return; // Slider handle only in single view
-    if (!sliderHandleRef.current || !sliderContainerRef.current) return;
-
+    
+    // Wait for DOM to be ready
     const handle = sliderHandleRef.current;
-    const container = sliderContainerRef.current;
+    if (!handle) return;
+    
+    // In multi-view, we use the canvas container; in single view, use the frame container
+    const container = isMultiView 
+      ? canvasContainerRef.current 
+      : sliderContainerRef.current;
+    
+    if (!container) return;
     const dragStateRef = {
       isActive: false,
       isDragging: false, // Track if actually dragging (vs just clicking)
@@ -1041,26 +1288,26 @@ function WebsiteViewer() {
     const updatePosition = (split: number) => {
       dragStateRef.currentSplit = split;
 
-        // Immediate DOM updates - this is what makes it smooth
-        // Works for both single and multi-view modes
-        if (handle) {
-          handle.style.left = `${split}%`;
-        }
-        if (isMultiView) {
-          // Update all original frames in multi-view
-          [10, 11, 12].forEach(idx => {
-            const frame = iframeRefs.current[idx];
-            if (frame) {
-              frame.style.clipPath = `inset(0 ${100 - split}% 0 0)`;
-            }
-          });
-        } else {
-          // Update single original frame
-          const originalFrame = iframeRefs.current[1];
-          if (originalFrame) {
-            originalFrame.style.clipPath = `inset(0 ${100 - split}% 0 0)`;
+      // Immediate DOM updates - this is what makes it smooth
+      // Works for both single and multi-view modes
+      if (handle) {
+        handle.style.left = `${split}%`;
+      }
+      if (isMultiView) {
+        // Update all original frames in multi-view (indices 10-15)
+        [10, 11, 12, 13, 14, 15].forEach(idx => {
+          const frame = iframeRefs.current[idx];
+          if (frame) {
+            frame.style.clipPath = `inset(0 ${100 - split}% 0 0)`;
           }
+        });
+      } else {
+        // Update single original frame
+        const originalFrame = iframeRefs.current[1];
+        if (originalFrame) {
+          originalFrame.style.clipPath = `inset(0 ${100 - split}% 0 0)`;
         }
+      }
     };
 
     const handlePointerMove = (e: PointerEvent) => {
@@ -1096,17 +1343,13 @@ function WebsiteViewer() {
         e.preventDefault();
         e.stopPropagation();
 
-        // Use cached container width (only recalc if container resized)
-        const currentWidth = container.offsetWidth;
-        if (currentWidth !== dragStateRef.containerWidth) {
-          dragStateRef.containerWidth = currentWidth;
-        }
-        const containerWidth = dragStateRef.containerWidth || 1;
-
-        // Calculate delta from start position
-        const deltaXValue = e.clientX - dragStateRef.startX;
-        const deltaPercent = (deltaXValue / containerWidth) * 100;
-        const newSplit = Math.min(100, Math.max(0, dragStateRef.startSplit + deltaPercent));
+        // Get container bounds for accurate calculation
+        const containerRect = container.getBoundingClientRect();
+        const containerWidth = containerRect.width || 1;
+        
+        // Calculate position relative to container
+        const relativeX = e.clientX - containerRect.left;
+        const newSplit = Math.min(100, Math.max(0, (relativeX / containerWidth) * 100));
 
         // DIRECT UPDATE - no RAF, no batching, instant response
         updatePosition(newSplit);
@@ -1153,8 +1396,9 @@ function WebsiteViewer() {
       // This allows scrolling to work if user scrolls vertically
       e.stopPropagation();
 
-      // Cache container width on drag start
-      dragStateRef.containerWidth = container.offsetWidth || 1;
+      // Get container bounds for accurate calculation
+      const containerRect = container.getBoundingClientRect();
+      dragStateRef.containerWidth = containerRect.width || 1;
       dragStateRef.startX = e.clientX;
       dragStateRef.startY = e.clientY;
       dragStateRef.startSplit = comparisonSplitRef.current;
@@ -1204,8 +1448,8 @@ function WebsiteViewer() {
 
   const handleZoomReset = useCallback(() => {
     resetViewport();
-    setPanPosition({ x: 0, y: 0 });
-  }, [resetViewport]);
+    dispatch({ type: 'SET_PAN_POSITION', payload: { x: 0, y: 0 } });
+  }, [resetViewport, dispatch]);
 
   // Figma-like scroll zoom - highly optimized for performance
   const handleWheel = useCallback((e: React.WheelEvent) => {
@@ -1471,10 +1715,13 @@ function WebsiteViewer() {
 
   const toggleFullView = () => {
     dispatch({ type: 'TOGGLE_FULL_VIEW' });
-    setPanPosition({ x: 0, y: 0 });
+    dispatch({ type: 'SET_PAN_POSITION', payload: { x: 0, y: 0 } });
   };
 
   const [isRotated, setIsRotated] = useState(false);
+  const [isDeviceTransitioning, setIsDeviceTransitioning] = useState(false);
+  const [iframeOpacity, setIframeOpacity] = useState(1);
+  const previousDeviceModeRef = useRef<string>(currentDeviceMode);
 
   const handleFitToScreen = () => {
     // Calculate best fit
@@ -1548,12 +1795,21 @@ function WebsiteViewer() {
           height,
           transform: !isMultiView ? transformStyle : undefined,
           transformOrigin: 'center center',
-          transition: isDragging ? 'none' : 'transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
+          // IMPROVEMENT 3: Smooth transition for device changes (width/height changes)
+          transition: isDragging ? 'none' : isDeviceTransitioning 
+            ? 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1), height 0.3s cubic-bezier(0.4, 0, 0.2, 1), transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)'
+            : 'transform 0.2s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
           willChange: isDragging ? 'transform' : 'auto',
           backfaceVisibility: 'hidden',
           WebkitBackfaceVisibility: 'hidden',
           perspective: 1000,
-          margin: isMultiView ? '0 40px' : 0 // Add spacing in multi-view
+          margin: 0, // Remove margin, use grid gap instead
+          // IMPROVEMENT 4: Ensure frame wrapper is always visible
+          opacity: 1,
+          visibility: 'visible',
+          // Better alignment in multi-view
+          justifySelf: 'center',
+          alignSelf: 'start'
         }}
       >
         {/* Helper Actions for Frame */}
@@ -1622,15 +1878,43 @@ function WebsiteViewer() {
             overflow: 'hidden' // Prevent container scroll, let iframe handle it
           }}
         >
+          {/* IMPROVEMENT 2: Loading Skeleton Placeholder */}
+          {isDeviceTransitioning && state.view.htmlContent && (
+            <div className="iframe-loading-skeleton" style={{
+              position: 'absolute',
+              top: 0,
+              left: 0,
+              width: '100%',
+              height: '100%',
+              backgroundColor: '#f5f5f5',
+              zIndex: 1,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexDirection: 'column',
+              gap: '16px'
+            }}>
+              <div style={{
+                width: '40px',
+                height: '40px',
+                border: '3px solid rgba(100, 108, 255, 0.2)',
+                borderTopColor: '#646cff',
+                borderRadius: '50%',
+                animation: 'spin 0.8s linear infinite'
+              }}></div>
+              <div style={{
+                fontSize: '12px',
+                color: '#666',
+                fontWeight: 500
+              }}>Switching device...</div>
+            </div>
+          )}
+          
           {/* Normal / Modified Frame */}
           <iframe
             ref={(el) => {
-              if (isComparisonMode) {
-                // In Comparison Mode (Single View), store modified at 0
-                iframeRefs.current[0] = el;
-              } else {
-                iframeRefs.current[index] = el;
-              }
+              // Always store at index - works for both single and multi-view
+              iframeRefs.current[index] = el;
             }}
             className="website-iframe"
             title={`Site Preview - ${mode}`}
@@ -1643,7 +1927,13 @@ function WebsiteViewer() {
               border: 'none',
               backgroundColor: 'white',
               overflow: 'auto', // Ensure iframe can scroll
-              display: 'block'
+              display: 'block',
+              // IMPROVEMENT 3 & 4: Smooth opacity transition and ensure visibility
+              opacity: iframeOpacity,
+              transition: 'opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+              visibility: iframeOpacity > 0 ? 'visible' : 'visible', // Always visible, just faded
+              position: 'relative',
+              zIndex: 2
             }}
             onLoad={(e) => {
               const iframe = e.currentTarget;
@@ -1661,8 +1951,16 @@ function WebsiteViewer() {
                   setTimeout(() => fixAllAssetUrls(iframe), 100);
                   setTimeout(() => fixAllAssetUrls(iframe), 500);
                   setTimeout(() => fixAllAssetUrls(iframe), 1500);
+                  
+                  // IMPROVEMENT 4: Ensure iframe is fully visible after load
+                  setIframeOpacity(1);
+                  setIsDeviceTransitioning(false);
                 }
-              } catch (err) { }
+              } catch (err) { 
+                // IMPROVEMENT 4: Even on error, ensure visibility
+                setIframeOpacity(1);
+                setIsDeviceTransitioning(false);
+              }
             }}
           />
 
@@ -1683,7 +1981,7 @@ function WebsiteViewer() {
                 title="Original Preview"
                 sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-modals"
                 data-mode="original"
-                src={state.view.currentUrl || undefined}
+                src={!state.view.htmlContent ? state.view.currentUrl || undefined : undefined}
                 style={{
                   position: 'absolute',
                   top: 0,
@@ -1693,17 +1991,18 @@ function WebsiteViewer() {
                   zIndex: 2,
                   clipPath: `inset(0 ${100 - comparisonSplit}% 0 0)`, // Clip from right
                   backgroundColor: 'white',
-                  pointerEvents: 'none', // Let interactions pass to base frame - scroll handled by sync
-                  overflow: 'auto' // Ensure scrolling is enabled
+                  pointerEvents: 'auto', // Enable pointer events so scrolling works
+                  overflow: 'auto', // Ensure scrolling is enabled
+                  // Make sure the original frame can receive scroll events but syncs with modified
+                  touchAction: 'pan-y pan-x' // Allow scrolling
                 }}
               />
 
-              {/* Slider Handle - Ultra-smooth direct DOM updates - Works in single view mode */}
-              {!isMultiView && (
-                <div
-                  ref={sliderHandleRef}
-                  className="comparison-slider-handle"
-                  style={{
+              {/* Slider Handle - Ultra-smooth direct DOM updates - Works in both single and multi-view */}
+              <div
+                ref={!isMultiView ? sliderHandleRef : null}
+                className="comparison-slider-handle"
+                style={{
                     position: 'absolute',
                     top: 0,
                     bottom: 0,
@@ -1745,7 +2044,6 @@ function WebsiteViewer() {
                     <SplitSquareHorizontal size={14} />
                   </div>
                 </div>
-              )}
 
               <div style={{
                 position: 'absolute', top: '10px', left: '10px',
@@ -1760,6 +2058,113 @@ function WebsiteViewer() {
                 padding: '4px 8px', borderRadius: '4px', fontSize: '12px', zIndex: 20,
                 pointerEvents: 'none'
               }}>Modified</div>
+
+              {/* IMPROVEMENT 3: Scroll Sync Controls */}
+              <div style={{
+                position: 'absolute',
+                bottom: '10px',
+                left: '50%',
+                transform: 'translateX(-50%)',
+                zIndex: 20,
+                display: 'flex',
+                gap: '8px',
+                alignItems: 'center',
+                background: 'rgba(20, 20, 25, 0.9)',
+                backdropFilter: 'blur(12px)',
+                padding: '6px 12px',
+                borderRadius: '8px',
+                border: '1px solid rgba(255, 255, 255, 0.1)',
+                boxShadow: '0 4px 12px rgba(0, 0, 0, 0.3)'
+              }}>
+                {/* Scroll Sync Toggle */}
+                <button
+                  onClick={() => setIsScrollSyncEnabled(!isScrollSyncEnabled)}
+                  title={isScrollSyncEnabled ? 'Disable Scroll Sync' : 'Enable Scroll Sync'}
+                  style={{
+                    background: isScrollSyncEnabled 
+                      ? 'rgba(59, 130, 246, 0.2)' 
+                      : 'rgba(255, 255, 255, 0.05)',
+                    border: `1px solid ${isScrollSyncEnabled ? 'rgba(59, 130, 246, 0.5)' : 'rgba(255, 255, 255, 0.1)'}`,
+                    color: isScrollSyncEnabled ? '#60a5fa' : 'rgba(255, 255, 255, 0.5)',
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    transition: 'all 0.2s',
+                    pointerEvents: 'auto'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = isScrollSyncEnabled 
+                      ? 'rgba(59, 130, 246, 0.3)' 
+                      : 'rgba(255, 255, 255, 0.1)';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = isScrollSyncEnabled 
+                      ? 'rgba(59, 130, 246, 0.2)' 
+                      : 'rgba(255, 255, 255, 0.05)';
+                  }}
+                >
+                  {isScrollSyncEnabled ? <Link2 size={14} /> : <Link2Off size={14} />}
+                  <span>Sync</span>
+                </button>
+
+                {/* Scroll Sync Status Indicator */}
+                <div style={{
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  background: scrollSyncStatus === 'synced' 
+                    ? '#10b981' 
+                    : scrollSyncStatus === 'error' 
+                    ? '#ef4444' 
+                    : '#6b7280',
+                  boxShadow: scrollSyncStatus === 'synced' 
+                    ? '0 0 8px rgba(16, 185, 129, 0.5)' 
+                    : 'none',
+                  pointerEvents: 'none',
+                  transition: 'all 0.3s'
+                }} title={
+                  scrollSyncStatus === 'synced' 
+                    ? 'Scroll sync active' 
+                    : scrollSyncStatus === 'error' 
+                    ? 'Scroll sync error' 
+                    : 'Scroll sync disabled'
+                } />
+
+                {/* Reset Scroll Position Button */}
+                <button
+                  onClick={resetScrollPositions}
+                  title="Reset Scroll to Top"
+                  style={{
+                    background: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid rgba(255, 255, 255, 0.1)',
+                    color: 'rgba(255, 255, 255, 0.7)',
+                    padding: '6px 10px',
+                    borderRadius: '6px',
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px',
+                    fontSize: '12px',
+                    transition: 'all 0.2s',
+                    pointerEvents: 'auto'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.1)';
+                    e.currentTarget.style.color = 'white';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'rgba(255, 255, 255, 0.05)';
+                    e.currentTarget.style.color = 'rgba(255, 255, 255, 0.7)';
+                  }}
+                >
+                  <ArrowUpToLine size={14} />
+                  <span>Reset</span>
+                </button>
+              </div>
             </>
           )}
         </div>
@@ -1899,7 +2304,7 @@ function WebsiteViewer() {
 
             <button
               className="action-button"
-              onClick={loadWebsite}
+              onClick={() => loadWebsite(0)}
               disabled={state.view.loading}
               title="Load Website"
             >
@@ -1945,6 +2350,49 @@ function WebsiteViewer() {
             <div className="error-icon">!</div>
             <h3>Unable to Load</h3>
             <p>{state.view.error}</p>
+            <button 
+              className="retry-btn"
+              onClick={(e) => {
+                e.preventDefault();
+                loadWebsite(0);
+              }}
+              style={{
+                marginTop: '16px',
+                padding: '8px 16px',
+                background: '#646cff',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '14px'
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ) : state.view.loading ? (
+          <div className="loading-state" style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100%',
+            gap: '16px'
+          }}>
+            <RotateCcw className="spin" size={32} />
+            <div style={{ fontSize: '14px', color: 'rgba(255,255,255,0.7)' }}>
+              Loading website{retryCount > 0 ? ` (Retry ${retryCount}/2)` : ''}...
+            </div>
+            {loadingProgress > 0 && (
+              <div style={{ width: '200px', height: '4px', background: 'rgba(255,255,255,0.1)', borderRadius: '2px', overflow: 'hidden' }}>
+                <div style={{ 
+                  width: `${loadingProgress}%`, 
+                  height: '100%', 
+                  background: '#646cff',
+                  transition: 'width 0.3s ease'
+                }} />
+              </div>
+            )}
           </div>
         ) : !state.view.currentUrl ? (
           <div className="empty-state">
@@ -1958,9 +2406,14 @@ function WebsiteViewer() {
               ref={frameRef} // Attach logic ref to container for multi-view
               className="multi-view-container"
               style={{
-                display: 'flex',
-                alignItems: 'center',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
+                alignItems: 'start',
                 justifyContent: 'center',
+                gap: '40px',
+                padding: '40px',
+                width: '100%',
+                maxWidth: '100%',
                 transform: isDragging
                   ? `translate3d(${panPositionRef.current.x}px, ${panPositionRef.current.y}px, 0) scale(${zoomLevelRef.current})`
                   : `translate3d(${state.viewport.panPosition.x}px, ${state.viewport.panPosition.y}px, 0) scale(${state.viewport.zoomLevel})`,
@@ -1970,8 +2423,57 @@ function WebsiteViewer() {
               }}
             >
               {renderFrame('mobile', 0)}
-              {renderFrame('tablet', 1)}
-              {renderFrame('laptop', 2)}
+              {renderFrame('mobile-large', 1)}
+              {renderFrame('tablet', 2)}
+              {renderFrame('tablet-pro', 3)}
+              {renderFrame('laptop', 4)}
+              {renderFrame('laptop-hd', 5)}
+              
+              {/* Global Slider Handle for Multi-View */}
+              {isComparisonMode && (
+                <div
+                  ref={sliderHandleRef}
+                  className="comparison-slider-handle"
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    bottom: 0,
+                    left: `${comparisonSplit}%`,
+                    width: '4px',
+                    background: '#3b82f6',
+                    zIndex: 100,
+                    cursor: 'ew-resize',
+                    transform: 'translateX(-50%)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    touchAction: 'pan-y pinch-zoom',
+                    userSelect: 'none',
+                    WebkitUserSelect: 'none',
+                    willChange: 'left',
+                    backfaceVisibility: 'hidden',
+                    WebkitBackfaceVisibility: 'hidden',
+                    transition: 'none',
+                    pointerEvents: 'auto'
+                  }}
+                >
+                  <div style={{
+                    width: '24px',
+                    height: '24px',
+                    background: '#3b82f6',
+                    borderRadius: '50%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(59, 130, 246, 0.4)',
+                    color: 'white',
+                    pointerEvents: 'auto',
+                    transition: 'transform 0.1s ease'
+                  }}>
+                    <SplitSquareHorizontal size={14} />
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             renderFrame(currentDeviceMode, 0, currentCustomDevice)
@@ -1996,6 +2498,10 @@ function WebsiteViewer() {
 
           {Object.entries(DEFAULT_DEVICES).map(([mode, config]) => {
             const Icon = config.icon;
+            // Skip desktop in multi-view (it's full width, doesn't make sense)
+            if (isMultiView && mode === 'desktop') {
+              return null;
+            }
             return (
               <button
                 key={mode}
@@ -2005,6 +2511,7 @@ function WebsiteViewer() {
                   handleDeviceModeChange(mode);
                 }}
                 disabled={isMultiView}
+                title={config.label}
               >
                 <Icon size={20} strokeWidth={1.5} />
                 <span className="dock-tooltip">{config.label}</span>
@@ -2232,6 +2739,44 @@ function WebsiteViewer() {
         <div className="space-indicator show">
           <span className="space-key">SPACE</span>
           <span className="space-indicator-text">Hold and drag to pan</span>
+        </div>
+      )}
+
+      {/* IMPROVEMENT 5: Device Switch Feedback Indicator */}
+      {isDeviceTransitioning && !state.viewport.isFullView && (
+        <div className="device-switch-indicator" style={{
+          position: 'fixed',
+          top: '50%',
+          left: '50%',
+          transform: 'translate(-50%, -50%)',
+          zIndex: 10000,
+          background: 'rgba(20, 20, 25, 0.95)',
+          backdropFilter: 'blur(20px)',
+          border: '1px solid rgba(255, 255, 255, 0.1)',
+          borderRadius: '16px',
+          padding: '16px 24px',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+          pointerEvents: 'none',
+          animation: 'fadeInOut 0.3s ease'
+        }}>
+          <div style={{
+            width: '20px',
+            height: '20px',
+            border: '2px solid rgba(100, 108, 255, 0.3)',
+            borderTopColor: '#646cff',
+            borderRadius: '50%',
+            animation: 'spin 0.6s linear infinite'
+          }}></div>
+          <span style={{
+            color: 'white',
+            fontSize: '14px',
+            fontWeight: 500
+          }}>
+            Switching to {currentCustomDevice ? currentCustomDevice.name : DEFAULT_DEVICES[currentDeviceMode]?.label || currentDeviceMode}...
+          </span>
         </div>
       )}
 

@@ -1,6 +1,6 @@
-import { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
-import { X, Copy, Eye, EyeOff, MousePointer2, ChevronUp, ChevronDown, Edit3, Box, Info, Layers, Zap } from 'lucide-react';
+import { X, Copy, Eye, EyeOff, MousePointer2, ChevronUp, ChevronDown, Edit3, Box, Info, Layers, Zap, GitBranch } from 'lucide-react';
 import { generateSelector, generateSimpleSelector } from '../../utils/selectorGenerator';
 import { StyleEditor, BoxModelViewer } from './';
 import '../../assets/css/editor/ElementInspector.css';
@@ -42,6 +42,8 @@ export default function ElementInspector() {
     attributes: false,
     html: false,
   });
+  const [showElementTree, setShowElementTree] = useState(false);
+  const [elementPath, setElementPath] = useState<Array<{ tag: string; id?: string; classes?: string[] }>>([]);
   const elementRef = useRef<HTMLElement | null>(null);
 
   // Get contextual information about the element
@@ -487,6 +489,18 @@ export default function ElementInspector() {
         similarSelector = element.tagName.toLowerCase();
       }
 
+      // Build element path (DOM tree path)
+      const path: Array<{ tag: string; id?: string; classes?: string[] }> = [];
+      let currentElement: Element | null = element;
+      while (currentElement && currentElement !== iframeDoc.body && currentElement !== iframeDoc.documentElement) {
+        const tag = currentElement.tagName.toLowerCase();
+        const id = currentElement.id || undefined;
+        const classes = Array.from(currentElement.classList).filter(cls => !cls.startsWith('__inspector'));
+        path.unshift({ tag, id, classes: classes.length > 0 ? classes : undefined });
+        currentElement = currentElement.parentElement;
+      }
+      setElementPath(path);
+
       const info: ElementInfo = {
         tag: element.tagName.toLowerCase(),
         id: element.id || null,
@@ -722,6 +736,87 @@ export default function ElementInspector() {
               <div className="selection-mode-indicator">
                 <MousePointer2 size={14} />
                 <span>Selection mode active - Click an element to inspect</span>
+              </div>
+            )}
+
+            {/* Element Tree Path */}
+            {elementPath.length > 0 && (
+              <div className="inspector-section" style={{ 
+                padding: '8px 12px', 
+                background: 'rgba(100, 108, 255, 0.1)',
+                borderRadius: '4px',
+                marginBottom: '12px',
+                fontSize: '11px'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '6px' }}>
+                  <GitBranch size={12} />
+                  <strong>Element Path:</strong>
+                  <button
+                    onClick={() => setShowElementTree(!showElementTree)}
+                    style={{
+                      marginLeft: 'auto',
+                      padding: '2px 6px',
+                      fontSize: '10px',
+                      background: 'rgba(100, 108, 255, 0.2)',
+                      border: 'none',
+                      borderRadius: '3px',
+                      cursor: 'pointer'
+                    }}
+                  >
+                    {showElementTree ? 'Hide' : 'Show'} Tree
+                  </button>
+                </div>
+                <div style={{ 
+                  display: 'flex', 
+                  flexWrap: 'wrap', 
+                  gap: '4px',
+                  alignItems: 'center'
+                }}>
+                  {elementPath.map((item, idx) => (
+                    <React.Fragment key={idx}>
+                      <code style={{
+                        padding: '2px 6px',
+                        background: 'rgba(100, 108, 255, 0.2)',
+                        borderRadius: '3px',
+                        fontSize: '10px'
+                      }}>
+                        {item.tag}
+                        {item.id && <span style={{ color: '#646cff' }}>#{item.id}</span>}
+                        {item.classes && item.classes.length > 0 && (
+                          <span style={{ color: '#22c55e' }}>.{item.classes[0]}</span>
+                        )}
+                      </code>
+                      {idx < elementPath.length - 1 && (
+                        <span style={{ opacity: 0.5 }}>→</span>
+                      )}
+                    </React.Fragment>
+                  ))}
+                </div>
+                {showElementTree && (
+                  <div style={{
+                    marginTop: '8px',
+                    padding: '8px',
+                    background: 'rgba(0, 0, 0, 0.2)',
+                    borderRadius: '4px',
+                    fontSize: '10px',
+                    fontFamily: 'monospace',
+                    maxHeight: '150px',
+                    overflow: 'auto'
+                  }}>
+                    {elementPath.map((item, idx) => (
+                      <div key={idx} style={{ 
+                        paddingLeft: `${idx * 12}px`,
+                        marginBottom: '2px',
+                        color: idx === elementPath.length - 1 ? '#646cff' : 'rgba(255,255,255,0.7)'
+                      }}>
+                        &lt;{item.tag}
+                        {item.id && ` id="${item.id}"`}
+                        {item.classes && item.classes.length > 0 && ` class="${item.classes.join(' ')}"`}
+                        &gt;
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 

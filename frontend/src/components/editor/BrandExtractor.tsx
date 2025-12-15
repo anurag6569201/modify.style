@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle, RotateCcw, Edit2, X } from 'lucide-react';
+import { Palette, Type, RefreshCw, Copy, Check, Ruler, Box, Layers, Image as ImageIcon, Link2, Sparkles, Shuffle, RotateCcw, Edit2, X, Download, FileJson } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { mapColorsToPalette, applyColorReplacementsToDOM } from '../../utils/colorPalettes';
 import '../../assets/css/editor/BrandExtractor.css';
@@ -964,6 +964,67 @@ export default function BrandExtractor() {
     }
   }, []);
 
+  // Export brand data as JSON
+  const exportBrandData = () => {
+    const brandData = {
+      colors: colors.map(c => ({ color: c.color, count: c.count, usage: c.usage })),
+      fonts: fonts.map(f => ({ 
+        family: f.family, 
+        count: f.count, 
+        weights: Array.from(f.weights),
+        sizes: Array.from(f.sizes)
+      })),
+      typography: typographyScale.map(t => ({
+        size: t.size,
+        count: t.count,
+        elements: t.elements
+      })),
+      spacing: spacing.map(s => ({ value: s.value, count: s.count, type: s.type })),
+      borderRadius: borderRadius.map(b => ({ value: b.value, count: b.count })),
+      shadows: shadows.map(s => ({ value: s.value, count: s.count, type: s.type })),
+      layouts: layouts.map(l => ({ 
+        display: l.display, 
+        count: l.count,
+        flexDirection: l.flexDirection,
+        gridTemplate: l.gridTemplate
+      })),
+      extractedAt: new Date().toISOString(),
+      url: state.view.currentUrl
+    };
+
+    const blob = new Blob([JSON.stringify(brandData, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `brand-data-${Date.now()}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  // Export colors as CSS variables
+  const exportColorsAsCSS = () => {
+    const cssVars = colors.map((c, index) => {
+      const varName = `--color-${index + 1}`;
+      return `  ${varName}: ${c.color}; /* ${c.count} uses */`;
+    }).join('\n');
+
+    const css = `:root {\n${cssVars}\n}\n\n/* Usage examples:\n${colors.map((c, index) => {
+      return `color: var(--color-${index + 1}); /* ${c.usage.join(', ')} */`;
+    }).join('\n')}\n*/`;
+
+    const blob = new Blob([css], { type: 'text/css' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `brand-colors-${Date.now()}.css`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   // Popular font families
   const popularFonts = [
     'Inter, sans-serif',
@@ -989,14 +1050,38 @@ export default function BrandExtractor() {
           <Palette size={16} />
           <span>Brand Extractor</span>
         </div>
-        <button
-          className="extract-btn"
-          onClick={extractBrandInfo}
-          disabled={isExtracting || !state.view.htmlContent}
-          title="Re-extract Brand Info"
-        >
-          <RefreshCw size={14} className={isExtracting ? 'spinning' : ''} />
-        </button>
+        <div style={{ display: 'flex', gap: '8px' }}>
+          {(colors.length > 0 || fonts.length > 0) && (
+            <>
+              <button
+                className="extract-btn"
+                onClick={exportBrandData}
+                title="Export as JSON"
+                style={{ padding: '6px 8px' }}
+              >
+                <FileJson size={14} />
+              </button>
+              {colors.length > 0 && (
+                <button
+                  className="extract-btn"
+                  onClick={exportColorsAsCSS}
+                  title="Export colors as CSS variables"
+                  style={{ padding: '6px 8px' }}
+                >
+                  <Download size={14} />
+                </button>
+              )}
+            </>
+          )}
+          <button
+            className="extract-btn"
+            onClick={extractBrandInfo}
+            disabled={isExtracting || !state.view.htmlContent}
+            title="Re-extract Brand Info"
+          >
+            <RefreshCw size={14} className={isExtracting ? 'spinning' : ''} />
+          </button>
+        </div>
       </div>
 
       {isExtracting && (
