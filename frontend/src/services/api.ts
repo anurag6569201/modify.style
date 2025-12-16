@@ -22,7 +22,7 @@ class ApiService {
     options: RequestInit = {}
   ): Promise<T> {
     const url = `${this.baseURL}${endpoint}`;
-    
+
     const config: RequestInit = {
       headers: {
         'Content-Type': 'application/json',
@@ -33,7 +33,7 @@ class ApiService {
 
     try {
       const response = await fetch(url, config);
-      
+
       if (!response.ok) {
         // Try to parse JSON error response
         let errorData: any = {};
@@ -42,7 +42,7 @@ class ApiService {
         } catch {
           // If JSON parsing fails, use empty object
         }
-        
+
         // If the response has an error field, use it
         if (errorData.error) {
           throw new Error(errorData.error);
@@ -98,6 +98,14 @@ class ApiService {
   // Proxy website
   async proxyWebsite(url: string) {
     return this.get<{ html?: string; url?: string; status?: string; error?: string }>(`/proxy/?url=${encodeURIComponent(url)}`);
+  }
+  // AI Features
+  async analyzeWebsite(html: string) {
+    return this.post<{ scores: any; suggestions: any[] }>('/ai/analyze/', { html });
+  }
+
+  async chatWithAI(message: string, context: string) {
+    return this.post<{ text: string; css: string }>('/ai/chat/', { message, context });
   }
 }
 

@@ -8,3 +8,4 @@ export { default as ElementInspector } from './ElementInspector';
 export { default as DesignPanel } from './DesignPanel';
 export { default as BrandExtractor } from './BrandExtractor';
 export { default as BoxModelViewer } from './BoxModelViewer';
+export { default as AIPanel } from './AIPanel';

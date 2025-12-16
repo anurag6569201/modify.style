@@ -21,6 +21,10 @@ urlpatterns = [
     path('proxy-resource/', views.proxy_resource, name='proxy-resource'),
     path('proxy-path/<path:url>', views.proxy_path_view, name='proxy-path'),
     
+    # AI Endpoints
+    path('ai/analyze/', views.ai_analyze, name='ai-analyze'),
+    path('ai/chat/', views.ai_chat, name='ai-chat'),
+    
     # ViewSet endpoints (examples)
     path('', include(router.urls)),
 ]

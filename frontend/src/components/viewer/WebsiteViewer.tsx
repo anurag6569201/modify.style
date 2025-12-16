@@ -24,7 +24,8 @@ import {
   SplitSquareHorizontal,
   Link2,
   Link2Off,
-  ArrowUpToLine
+  ArrowUpToLine,
+  Sparkles
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import apiService from '../../services/api';
@@ -43,6 +44,7 @@ import {
   PANEL_WIDTH,
   ICON_MENU_WIDTH,
   DesignPanel,
+  AIPanel,
 
   BrandExtractor,
 } from '../';
@@ -2167,6 +2169,13 @@ function WebsiteViewer() {
                   onTypographyChange={setTypographyCss}
                 />
               ),
+            },
+
+            {
+              id: 'ai',
+              icon: <Sparkles size={20} />,
+              label: 'AI Architect',
+              component: <AIPanel />,
             },
 
             {

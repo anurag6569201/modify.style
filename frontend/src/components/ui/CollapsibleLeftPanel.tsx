@@ -6,7 +6,7 @@ import '../../assets/css/ui/CollapsibleLeftPanel.css';
 export const PANEL_WIDTH = 280;
 export const ICON_MENU_WIDTH = 56;
 
-export type PanelType = 'design' | 'effects' | 'brand' | 'settings' | null;
+export type PanelType = 'design' | 'effects' | 'brand' | 'settings' | 'ai' | null;
 
 interface PanelConfig {
   id: PanelType;
@@ -65,7 +65,7 @@ const CollapsibleLeftPanel: React.FC<CollapsibleLeftPanelProps> = ({
         <div className="menu-logo">
           <Layers size={20} />
         </div>
-        
+
         <div className="menu-icons">
           {panels.map((panel) => (
             <motion.button

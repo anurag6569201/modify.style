@@ -141,3 +141,37 @@ def proxy_website(request):
     response['X-Frame-Options'] = 'ALLOWALL'
     return response
 
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def ai_analyze(request):
+    """
+    Endpoint to analyze HTML content using Gemini.
+    Expects JSON body: { "html": "<html string...>" }
+    """
+    html_content = request.data.get('html')
+    if not html_content:
+        return JsonResponse({'error': 'HTML content is required'}, status=400)
+
+    from .services.ai_service import GeminiService
+    service = GeminiService()
+    result = service.analyze_page(html_content)
+    return JsonResponse(result)
+
+
+@api_view(['POST'])
+@permission_classes([AllowAny])
+def ai_chat(request):
+    """
+    Endpoint to chat with the AI about the website.
+    Expects JSON body: { "message": "user msg", "context": "<html string...>" }
+    """
+    message = request.data.get('message')
+    context = request.data.get('context')
+    
+    if not message:
+        return JsonResponse({'error': 'Message is required'}, status=400)
+
+    from .services.ai_service import GeminiService
+    service = GeminiService()
+    result = service.chat(message, context)
+    return JsonResponse(result)

@@ -5,16 +5,13 @@ import {
     Zap,
     Palette,
     Type,
-    Layout,
-    MessageSquare,
     Wand2,
     CheckCircle2,
-    AlertCircle,
-    TrendingUp,
     RefreshCw,
-    Gauge
+    Layout
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
+import { apiService } from '../../services/api';
 import '../../assets/css/editor/AIPanel.css';
 
 interface Suggestion {
@@ -35,11 +32,11 @@ interface ChatMessage {
 }
 
 const AIPanel: React.FC = () => {
-    const { state, setCustomCss, toggleEffect } = useApp();
+    const { state, setCustomCss } = useApp();
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [scores, setScores] = useState({ design: 0, a11y: 0, perf: 0 });
     const [messages, setMessages] = useState<ChatMessage[]>([
-        { id: '1', sender: 'bot', text: 'Hi! I\'m your AI Design Assistant. I can analyze this website and help you improve it. Try asking me to "Make it dark mode" or "Fix contrast".', timestamp: Date.now() }
+        { id: '1', sender: 'bot', text: 'Hi! I\'m your CSS/HTML Assistant. I help with styling, layout, performance optimization, and best practices. Ask me to "optimize CSS for page speed", "fix responsive design", or "improve accessibility".', timestamp: Date.now() }
     ]);
     const [inputValue, setInputValue] = useState('');
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -50,129 +47,96 @@ const AIPanel: React.FC = () => {
         chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages]);
 
-    // Simulated Analysis Effect
+    // Real AI Analysis Effect
     useEffect(() => {
-        setIsAnalyzing(true);
-        // Simulate processing time
-        const timer = setTimeout(() => {
-            setScores({
-                design: 85,
-                a11y: 72,
-                perf: 94
-            });
+        const analyzePage = async () => {
+            if (!state.view.htmlContent) return;
 
-            setSuggestions([
-                {
-                    id: 's1',
-                    type: 'design',
-                    title: 'Color Harmony',
-                    description: 'The primary color contrast is slightly low. Consider darkening the text color.',
-                    icon: Palette,
-                    action: () => handleApplyFix('contrast')
-                },
-                {
-                    id: 's2',
-                    type: 'accessibility',
-                    title: 'Heading Hierarchy',
-                    description: 'H1 and H2 sizes are too similar. Increase H1 size for better distinctive hierarchy.',
-                    icon: Type,
-                    action: () => handleApplyFix('typography')
-                },
-                {
-                    id: 's3',
-                    type: 'design',
-                    title: 'Whitespace Check',
-                    description: 'Section padding is inconsistent. Standardize to 40px vertical padding.',
-                    icon: Layout,
-                    action: () => handleApplyFix('spacing')
+            setIsAnalyzing(true);
+            try {
+                // Get analysis from backend Gemini service
+                const response = await apiService.analyzeWebsite(state.view.htmlContent);
+
+                if (response.scores) {
+                    setScores(response.scores);
                 }
-            ]);
-            setIsAnalyzing(false);
-        }, 1500);
 
-        return () => clearTimeout(timer);
-    }, []);
+                if (response.suggestions) {
+                    // Map API suggestions to UI format
+                    const mappedSuggestions: Suggestion[] = response.suggestions.map((s: any, index: number) => ({
+                        id: `s-${index}`,
+                        type: s.type || 'design',
+                        title: s.title,
+                        description: s.description,
+                        icon: s.type === 'accessibility' ? Type : (s.type === 'performance' ? Zap : Palette),
+                        action: () => {
+                            if (s.action_css) {
+                                setCustomCss((state.editor.customCss || '') + '\n' + s.action_css);
+                                // Mark as applied
+                                setSuggestions(prev => prev.map(item =>
+                                    item.id === `s-${index}` ? { ...item, applied: true } : item
+                                ));
+                            }
+                        }
+                    }));
+                    setSuggestions(mappedSuggestions);
+                }
+            } catch (error) {
+                console.error("AI Analysis Failed:", error);
+            } finally {
+                setIsAnalyzing(false);
+            }
+        };
 
-    const handleSendMessage = () => {
-        if (!inputValue.trim()) return;
+        analyzePage();
+    }, [state.view.htmlContent]); // Re-run when HTML content changes
+
+    const handleSendMessage = async (textOverride?: string) => {
+        const textToSend = textOverride || inputValue;
+        if (!textToSend.trim()) return;
 
         const userMsg: ChatMessage = {
             id: Date.now().toString(),
             sender: 'user',
-            text: inputValue,
+            text: textToSend,
             timestamp: Date.now()
         };
 
         setMessages(prev => [...prev, userMsg]);
         setInputValue('');
 
-        // Simulate AI Response
-        setTimeout(() => {
-            processCommand(userMsg.text);
-        }, 800);
+        try {
+            // Call Real Backend API
+            const context = state.view.htmlContent || '';
+            const response = await apiService.chatWithAI(textToSend, context);
+
+            const botMsg: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                sender: 'bot',
+                text: response.text || "I processed that for you.",
+                timestamp: Date.now()
+            };
+            setMessages(prev => [...prev, botMsg]);
+
+            if (response.css) {
+                setCustomCss((state.editor.customCss || '') + '\n' + response.css);
+            }
+        } catch (error) {
+            const errorMsg: ChatMessage = {
+                id: (Date.now() + 1).toString(),
+                sender: 'bot',
+                text: "Sorry, I couldn't connect to the AI service. Please check if the backend is running and the API key is configured.",
+                timestamp: Date.now()
+            };
+            setMessages(prev => [...prev, errorMsg]);
+        }
     };
 
     const processCommand = (text: string) => {
-        const lowerText = text.toLowerCase();
-        let responseText = "I'm not sure how to do that yet, but I'm learning!";
-
-        // Simple Keyword Matching (Heuristics)
-        if (lowerText.includes('dark mode') || lowerText.includes('dark theme')) {
-            responseText = "Converting to Dark Mode... I've inverted the background and text colors while preserving images.";
-            // Inject Dark Mode CSS
-            const darkModeCSS = `
-        html, body { background-color: #121212 !important; color: #e0e0e0 !important; }
-        h1, h2, h3, h4, h5, h6 { color: #ffffff !important; }
-        p, span, div { color: #b0b0b0 !important; }
-        img, video { opacity: 0.9; }
-      `;
-            setCustomCss((state.editor.customCss || '') + darkModeCSS);
-        } else if (lowerText.includes('background') || lowerText.includes('bg color')) {
-            responseText = "I can change the background. Let me try a modern gradient for you.";
-            const gradientCSS = `
-         body { background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%) !important; }
-       `;
-            setCustomCss((state.editor.customCss || '') + gradientCSS);
-        } else if (lowerText.includes('font') || lowerText.includes('typography')) {
-            responseText = "Updating typography to 'Inter' for a cleaner look.";
-            const fontCSS = `
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&display=swap');
-        * { font-family: 'Inter', sans-serif !important; }
-      `;
-            setCustomCss((state.editor.customCss || '') + fontCSS);
-        } else if (lowerText.includes('analyze') || lowerText.includes('scan')) {
-            responseText = "Re-analyzing the page structure... Design score is looking good!";
-            // Trigger re-analysis visual
-            setIsAnalyzing(true);
-            setTimeout(() => setIsAnalyzing(false), 1000);
-        }
-
-        const botMsg: ChatMessage = {
-            id: (Date.now() + 1).toString(),
-            sender: 'bot',
-            text: responseText,
-            timestamp: Date.now()
-        };
-        setMessages(prev => [...prev, botMsg]);
+        handleSendMessage(text);
     };
 
-    const handleApplyFix = (type: string) => {
-        // Optimistic UI update
-        setSuggestions(prev => prev.map(s =>
-            (s.action && s.action.name.includes(type)) ? { ...s, applied: true } : s
-        ));
 
-        let fixCSS = '';
-        if (type === 'contrast') {
-            fixCSS = `p, span { color: #333333 !important; }`;
-        } else if (type === 'typography') {
-            fixCSS = `h1 { font-size: 3rem !important; margin-bottom: 1.5rem !important; }`;
-        } else if (type === 'spacing') {
-            fixCSS = `section, .section { padding-top: 60px !important; padding-bottom: 60px !important; }`;
-        }
-
-        setCustomCss((state.editor.customCss || '') + fixCSS);
-    };
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter') {
@@ -184,13 +148,13 @@ const AIPanel: React.FC = () => {
         <div className="ai-panel">
             <div className="ai-header">
                 <div className="ai-title">
-                    <Sparkles className="ai-title-icon" size={18} />
-                    <span>AI Architect</span>
+                    <Sparkles className="ai-title-icon" size={16} />
+                    <span>CSS/HTML Assistant</span>
                 </div>
                 {isAnalyzing && (
-                    <div className="ai-title" style={{ fontSize: '11px', color: '#94a3b8' }}>
+                    <div className="ai-analyzing">
                         <RefreshCw className="animate-spin" size={12} />
-                        <span style={{ marginLeft: 4 }}>Analyzing...</span>
+                        <span>Analyzing...</span>
                     </div>
                 )}
             </div>
@@ -214,30 +178,30 @@ const AIPanel: React.FC = () => {
 
                 {/* Quick Actions */}
                 <div className="ai-section">
-                    <div className="ai-section-title">Smart Actions</div>
+                    <div className="ai-section-title">Quick Actions</div>
                     <div className="ai-actions-grid">
-                        <button className="ai-action-btn" onClick={() => processCommand('analyze')}>
-                            <Wand2 />
-                            <span className="ai-action-label">Magic Fix</span>
+                        <button className="ai-action-btn" onClick={() => processCommand('optimize CSS for page speed')}>
+                            <Zap />
+                            <span className="ai-action-label">Optimize Speed</span>
                         </button>
-                        <button className="ai-action-btn" onClick={() => processCommand('make it dark mode')}>
-                            <Sparkles />
-                            <span className="ai-action-label">Dark Mode</span>
+                        <button className="ai-action-btn" onClick={() => processCommand('improve responsive design and mobile layout')}>
+                            <Layout />
+                            <span className="ai-action-label">Responsive</span>
                         </button>
-                        <button className="ai-action-btn" onClick={() => processCommand('fix typography')}>
+                        <button className="ai-action-btn" onClick={() => processCommand('fix CSS accessibility issues and contrast')}>
                             <Type />
-                            <span className="ai-action-label">Fix Fonts</span>
+                            <span className="ai-action-label">Accessibility</span>
                         </button>
-                        <button className="ai-action-btn" onClick={() => processCommand('improve background')}>
-                            <Palette />
-                            <span className="ai-action-label">Remix Colors</span>
+                        <button className="ai-action-btn" onClick={() => processCommand('optimize CSS selectors and reduce specificity')}>
+                            <Wand2 />
+                            <span className="ai-action-label">Clean CSS</span>
                         </button>
                     </div>
                 </div>
 
                 {/* Chat Interface */}
                 <div className="ai-section" style={{ flex: 1, minHeight: 0 }}>
-                    <div className="ai-section-title">Command Center</div>
+                    <div className="ai-section-title">Chat</div>
                     <div className="ai-chat-container">
                         <div className="ai-chat-messages">
                             {messages.map(msg => (
@@ -250,14 +214,14 @@ const AIPanel: React.FC = () => {
                         <div className="ai-input-area">
                             <input
                                 className="ai-input"
-                                placeholder="Ask AI to change something..."
+                                placeholder="Ask about CSS, HTML, or page speed..."
                                 value={inputValue}
                                 onChange={(e) => setInputValue(e.target.value)}
                                 onKeyDown={handleKeyDown}
                             />
                             <button
                                 className="ai-send-btn"
-                                onClick={handleSendMessage}
+                                onClick={() => handleSendMessage()}
                                 disabled={!inputValue.trim()}
                             >
                                 <Send size={16} />
