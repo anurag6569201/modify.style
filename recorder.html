@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Recording...</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body class="glass-panel full-screen">
+  <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center;">
+    <h1>Recorder Setup</h1>
+    <p id="status">Ready to capture.</p>
+    
+    <video id="preview" autoplay muted></video>
+    
+    <div class="controls">
+      <button id="startRecBtn" class="btn">Start Recording</button>
+      <button id="stopRecBtn" class="btn hidden" style="background: #ef4444;">Stop Recording</button>
+    </div>
+  </div>
+  <script type="module" src="recorder.js"></script>
+</body>
+</html>

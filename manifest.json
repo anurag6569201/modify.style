@@ -1,0 +1,19 @@
+{
+  "manifest_version": 3,
+  "name": "Screen Recorder Pro",
+  "version": "1.0",
+  "description": "Record your screen and edit the video instantly.",
+  "permissions": [
+    "tabs",
+    "unlimitedStorage",
+    "scripting"
+  ],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Start Recording"
+  },
+  "background": {
+    "service_worker": "background.js"
+  }
+
+}
