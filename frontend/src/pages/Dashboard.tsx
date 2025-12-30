@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
+import { useState, useEffect } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -27,38 +27,6 @@ interface Project {
   thumbnail?: string;
 }
 
-const mockProjects: Project[] = [
-  {
-    id: "1",
-    title: "Product Onboarding Demo",
-    status: "ready",
-    updatedAt: "2 hours ago",
-  },
-  {
-    id: "2",
-    title: "Feature Walkthrough v2",
-    status: "rendering",
-    updatedAt: "5 hours ago",
-  },
-  {
-    id: "3",
-    title: "Sales Demo - Enterprise",
-    status: "draft",
-    updatedAt: "1 day ago",
-  },
-  {
-    id: "4",
-    title: "New Dashboard Tutorial",
-    status: "draft",
-    updatedAt: "3 days ago",
-  },
-];
-
-const mockUser = {
-  name: "Alex Johnson",
-  email: "alex@company.com",
-};
-
 const statusConfig = {
   draft: {
     label: "Draft",
@@ -75,10 +43,49 @@ const statusConfig = {
 };
 
 export default function Dashboard() {
-  const [projects, setProjects] = useState<Project[]>(mockProjects);
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [user, setUser] = useState<{ name: string; email: string } | undefined>(
+    undefined
+  );
   const [showEmpty, setShowEmpty] = useState(false);
+  const navigate = useNavigate();
 
-  const displayProjects = showEmpty ? [] : projects;
+  useEffect(() => {
+    const fetchProfile = async () => {
+      try {
+        const token = localStorage.getItem("accessToken");
+        if (!token) {
+          navigate("/auth");
+          return;
+        }
+
+        const response = await fetch("http://localhost:8000/api/auth/profile/", {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (response.ok) {
+          const data = await response.json();
+          // We map username to name for the UI for now, or use username as name
+          setUser({ name: data.username, email: data.email });
+        } else {
+          // Handle token expiry or invalid token
+          if (response.status === 401) {
+            localStorage.removeItem("accessToken");
+            localStorage.removeItem("refreshToken");
+            navigate("/auth");
+          }
+        }
+      } catch (error) {
+        console.error("Failed to fetch profile", error);
+      }
+    };
+
+    fetchProfile();
+  }, [navigate]);
+
+  const displayProjects = projects;
 
   const handleDelete = (id: string) => {
     setProjects(projects.filter((p) => p.id !== id));
@@ -86,7 +93,7 @@ export default function Dashboard() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header isAuthenticated user={mockUser} />
+      <Header isAuthenticated user={user} />
 
       <main className="container py-8">
         {/* Page Header */}
@@ -98,9 +105,6 @@ export default function Dashboard() {
             </p>
           </div>
           <div className="flex gap-3">
-            <Button variant="outline" onClick={() => setShowEmpty(!showEmpty)}>
-              {showEmpty ? "Show Projects" : "Show Empty State"}
-            </Button>
             <Button variant="hero" asChild>
               <Link to="/recorder">
                 <Plus className="mr-2 h-4 w-4" />

@@ -22,7 +22,9 @@ export function Header({ isAuthenticated = false, user }: HeaderProps) {
   const navigate = useNavigate();
 
   const handleLogout = () => {
-    navigate("/");
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
+    navigate("/auth");
   };
 
   return (

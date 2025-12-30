@@ -1,52 +1,64 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Video, Loader2, Check, Mail, Lock } from "lucide-react";
+import { Video, Loader2, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { useGoogleLogin } from "@react-oauth/google";
 
 type AuthState = "idle" | "loading" | "success";
 
 export default function Auth() {
   const [authState, setAuthState] = useState<AuthState>("idle");
-  const [isSignUp, setIsSignUp] = useState(false);
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
   const navigate = useNavigate();
   const { toast } = useToast();
 
-  const handleGoogleLogin = async () => {
-    setAuthState("loading");
-    // Simulate Google OAuth
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setAuthState("success");
-    toast({
-      title: "Welcome to DemoForge!",
-      description: "You've successfully signed in.",
-    });
-    setTimeout(() => navigate("/dashboard"), 1000);
-  };
+  const login = useGoogleLogin({
+    onSuccess: async (tokenResponse) => {
+      setAuthState("loading");
+      try {
+        const response = await fetch("http://localhost:8000/api/auth/google/", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({ token: tokenResponse.access_token }),
+        });
 
-  const handleEmailAuth = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!email || !password) {
+        if (!response.ok) {
+          throw new Error("Authentication failed");
+        }
+
+        const data = await response.json();
+
+        if (data.access) {
+          localStorage.setItem("accessToken", data.access);
+          localStorage.setItem("refreshToken", data.refresh);
+          setAuthState("success");
+          toast({
+            title: "Welcome to DemoForge!",
+            description: "You've successfully signed in.",
+          });
+          setTimeout(() => navigate("/dashboard"), 1000);
+        }
+      } catch (error) {
+        console.error(error);
+        setAuthState("idle");
+        toast({
+          title: "Authentication Failed",
+          description: "Could not sign in with Google.",
+          variant: "destructive",
+        });
+      }
+    },
+    onError: () => {
+      setAuthState("idle");
       toast({
-        title: "Missing fields",
-        description: "Please fill in all fields.",
+        title: "Authentication Failed",
+        description: "Google sign in failed.",
         variant: "destructive",
       });
-      return;
-    }
-    setAuthState("loading");
-    await new Promise((resolve) => setTimeout(resolve, 1500));
-    setAuthState("success");
-    toast({
-      title: isSignUp ? "Account created!" : "Welcome back!",
-      description: isSignUp ? "Your account has been created successfully." : "You've successfully signed in.",
-    });
-    setTimeout(() => navigate("/dashboard"), 1000);
-  };
+    },
+  });
 
   return (
     <div className="flex min-h-screen">
@@ -101,13 +113,9 @@ export default function Auth() {
           </div>
 
           <div className="mb-8 text-center">
-            <h2 className="text-2xl font-bold">
-              {isSignUp ? "Create your account" : "Welcome back"}
-            </h2>
+            <h2 className="text-2xl font-bold">Welcome back</h2>
             <p className="mt-2 text-muted-foreground">
-              {isSignUp
-                ? "Start creating demo videos in minutes"
-                : "Sign in to continue to your dashboard"}
+              Sign in to continue to your dashboard
             </p>
           </div>
 
@@ -125,7 +133,7 @@ export default function Auth() {
                 variant="outline"
                 size="lg"
                 className="w-full gap-3"
-                onClick={handleGoogleLogin}
+                onClick={() => login()}
                 disabled={authState === "loading"}
               >
                 {authState === "loading" ? (
@@ -152,75 +160,6 @@ export default function Auth() {
                 )}
                 Continue with Google
               </Button>
-
-              <div className="relative">
-                <div className="absolute inset-0 flex items-center">
-                  <div className="w-full border-t border-border" />
-                </div>
-                <div className="relative flex justify-center text-xs uppercase">
-                  <span className="bg-background px-2 text-muted-foreground">or continue with email</span>
-                </div>
-              </div>
-
-              <form onSubmit={handleEmailAuth} className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="email">Email</Label>
-                  <div className="relative">
-                    <Mail className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      id="email"
-                      type="email"
-                      placeholder="you@example.com"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10"
-                      disabled={authState === "loading"}
-                    />
-                  </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="password">Password</Label>
-                  <div className="relative">
-                    <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      id="password"
-                      type="password"
-                      placeholder="••••••••"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10"
-                      disabled={authState === "loading"}
-                    />
-                  </div>
-                </div>
-                <Button
-                  type="submit"
-                  variant="hero"
-                  size="lg"
-                  className="w-full"
-                  disabled={authState === "loading"}
-                >
-                  {authState === "loading" ? (
-                    <Loader2 className="h-5 w-5 animate-spin" />
-                  ) : isSignUp ? (
-                    "Create Account"
-                  ) : (
-                    "Sign In"
-                  )}
-                </Button>
-              </form>
-
-              <p className="text-center text-sm text-muted-foreground">
-                {isSignUp ? "Already have an account?" : "Don't have an account?"}{" "}
-                <button
-                  type="button"
-                  onClick={() => setIsSignUp(!isSignUp)}
-                  className="font-medium text-primary hover:underline"
-                  disabled={authState === "loading"}
-                >
-                  {isSignUp ? "Sign in" : "Sign up"}
-                </button>
-              </p>
             </div>
           )}
         </div>

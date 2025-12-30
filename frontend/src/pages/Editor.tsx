@@ -1,10 +1,11 @@
-import { useState } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { useState, useRef, useEffect } from "react";
+import { useNavigate, useParams, useLocation } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
+import { Slider } from "@/components/ui/slider"; // Assuming Shadcn UI slider exists or using native input
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select,
@@ -26,6 +27,8 @@ import {
   Loader2,
   Video,
   GripVertical,
+  Volume2,
+  VolumeX,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -58,9 +61,19 @@ const voiceOptions = [
 export default function Editor() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const { toast } = useToast();
 
+  const videoUrl = location.state?.videoUrl;
+  const videoRef = useRef<HTMLVideoElement>(null);
+
   const [isPlaying, setIsPlaying] = useState(false);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [volume, setVolume] = useState(1);
+  const [isMuted, setIsMuted] = useState(false);
+
+  // ... [states for script/voice/effects/steps remain same]
   const [script, setScript] = useState(
     "Welcome to our product demo. In this video, we'll walk you through the key features that make our platform stand out. Let's start by clicking on the Get Started button to begin the onboarding process..."
   );
@@ -73,6 +86,65 @@ export default function Editor() {
     smoothPan: false,
   });
   const [steps, setSteps] = useState<TimelineStep[]>(mockSteps);
+
+  const formatTime = (time: number) => {
+    const minutes = Math.floor(time / 60);
+    const seconds = Math.floor(time % 60);
+    return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  const togglePlay = () => {
+    if (videoRef.current) {
+      if (isPlaying) {
+        videoRef.current.pause();
+      } else {
+        videoRef.current.play();
+      }
+      setIsPlaying(!isPlaying);
+    } else {
+      // Fallback for mock if needed, though mostly focused on video functionality
+      setIsPlaying(!isPlaying);
+    }
+  };
+
+  const handleTimeUpdate = () => {
+    if (videoRef.current) {
+      setCurrentTime(videoRef.current.currentTime);
+    }
+  };
+
+  const handleLoadedMetadata = () => {
+    if (videoRef.current) {
+      setDuration(videoRef.current.duration);
+    }
+  };
+
+  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const time = parseFloat(e.target.value);
+    if (videoRef.current) {
+      videoRef.current.currentTime = time;
+      setCurrentTime(time);
+    }
+  };
+
+  const toggleMute = () => {
+    if (videoRef.current) {
+      const newMuted = !isMuted;
+      videoRef.current.muted = newMuted;
+      setIsMuted(newMuted);
+    }
+  };
+
+  const handleVolumeChange = (value: number[]) => {
+    const newVolume = value[0];
+    if (videoRef.current) {
+      videoRef.current.volume = newVolume;
+      setVolume(newVolume);
+      setIsMuted(newVolume === 0);
+    }
+  };
+
+  // ... [keep handleGenerateScript, handleGenerateVoice, handleRender, updateStepDescription, typeIcons]
 
   const handleGenerateScript = async () => {
     setIsGeneratingScript(true);
@@ -111,6 +183,7 @@ export default function Editor() {
     type: Sparkles,
   };
 
+
   return (
     <div className="flex min-h-screen flex-col bg-background">
       <Header isAuthenticated user={mockUser} />
@@ -147,33 +220,90 @@ export default function Editor() {
                 </div>
 
                 {/* Video Preview */}
-                <div className="relative aspect-video bg-gradient-subtle">
-                  <div className="absolute inset-0 flex items-center justify-center">
+                <div className="relative aspect-video bg-black flex items-center justify-center">
+                  {videoUrl ? (
+                    <video
+                      ref={videoRef}
+                      src={videoUrl}
+                      className="h-full w-full object-contain"
+                      onPlay={() => setIsPlaying(true)}
+                      onPause={() => setIsPlaying(false)}
+                      onTimeUpdate={handleTimeUpdate}
+                      onLoadedMetadata={handleLoadedMetadata}
+                      controls={false} // Custom controls below
+                    />
+                  ) : (
                     <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-hero shadow-glow">
                       <Video className="h-8 w-8 text-primary-foreground" />
                     </div>
-                  </div>
+                  )}
                 </div>
 
                 {/* Playback Controls */}
-                <div className="flex items-center justify-center gap-4 border-t border-border bg-secondary/30 p-4">
-                  <Button
-                    variant="outline"
-                    size="icon"
-                    onClick={() => setIsPlaying(!isPlaying)}
-                  >
-                    {isPlaying ? (
-                      <Pause className="h-4 w-4" />
-                    ) : (
-                      <Play className="h-4 w-4" />
-                    )}
-                  </Button>
-                  <div className="flex-1">
-                    <div className="h-1.5 overflow-hidden rounded-full bg-secondary">
-                      <div className="h-full w-1/3 rounded-full bg-gradient-hero" />
+                <div className="flex flex-col gap-2 border-t border-border bg-secondary/30 p-4">
+                  {/* Progress Bar */}
+                  <div className="relative h-1.5 w-full cursor-pointer">
+                    <input
+                      type="range"
+                      min="0"
+                      max={duration || 100}
+                      value={currentTime}
+                      onChange={handleSeek}
+                      className="absolute inset-0 z-10 w-full opacity-0 cursor-pointer"
+                    />
+                    <div className="absolute inset-0 overflow-hidden rounded-full bg-secondary">
+                      <div
+                        className="h-full bg-gradient-hero transition-all duration-100 ease-linear"
+                        style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
+                      />
                     </div>
                   </div>
-                  <span className="text-sm text-muted-foreground">0:45 / 2:30</span>
+
+                  <div className="flex items-center justify-between pt-2">
+                    <div className="flex items-center gap-4">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:bg-white/10"
+                        onClick={togglePlay}
+                      >
+                        {isPlaying ? (
+                          <Pause className="h-4 w-4" />
+                        ) : (
+                          <Play className="h-4 w-4" />
+                        )}
+                      </Button>
+
+                      <span className="text-sm font-medium text-muted-foreground w-20">
+                        {formatTime(currentTime)} / {formatTime(duration)}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 hover:bg-white/10"
+                        onClick={toggleMute}
+                      >
+                        {isMuted || volume === 0 ? (
+                          <VolumeX className="h-4 w-4" />
+                        ) : (
+                          <Volume2 className="h-4 w-4" />
+                        )}
+                      </Button>
+                      {/* Volume Slider - using range input for simplicity for now, can upgrade to shadcn slider later */}
+                      <div className="w-20">
+                        <Slider
+                          defaultValue={[1]}
+                          max={1}
+                          step={0.1}
+                          value={[isMuted ? 0 : volume]}
+                          onValueChange={handleVolumeChange}
+                        />
+                      </div>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
