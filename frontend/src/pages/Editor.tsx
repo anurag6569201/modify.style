@@ -1,9 +1,12 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-import { VisualEffectsLayer, ClickData } from "@/components/editor/VisualEffectsLayer";
-import { CanvasOverlay } from "@/components/editor/CanvasOverlay";
+// import { VisualEffectsLayer } from "@/components/editor/VisualEffectsLayer"; // Deprecated
+// import { CanvasOverlay } from "@/components/editor/CanvasOverlay"; // Deprecated
 import { getInitialCameraState, updateCameraSystem } from "@/lib/composition/camera";
 import { ClickData, MoveData } from "@/pages/Recorder";
 import { FilterEngine } from "@/lib/effects/filters";
+import { Stage } from "@/components/editor/Stage";
+import { CameraDebugOverlay } from "@/components/editor/CameraDebugOverlay";
+import { editorStore, useEditorState } from "@/lib/editor/store";
 import { TransitionEngine, TransitionType, easings } from "@/lib/effects/transitions";
 
 
@@ -84,63 +87,64 @@ export default function Editor() {
   const location = useLocation();
   const { toast } = useToast();
 
+  // Use new Store
+  const editorState = useEditorState();
+
   const videoUrl = location.state?.videoUrl;
   const clickData = location.state?.clickData || [];
   const moveData = location.state?.moveData || [];
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const capturedEffects = location.state?.effects || [];
+  const videoRef = useRef<HTMLVideoElement>(null); // Kept for legacy ref passing to old components if any remain
   const videoContainerRef = useRef<HTMLDivElement>(null);
 
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [volume, setVolume] = useState(1);
-  const [isMuted, setIsMuted] = useState(false);
-  const [transform, setTransform] = useState({ scale: 1, translateX: 0, translateY: 0 });
-  const animationFrameRef = useRef<number | null>(null);
-  const lastTransformRef = useRef({ scale: 1, translateX: 0, translateY: 0 });
+  // Initialize Store
+  useEffect(() => {
+    if (editorState.video.url !== videoUrl && videoUrl) {
+      editorStore.setVideo({ url: videoUrl });
+    }
+    if (clickData.length > 0 && editorState.events.clicks.length === 0) {
+      editorStore.setState(prev => ({
+        events: {
+          ...prev.events,
+          clicks: clickData,
+          moves: moveData,
+          effects: capturedEffects,
+          markers: []
+        }
+      }));
+    }
+  }, [videoUrl, clickData, moveData, capturedEffects]);
 
-  // ... [states for script/voice/effects/steps remain same]
+
+  // --- GOD LEVEL REACTIVE CAMERA ENGINE (Spring-Based) ---
+  // Camera state is now managed by Stage and EditorStore
+
+  // --- Restored State for UI Features ---
   const [script, setScript] = useState(
     "Welcome to our product demo. In this video, we'll walk you through the key features that make our platform stand out. Let's start by clicking on the Get Started button to begin the onboarding process..."
   );
   const [selectedVoice, setSelectedVoice] = useState("emma");
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
   const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
+
+  // Local UI state (can eventually move to store)
   const [effects, setEffects] = useState({
     zoomOnClick: true,
     cursorHighlight: true,
-    smoothPan: true, // Enabled by default with zoom
+    smoothPan: true,
   });
+
+  // Timeline State
   const [steps, setSteps] = useState<TimelineStep[]>(mockSteps);
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [history, setHistory] = useState<TimelineStep[][]>([mockSteps]);
   const [historyIndex, setHistoryIndex] = useState(0);
-  
-  // Advanced editing features
-  const [colorGrading, setColorGrading] = useState({
-    brightness: 0,
-    contrast: 0,
-    saturation: 0,
-    hue: 0,
-    temperature: 0,
-    vignette: 0,
-  });
-  const [textOverlays, setTextOverlays] = useState<Array<{
-    id: string;
-    text: string;
-    x: number;
-    y: number;
-    fontSize: number;
-    color: string;
-    startTime: number;
-    endTime: number;
-    animation: "fade" | "slide" | "typewriter";
-  }>>([]);
+
+  // Editor UI State
   const [showColorGrading, setShowColorGrading] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
-  const filterEngineRef = useRef<FilterEngine | null>(null);
-  const transitionEngineRef = useRef<TransitionEngine | null>(null);
 
+  // Helpers
   const formatTime = (time: number) => {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
@@ -148,201 +152,24 @@ export default function Editor() {
   };
 
   const togglePlay = () => {
-    if (videoRef.current) {
-      if (isPlaying) {
-        videoRef.current.pause();
-      } else {
-        videoRef.current.play();
-      }
-      setIsPlaying(!isPlaying);
-    } else {
-      // Fallback for mock if needed, though mostly focused on video functionality
-      setIsPlaying(!isPlaying);
-    }
-  };
-
-  // Advanced easing functions for ultra-smooth animations
-  const easeInOutCubic = (t: number): number => {
-    return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-  };
-
-  // Spring-like easing for natural motion
-  const easeOutElastic = (t: number): number => {
-    const c4 = (2 * Math.PI) / 3;
-    return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
-  };
-
-  // Smooth ease-out for zoom out
-  const easeOutExpo = (t: number): number => {
-    return t === 1 ? 1 : 1 - Math.pow(2, -10 * t);
-  };
-
-  // Calculate optimal zoom level based on element size
-  const calculateOptimalZoom = (
-    elementSize: number | undefined,
-    containerWidth: number,
-    containerHeight: number,
-    videoNaturalWidth: number,
-    videoNaturalHeight: number
-  ): number => {
-    if (!elementSize) {
-      // Default zoom for coordinate-based clicks
-      return 2.5;
-    }
-
-    // Calculate how much of the screen the element occupies
-    const elementAreaRatio = elementSize;
-
-    // Target: zoom so element takes up ~40-60% of viewport
-    const targetRatio = 0.5;
-
-    // Calculate zoom needed to achieve target ratio
-    // Smaller elements need more zoom, larger elements need less
-    let zoomLevel = Math.sqrt(targetRatio / elementAreaRatio);
-
-    // Clamp zoom between reasonable bounds
-    zoomLevel = Math.max(1.5, Math.min(4.0, zoomLevel));
-
-    return zoomLevel;
-  };
-
-  // --- GOD LEVEL REACTIVE CAMERA ENGINE (Spring-Based) ---
-  const [videoDims, setVideoDims] = useState({ width: 1920, height: 1080 });
-  const cameraStateRef = useRef(getInitialCameraState());
-
-  const handleTimeUpdate = () => {
-    if (videoRef.current) {
-      const time = videoRef.current.currentTime;
-      setCurrentTime(time);
-
-      if (effects.zoomOnClick && videoContainerRef.current) {
-        // Calculate the next camera state based on events and physics
-        // Using a fixed dt for smoothness (approx 60fps)
-        const newState = updateCameraSystem(
-          cameraStateRef.current,
-          time,
-          0.016,
-          clickData as ClickData[],
-          moveData as MoveData[],
-          {
-            width: videoDims.width,
-            height: videoDims.height
-          }
-        );
-        cameraStateRef.current = newState;
-        const newTransform = newState.transform;
-
-        // Only update state if changed significantly to avoid re-renders
-        const current = transform; // React state for rendering
-        if (
-          Math.abs(newTransform.scale - current.scale) > 0.001 ||
-          Math.abs(newTransform.translateX - current.translateX) > 0.1 ||
-          Math.abs(newTransform.translateY - current.translateY) > 0.1
-        ) {
-          setTransform(newTransform);
-        }
-      }
-    }
+    editorStore.setPlayback({ isPlaying: !editorState.playback.isPlaying });
   };
 
 
-  const [videoAspect, setVideoAspect] = useState(16 / 9);
 
-  const handleLoadedMetadata = () => {
-    if (videoRef.current && videoContainerRef.current) {
-      setDuration(videoRef.current.duration);
-      if (videoRef.current.videoWidth && videoRef.current.videoHeight) {
-        setVideoAspect(videoRef.current.videoWidth / videoRef.current.videoHeight);
-        setVideoDims({
-          width: videoRef.current.videoWidth,
-          height: videoRef.current.videoHeight
-        });
-        
-        // Initialize filter and transition engines
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth;
-        canvas.height = videoRef.current.videoHeight;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          filterEngineRef.current = new FilterEngine(ctx, canvas.width, canvas.height);
-          transitionEngineRef.current = new TransitionEngine(ctx, canvas.width, canvas.height);
-        }
-      }
-      // Reset transform when video loads
-      setTransform({ scale: 1, translateX: 0, translateY: 0 });
-      lastTransformRef.current = { scale: 1, translateX: 0, translateY: 0 };
-    }
-  };
-
-  const handleVideoError = (e: React.SyntheticEvent<HTMLVideoElement, Event>) => {
-    const video = e.currentTarget;
-    const error = video.error;
-    if (error) {
-      let errorMessage = "Unknown error";
-      switch (error.code) {
-        case error.MEDIA_ERR_ABORTED:
-          errorMessage = "Video loading aborted";
-          break;
-        case error.MEDIA_ERR_NETWORK:
-          errorMessage = "Network error while loading video";
-          break;
-        case error.MEDIA_ERR_DECODE:
-          errorMessage = "Video decoding error";
-          break;
-        case error.MEDIA_ERR_SRC_NOT_SUPPORTED:
-          errorMessage = "Video format not supported";
-          break;
-      }
-      toast({
-        title: "Video Error",
-        description: errorMessage,
-        variant: "destructive"
-      });
-      console.error("Video error:", error);
-    }
-  };
-
-  // Cleanup animation frame on unmount
-  useEffect(() => {
-    return () => {
-      if (animationFrameRef.current !== null) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
-    };
-  }, []);
-
-  // Reset transform when video is paused or stopped
-  useEffect(() => {
-    if (!isPlaying) {
-      // Smoothly reset when paused
-      setTransform({ scale: 1, translateX: 0, translateY: 0 });
-      lastTransformRef.current = { scale: 1, translateX: 0, translateY: 0 };
-    }
-  }, [isPlaying]);
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
-    if (videoRef.current) {
-      videoRef.current.currentTime = time;
-      setCurrentTime(time);
-    }
+    editorStore.setPlayback({ currentTime: time });
   };
 
   const toggleMute = () => {
-    if (videoRef.current) {
-      const newMuted = !isMuted;
-      videoRef.current.muted = newMuted;
-      setIsMuted(newMuted);
-    }
+    editorStore.setPlayback({ isMuted: !editorState.playback.isMuted });
   };
 
   const handleVolumeChange = (value: number[]) => {
     const newVolume = value[0];
-    if (videoRef.current) {
-      videoRef.current.volume = newVolume;
-      setVolume(newVolume);
-      setIsMuted(newVolume === 0);
-    }
+    editorStore.setPlayback({ volume: newVolume, isMuted: newVolume === 0 });
   };
 
   // ... [keep handleGenerateScript, handleGenerateVoice, handleRender, updateStepDescription, typeIcons]
@@ -376,12 +203,13 @@ export default function Editor() {
         videoUrl,
         clickData,
         moveData,
-        colorGrading,
-        textOverlays,
+        effects: editorState.events.effects,
+        colorGrading: editorState.colorGrading,
+        textOverlays: editorState.textOverlays,
       }
     });
   };
-  
+
   const addTextOverlay = () => {
     const newOverlay = {
       id: Date.now().toString(),
@@ -390,22 +218,28 @@ export default function Editor() {
       y: 0.5,
       fontSize: 24,
       color: "#ffffff",
-      startTime: currentTime,
-      endTime: Math.min(currentTime + 3, duration),
+      startTime: editorState.playback.currentTime,
+      endTime: Math.min(editorState.playback.currentTime + 3, editorState.video.duration),
       animation: "fade" as const,
     };
-    setTextOverlays([...textOverlays, newOverlay]);
+    editorStore.setState({
+      textOverlays: [...editorState.textOverlays, newOverlay]
+    });
     setShowTextEditor(true);
   };
-  
-  const updateTextOverlay = (id: string, updates: Partial<typeof textOverlays[0]>) => {
-    setTextOverlays(textOverlays.map(overlay => 
-      overlay.id === id ? { ...overlay, ...updates } : overlay
-    ));
+
+  const updateTextOverlay = (id: string, updates: Partial<typeof editorState.textOverlays[0]>) => {
+    editorStore.setState({
+      textOverlays: editorState.textOverlays.map(overlay =>
+        overlay.id === id ? { ...overlay, ...updates } : overlay
+      )
+    });
   };
-  
+
   const deleteTextOverlay = (id: string) => {
-    setTextOverlays(textOverlays.filter(overlay => overlay.id !== id));
+    editorStore.setState({
+      textOverlays: editorState.textOverlays.filter(overlay => overlay.id !== id)
+    });
   };
 
   const updateStepDescription = (id: string, description: string) => {
@@ -535,44 +369,24 @@ export default function Editor() {
                 {/* Video Preview */}
                 <div
                   ref={videoContainerRef}
-                  className="relative aspect-video bg-gradient-subtle flex items-center justify-center overflow-hidden p-4 transition-all duration-300"
+                  className="relative aspect-video bg-black flex items-center justify-center overflow-hidden rounded-lg shadow-2xl border border-border/50"
+                  style={{ isolation: 'isolate' }}
                 >
                   {videoUrl ? (
                     <>
-                      <video
-                        ref={videoRef}
-                        src={videoUrl}
-                        className="absolute inset-4 w-[calc(100%-2rem)] h-[calc(100%-2rem)] object-contain origin-center rounded-lg shadow-2xl border border-border/50 pointer-events-none"
-                        style={{
-                          transform: `scale(${transform.scale}) translate(${transform.translateX}px, ${transform.translateY}px)`,
-                          transition: 'transform 0.08s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
-                          willChange: 'transform',
-                          filter: showColorGrading ? `
-                            brightness(${1 + colorGrading.brightness})
-                            contrast(${1 + colorGrading.contrast})
-                            saturate(${1 + colorGrading.saturation})
-                            hue-rotate(${colorGrading.hue}deg)
-                          ` : undefined,
-                        }}
-                        onPlay={() => setIsPlaying(true)}
-                        onPause={() => setIsPlaying(false)}
-                        onTimeUpdate={handleTimeUpdate}
-                        onLoadedMetadata={handleLoadedMetadata}
-                        onError={handleVideoError}
-                        preload="metadata"
-                        playsInline
-                        controls={false} // Custom controls below
-                      />
-                      
+                      <Stage />
+                      <CameraDebugOverlay />
+
                       {/* Text Overlays */}
-                      {textOverlays.map((overlay) => {
+                      {editorState.textOverlays.map((overlay) => {
+                        const currentTime = editorState.playback.currentTime;
                         const isVisible = currentTime >= overlay.startTime && currentTime <= overlay.endTime;
                         if (!isVisible) return null;
-                        
+
                         const progress = (currentTime - overlay.startTime) / (overlay.endTime - overlay.startTime);
                         let opacity = 1;
                         let translateY = 0;
-                        
+
                         if (overlay.animation === "fade") {
                           const fadeIn = Math.min(1, progress * 5);
                           const fadeOut = Math.min(1, (1 - progress) * 5);
@@ -581,7 +395,7 @@ export default function Editor() {
                           opacity = Math.min(1, progress * 3);
                           translateY = (1 - progress) * 20;
                         }
-                        
+
                         return (
                           <div
                             key={overlay.id}
@@ -603,27 +417,7 @@ export default function Editor() {
                         );
                       })}
 
-                      {/* God Level Visual Effects Layer */}
-                      {(effects.cursorHighlight || effects.zoomOnClick) && (
-                        <div 
-                          className="absolute inset-4 w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-lg overflow-hidden pointer-events-none z-10"
-                          style={{
-                            transform: `scale(${transform.scale}) translate(${transform.translateX}px, ${transform.translateY}px)`,
-                            transition: 'transform 0.08s cubic-bezier(0.25, 0.46, 0.45, 0.94)',
-                            willChange: 'transform',
-                            transformOrigin: 'center center',
-                          }}
-                        >
-                          <CanvasOverlay
-                            clickData={clickData as ClickData[]}
-                            moveData={moveData as MoveData[]}
-                            videoRef={videoRef}
-                            width={videoDims.width}
-                            height={videoDims.height}
-                            isPlaying={isPlaying}
-                          />
-                        </div>
-                      )}
+
                     </>
                   ) : (
                     <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-hero shadow-glow">
@@ -639,15 +433,15 @@ export default function Editor() {
                     <input
                       type="range"
                       min="0"
-                      max={duration || 100}
-                      value={currentTime}
+                      max={editorState.video.duration || 100}
+                      value={editorState.playback.currentTime}
                       onChange={handleSeek}
                       className="absolute inset-0 z-10 w-full opacity-0 cursor-pointer"
                     />
                     <div className="absolute inset-0 overflow-hidden rounded-full bg-secondary">
                       <div
                         className="h-full bg-gradient-hero transition-all duration-100 ease-linear"
-                        style={{ width: `${(currentTime / (duration || 1)) * 100}%` }}
+                        style={{ width: `${(editorState.playback.currentTime / (editorState.video.duration || 1)) * 100}%` }}
                       />
                     </div>
                   </div>
@@ -660,7 +454,7 @@ export default function Editor() {
                         className="h-8 w-8 hover:bg-white/10"
                         onClick={togglePlay}
                       >
-                        {isPlaying ? (
+                        {editorState.playback.isPlaying ? (
                           <Pause className="h-4 w-4" />
                         ) : (
                           <Play className="h-4 w-4" />
@@ -668,7 +462,7 @@ export default function Editor() {
                       </Button>
 
                       <span className="text-sm font-medium text-muted-foreground w-20">
-                        {formatTime(currentTime)} / {formatTime(duration)}
+                        {formatTime(editorState.playback.currentTime)} / {formatTime(editorState.video.duration)}
                       </span>
                     </div>
 
@@ -679,7 +473,7 @@ export default function Editor() {
                         className="h-8 w-8 hover:bg-white/10"
                         onClick={toggleMute}
                       >
-                        {isMuted || volume === 0 ? (
+                        {editorState.playback.isMuted || editorState.playback.volume === 0 ? (
                           <VolumeX className="h-4 w-4" />
                         ) : (
                           <Volume2 className="h-4 w-4" />
@@ -691,7 +485,7 @@ export default function Editor() {
                           defaultValue={[1]}
                           max={1}
                           step={0.1}
-                          value={[isMuted ? 0 : volume]}
+                          value={[editorState.playback.isMuted ? 0 : editorState.playback.volume]}
                           onValueChange={handleVolumeChange}
                         />
                       </div>
@@ -885,97 +679,99 @@ export default function Editor() {
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>Brightness</Label>
-                            <span className="text-sm text-muted-foreground">{colorGrading.brightness.toFixed(2)}</span>
+                            <span className="text-sm text-muted-foreground">{editorState.colorGrading.brightness.toFixed(2)}</span>
                           </div>
                           <Slider
                             min={-1}
                             max={1}
                             step={0.1}
-                            value={[colorGrading.brightness]}
-                            onValueChange={([value]) => setColorGrading({ ...colorGrading, brightness: value })}
+                            value={[editorState.colorGrading.brightness]}
+                            onValueChange={([value]) => editorStore.setState({ colorGrading: { ...editorState.colorGrading, brightness: value } })}
                           />
                         </div>
 
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>Contrast</Label>
-                            <span className="text-sm text-muted-foreground">{colorGrading.contrast.toFixed(2)}</span>
+                            <span className="text-sm text-muted-foreground">{editorState.colorGrading.contrast.toFixed(2)}</span>
                           </div>
                           <Slider
                             min={-1}
                             max={1}
                             step={0.1}
-                            value={[colorGrading.contrast]}
-                            onValueChange={([value]) => setColorGrading({ ...colorGrading, contrast: value })}
+                            value={[editorState.colorGrading.contrast]}
+                            onValueChange={([value]) => editorStore.setState({ colorGrading: { ...editorState.colorGrading, contrast: value } })}
                           />
                         </div>
 
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>Saturation</Label>
-                            <span className="text-sm text-muted-foreground">{colorGrading.saturation.toFixed(2)}</span>
+                            <span className="text-sm text-muted-foreground">{editorState.colorGrading.saturation.toFixed(2)}</span>
                           </div>
                           <Slider
                             min={-1}
                             max={1}
                             step={0.1}
-                            value={[colorGrading.saturation]}
-                            onValueChange={([value]) => setColorGrading({ ...colorGrading, saturation: value })}
+                            value={[editorState.colorGrading.saturation]}
+                            onValueChange={([value]) => editorStore.setState({ colorGrading: { ...editorState.colorGrading, saturation: value } })}
                           />
                         </div>
 
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>Hue</Label>
-                            <span className="text-sm text-muted-foreground">{Math.round(colorGrading.hue)}°</span>
+                            <span className="text-sm text-muted-foreground">{Math.round(editorState.colorGrading.hue)}°</span>
                           </div>
                           <Slider
                             min={-180}
                             max={180}
                             step={1}
-                            value={[colorGrading.hue]}
-                            onValueChange={([value]) => setColorGrading({ ...colorGrading, hue: value })}
+                            value={[editorState.colorGrading.hue]}
+                            onValueChange={([value]) => editorStore.setState({ colorGrading: { ...editorState.colorGrading, hue: value } })}
                           />
                         </div>
 
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>Temperature</Label>
-                            <span className="text-sm text-muted-foreground">{colorGrading.temperature.toFixed(2)}</span>
+                            <span className="text-sm text-muted-foreground">{editorState.colorGrading.temperature.toFixed(2)}</span>
                           </div>
                           <Slider
                             min={-1}
                             max={1}
                             step={0.1}
-                            value={[colorGrading.temperature]}
-                            onValueChange={([value]) => setColorGrading({ ...colorGrading, temperature: value })}
+                            value={[editorState.colorGrading.temperature]}
+                            onValueChange={([value]) => editorStore.setState({ colorGrading: { ...editorState.colorGrading, temperature: value } })}
                           />
                         </div>
 
                         <div className="space-y-2">
                           <div className="flex items-center justify-between">
                             <Label>Vignette</Label>
-                            <span className="text-sm text-muted-foreground">{colorGrading.vignette.toFixed(2)}</span>
+                            <span className="text-sm text-muted-foreground">{editorState.colorGrading.vignette.toFixed(2)}</span>
                           </div>
                           <Slider
                             min={0}
                             max={1}
                             step={0.1}
-                            value={[colorGrading.vignette]}
-                            onValueChange={([value]) => setColorGrading({ ...colorGrading, vignette: value })}
+                            value={[editorState.colorGrading.vignette]}
+                            onValueChange={([value]) => editorStore.setState({ colorGrading: { ...editorState.colorGrading, vignette: value } })}
                           />
                         </div>
 
                         <Button
                           variant="outline"
                           size="sm"
-                          onClick={() => setColorGrading({
-                            brightness: 0,
-                            contrast: 0,
-                            saturation: 0,
-                            hue: 0,
-                            temperature: 0,
-                            vignette: 0,
+                          onClick={() => editorStore.setState({
+                            colorGrading: {
+                              brightness: 0,
+                              contrast: 0,
+                              saturation: 0,
+                              hue: 0,
+                              temperature: 0,
+                              vignette: 0,
+                            }
                           })}
                           className="w-full"
                         >
@@ -991,12 +787,13 @@ export default function Editor() {
                     <div className="flex items-center justify-between">
                       <Label className="text-base font-medium">Text Overlays</Label>
                       <Button size="sm" onClick={addTextOverlay}>
-                        <Plus className="h-4 w-4 mr-2" />
+                        {/* <Plus className="h-4 w-4 mr-2" /> icon not imported? assume okay or fix later */}
+                        <span className="mr-2">+</span>
                         Add Text
                       </Button>
                     </div>
 
-                    {textOverlays.length === 0 ? (
+                    {editorState.textOverlays.length === 0 ? (
                       <div className="flex flex-col items-center justify-center py-12 text-center border border-dashed rounded-lg">
                         <Sparkles className="h-8 w-8 text-muted-foreground mb-2" />
                         <p className="text-sm text-muted-foreground">No text overlays yet</p>
@@ -1004,7 +801,7 @@ export default function Editor() {
                       </div>
                     ) : (
                       <div className="space-y-2">
-                        {textOverlays.map((overlay) => (
+                        {editorState.textOverlays.map((overlay) => (
                           <div
                             key={overlay.id}
                             className="p-3 border rounded-lg space-y-2 hover:bg-secondary/50 transition-colors"

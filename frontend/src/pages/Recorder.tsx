@@ -35,6 +35,7 @@ import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Label } from "@/components/ui/label";
 import { ParticleSystem } from "@/lib/effects/particles";
+import { generateChapters } from "@/lib/composition/analysis";
 
 type RecordingState = "idle" | "selecting" | "ready" | "countdown" | "recording" | "paused" | "stopped";
 type AudioSource = "system" | "microphone" | "both" | "none";
@@ -51,6 +52,13 @@ export interface ClickData {
     tagName?: string;
     text?: string;
     className?: string;
+    rect?: { // Normalized 0-1
+      left: number;
+      top: number;
+      width: number;
+      height: number;
+    };
+    semanticType?: "primary" | "secondary" | "danger" | "neutral" | "text";
   };
 }
 
@@ -62,10 +70,112 @@ export interface MoveData {
   screenHeight: number;
 }
 
-interface RecordingMarker {
+export interface RecordingMarker {
   timestamp: number;
   label: string;
 }
+
+export interface EffectAction {
+  zoom?: number;
+  blurBackground?: number;
+  spotlight?: boolean;
+  holdMs?: number;
+}
+
+export interface EffectRule {
+  selector: string;
+  onEnter?: EffectAction;
+  onLeave?: EffectAction;
+  priority?: number; // Higher priority wins
+}
+
+export interface EffectEvent {
+  timestamp: number;
+  type: "enter" | "leave";
+  selector: string;
+  action?: EffectAction;
+  rect?: {
+    left: number;
+    top: number;
+    width: number;
+    height: number;
+  };
+}
+
+// ⚡️ EFFECT RULES CONFIGURATION
+const EFFECT_RULES: EffectRule[] = [
+  {
+    selector: '[data-demo-focus], [data-focus-target]',
+    priority: 100,
+    onEnter: { zoom: 1.6, blurBackground: 6, spotlight: true },
+    onLeave: { zoom: 1.0 }
+  },
+  {
+    selector: 'input, textarea, [contenteditable="true"]',
+    priority: 50,
+    onEnter: { zoom: 1.45, spotlight: true },
+    onLeave: { zoom: 1.1 }
+  },
+  {
+    selector: 'button, a, [role="button"]',
+    priority: 10,
+    onEnter: { zoom: 1.35 },
+    onLeave: { zoom: 1.0 }
+  },
+  // Default/Fallback rules can increase depth
+  {
+    selector: 'p, h1, h2, h3, h4, h5, h6, li',
+    priority: 1,
+    onEnter: { zoom: 1.1 },
+    onLeave: { zoom: 1.0 }
+  }
+];
+
+// 🎯 PRODUCTION CONSTANTS - Centralized configuration for maintainability
+const CAMERA_CONFIG = {
+  // Zoom thresholds
+  ZOOM_TARGET_CLICK: 1.3, // Base zoom (conservative) - can boost to 1.4 for small targets/slow cursor
+  ZOOM_MAX: 2.0, // Cap at 2.0 for UI demos (ScreenStudio rarely exceeds ~1.8-2.0)
+  ZOOM_MIN: 1.0,
+  ZOOM_SUPPRESS_THRESHOLD: 1.25, // Don't zoom if already above this
+  ZOOM_WELL_CENTERED_THRESHOLD: 1.1, // Don't zoom if below this and well-centered
+  ZOOM_RAPID_CLICK_THRESHOLD: 1.15, // Suppress zoom for rapid clicks if above this
+
+  // Zoom suppression distances (normalized 0-1)
+  CENTER_DISTANCE_THRESHOLD: 0.3, // Within 30% of center = well-centered
+  RAPID_CLICK_INTERVAL_MS: 300, // Rapid clicks within this time
+
+  // Zoom state timing (ms)
+  CLICK_CLUSTER_MS: 1000, // Click cluster duration
+
+  // Spring-damper physics
+  ZOOM_STIFFNESS: 0.12,
+  ZOOM_DAMPING: 0.85,
+  CAMERA_STIFFNESS_MIN: 0.12,
+  CAMERA_STIFFNESS_MAX: 0.22,
+  CAMERA_DAMPING: 0.75, // Increased from 0.7 for calmer, less twitchy camera
+  CURSOR_STIFFNESS: 0.15, // Higher = cursor leads camera
+  CURSOR_DAMPING: 0.8,
+  DISTANCE_STIFFNESS_THRESHOLD: 300, // px - reduced from 400 for snappier diagonal/top-to-bottom moves
+
+
+  // Edge behavior
+  EDGE_PADDING: 50, // px - inner boundary for falloff
+
+  // Probabilistic zoom suppression (ScreenStudio-style restraint)
+  PROBABILISTIC_ZOOM_SUPPRESS_CHANCE: 0.25, // 25% chance to suppress zoom even if eligible
+
+  // Animation
+  TARGET_FPS: 60,
+  FRAME_TIME_MS: 1000 / 60,
+  DIMENSIONS_CACHE_MS: 500, // Cache dimensions for this duration
+
+  // Position update thresholds
+  ZOOM_UPDATE_THRESHOLD: 0.01,
+  CAMERA_UPDATE_THRESHOLD: 0.5, // px
+  CURSOR_UPDATE_THRESHOLD: 0.001, // normalized
+  SPRING_SETTLE_THRESHOLD: 0.001,
+} as const;
 
 export default function Recorder() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -107,22 +217,80 @@ export default function Recorder() {
   const [cursorIndicatorPos, setCursorIndicatorPos] = useState<{ x: number; y: number } | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
-  // Zoom state machine: FOCUSED -> HOLD -> DECAY -> NEUTRAL
-  type ZoomState = "FOCUSED" | "HOLD" | "DECAY" | "NEUTRAL";
+  // Simplified zoom state machine: FOCUSED or NEUTRAL
+  type ZoomState = "FOCUSED" | "NEUTRAL";
   const [zoomState, setZoomState] = useState<ZoomState>("NEUTRAL");
-  
+
   // Intent tracking refs
   const lastIntentTimeRef = useRef<number>(0);
   const lastClickClusterTimeRef = useRef<number>(0);
   const lastScrollTimeRef = useRef<number>(0);
   const focusPointRef = useRef<{ x: number; y: number } | null>(null);
-  const cursorDwellStartRef = useRef<number | null>(null);
-  const cursorDwellPositionRef = useRef<{ x: number; y: number } | null>(null);
-  const zoomTargetRef = useRef<number>(1); // Target zoom level (for partial zoom-out)
-  const holdStartTimeRef = useRef<number | null>(null);
+  const zoomTargetRef = useRef<number>(1); // Target zoom level
+  const clickedElementBoundsRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null); // Track clicked element bounds
   const cameraOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const neutralCameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isScrollingRef = useRef<boolean>(false);
+
+  // Performance optimization refs for camera system
+  const currentZoomRef = useRef<number>(1);
+  const zoomStateRef = useRef<ZoomState>("NEUTRAL");
+  const containerDimensionsRef = useRef<{ width: number; height: number } | null>(null);
+  const videoDimensionsRef = useRef<{ width: number; height: number; aspect: number } | null>(null);
+  const lastDimensionsUpdateRef = useRef<number>(0);
+  const transformCacheRef = useRef<{ x: number; y: number; scale: number }>({ x: 0, y: 0, scale: 1 });
+  const transitionStateRef = useRef<string | null>(null);
+
+  // Spring-damper velocity tracking for smooth camera motion
+  const cameraVelocityRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const zoomVelocityRef = useRef<number>(0);
+
+  // Cursor indicator smoothing refs (for cursor to lead camera)
+  const cursorIndicatorSmoothPosRef = useRef<{ x: number; y: number } | null>(null);
+  const cursorIndicatorVelocityRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Helper function: linear interpolation
+  const lerp = (a: number, b: number, t: number): number => {
+    return a + (b - a) * t;
+  };
+
+  // Helper function: clamp value between min and max
+  const clamp = (value: number, min: number, max: number): number => {
+    return Math.min(max, Math.max(min, value));
+  };
+
+  // Universal spring-damper smoothing function
+  // Uses velocity + damping instead of basic easing for natural, responsive motion
+  // 🛡️ PRODUCTION: Added validation and NaN protection
+  const smoothSpring = (
+    current: number,
+    velocity: number,
+    target: number,
+    stiffness: number = 0.15,
+    damping: number = 0.75
+  ): { current: number; velocity: number } => {
+    // Validate inputs to prevent NaN/Infinity
+    if (!Number.isFinite(current) || !Number.isFinite(velocity) || !Number.isFinite(target)) {
+      console.warn('smoothSpring: Invalid input detected', { current, velocity, target });
+      return { current: Number.isFinite(current) ? current : target, velocity: 0 };
+    }
+
+    // Clamp stiffness and damping to valid ranges
+    const safeStiffness = Math.max(0, Math.min(1, stiffness));
+    const safeDamping = Math.max(0, Math.min(1, damping));
+
+    const force = (target - current) * safeStiffness;
+    const newVelocity = velocity * safeDamping + force;
+    const newCurrent = current + newVelocity;
+
+    // Validate output
+    if (!Number.isFinite(newCurrent) || !Number.isFinite(newVelocity)) {
+      console.warn('smoothSpring: Invalid output detected', { newCurrent, newVelocity });
+      return { current: target, velocity: 0 };
+    }
+
+    return { current: newCurrent, velocity: newVelocity };
+  };
 
   const mediaStreamRef = useRef<MediaStream | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -133,43 +301,58 @@ export default function Recorder() {
   const chunksRef = useRef<Blob[]>([]);
   const clicksRef = useRef<ClickData[]>([]);
   const movesRef = useRef<MoveData[]>([]);
+  const effectsRef = useRef<EffectEvent[]>([]);
+  const activeEffectElementRef = useRef<Element | null>(null);
   const recordingStartTimeRef = useRef<number>(0);
   const lastClickTimeRef = useRef<number>(0);
   const lastMoveTimeRef = useRef<number>(0);
   const animationFrameRef = useRef<number | null>(null);
-  
+
   // Canvas recording refs - for recording the preview container
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasStreamRef = useRef<MediaStream | null>(null);
   const canvasAnimationFrameRef = useRef<number | null>(null);
-  
+
   // Refs for canvas drawing to access current values
   const zoomLevelRef = useRef(zoomLevel);
   const followCursorRef = useRef(followCursor);
   const currentCursorPosRef = useRef(currentCursorPos);
   const cursorIndicatorPosRef = useRef(cursorIndicatorPos);
-  
+
   // Advanced particle system for cursor trails
   const particleSystemRef = useRef<ParticleSystem | null>(null);
   const lastParticleUpdateRef = useRef<number>(0);
   const lastCursorPosForParticlesRef = useRef<{ x: number; y: number } | null>(null);
-  
+  const lastCursorMoveTimeRef = useRef<number>(0); // Track cursor movement timing for speed calculation
+  const cursorSpeedRef = useRef<number>(0); // Normalized cursor speed (0-1)
+
+  // Canvas performance optimization refs
+  const canvasVideoDimensionsRef = useRef<{ width: number; height: number; aspect: number } | null>(null);
+  const canvasGradientRef = useRef<CanvasGradient | null>(null);
+  const lastCanvasResizeRef = useRef<number>(0);
+  const canvasFrameTimeRef = useRef<number>(0);
+
   // Update refs when state changes
   useEffect(() => {
     zoomLevelRef.current = zoomLevel;
+    currentZoomRef.current = zoomLevel;
   }, [zoomLevel]);
-  
+
   useEffect(() => {
     followCursorRef.current = followCursor;
   }, [followCursor]);
-  
+
   useEffect(() => {
     currentCursorPosRef.current = currentCursorPos;
   }, [currentCursorPos]);
-  
+
   useEffect(() => {
     cursorIndicatorPosRef.current = cursorIndicatorPos;
   }, [cursorIndicatorPos]);
+
+  useEffect(() => {
+    zoomStateRef.current = zoomState;
+  }, [zoomState]);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -200,22 +383,22 @@ export default function Recorder() {
           // Estimate file size (rough calculation: ~1MB per minute for high quality)
           const sizeMultiplier = recordingQuality === "high" ? 1 : recordingQuality === "medium" ? 0.6 : 0.3;
           setEstimatedSize(Math.round(newTime * sizeMultiplier));
-          
+
           // Calculate recording quality score based on interactions
           const clicksPerMinute = clicksRef.current.length / (newTime / 60);
           const movesPerMinute = movesRef.current.length / (newTime / 60);
           const hasMarkers = markers.length > 0;
           const hasGoodPacing = clicksPerMinute > 2 && clicksPerMinute < 15; // Good pacing
           const hasMovement = movesPerMinute > 30; // Active movement
-          
+
           let score = 100;
           if (!hasGoodPacing) score -= 20;
           if (!hasMovement) score -= 15;
           if (!hasMarkers && newTime > 30) score -= 10; // Suggest markers for longer recordings
           if (micLevel < 5 && audioSource !== "none") score -= 10; // Low mic level
-          
+
           setRecordingQualityScore(Math.max(0, Math.min(100, score)));
-          
+
           return newTime;
         });
       }, 1000);
@@ -393,17 +576,27 @@ export default function Recorder() {
 
     const container = previewContainerRef.current;
     const video = videoPreviewRef.current;
-    const rect = container.getBoundingClientRect();
-    
-    // Create canvas with container dimensions
+
+    // Wait for video metadata to get actual resolution
+    if (video.readyState < 2) {
+      console.warn("Video metadata not ready, using container dimensions as fallback");
+    }
+
+    // Use ACTUAL video resolution for high quality recording (not container size)
+    const videoWidth = video.videoWidth || 1920; // Fallback to 1920p
+    const videoHeight = video.videoHeight || 1080; // Fallback to 1080p
+
+    // Create canvas with actual video resolution for best quality
     const canvas = document.createElement('canvas');
-    canvas.width = rect.width;
-    canvas.height = rect.height;
+    canvas.width = videoWidth;
+    canvas.height = videoHeight;
     canvasRef.current = canvas;
+
+    console.log(`Canvas created with video resolution: ${videoWidth}x${videoHeight} (actual video: ${video.videoWidth}x${video.videoHeight})`);
 
     const ctx = canvas.getContext('2d');
     if (!ctx) return null;
-    
+
     // Initialize particle system if cursor trail is enabled
     if (cursorTrail && !particleSystemRef.current) {
       particleSystemRef.current = new ParticleSystem({
@@ -419,8 +612,8 @@ export default function Recorder() {
       });
     }
 
-    // Start capturing the preview container to canvas
-    const drawFrame = () => {
+    // Start capturing the preview container to canvas (OPTIMIZED)
+    const drawFrame = (timestamp: number) => {
       // Check if we should continue drawing (recording state will be set before MediaRecorder starts)
       // Use a ref to track if we should continue drawing
       if (!ctx || !video || !container) {
@@ -431,7 +624,7 @@ export default function Recorder() {
         }
         return;
       }
-      
+
       // Check recording state - but allow drawing during countdown/ready states too
       // The actual recording state check happens in startRecordingActual
       const shouldDraw = recordingState === "recording" || recordingState === "countdown" || recordingState === "ready";
@@ -444,21 +637,39 @@ export default function Recorder() {
         return;
       }
 
-      // Update canvas size if container resized
-      const currentRect = container.getBoundingClientRect();
-      if (canvas.width !== currentRect.width || canvas.height !== currentRect.height) {
-        canvas.width = currentRect.width;
-        canvas.height = currentRect.height;
+      // Throttle canvas updates for better performance (target 30fps for canvas)
+      const deltaTime = timestamp - canvasFrameTimeRef.current;
+      const targetFrameTime = 1000 / 30; // 30fps for canvas recording
+      if (deltaTime < targetFrameTime) {
+        canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
+        return;
+      }
+      canvasFrameTimeRef.current = timestamp;
+
+      // Canvas size should match video resolution (not container size)
+      // Only resize if video resolution changed
+      const videoWidth = video.videoWidth || canvas.width;
+      const videoHeight = video.videoHeight || canvas.height;
+      const needsResize = canvas.width !== videoWidth || canvas.height !== videoHeight;
+
+      if (needsResize && videoWidth > 0 && videoHeight > 0) {
+        canvas.width = videoWidth;
+        canvas.height = videoHeight;
+        canvasGradientRef.current = null; // Invalidate gradient cache
+        lastCanvasResizeRef.current = Date.now();
+        console.log(`Canvas resized to match video: ${videoWidth}x${videoHeight}`);
       }
 
       // Clear canvas
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // Draw background gradient (matching the container style)
-      const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
-      gradient.addColorStop(0, '#f8f9fa');
-      gradient.addColorStop(1, '#e9ecef');
-      ctx.fillStyle = gradient;
+      // Draw background gradient (cached for performance)
+      if (!canvasGradientRef.current || needsResize) {
+        canvasGradientRef.current = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+        canvasGradientRef.current.addColorStop(0, '#f8f9fa');
+        canvasGradientRef.current.addColorStop(1, '#e9ecef');
+      }
+      ctx.fillStyle = canvasGradientRef.current;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       // Ensure video has valid dimensions
@@ -468,24 +679,39 @@ export default function Recorder() {
         return;
       }
 
-      // Calculate video display dimensions (accounting for aspect ratio and padding)
-      const padding = 16; // 1rem = 16px
-      const availableWidth = canvas.width - (padding * 2);
-      const availableHeight = canvas.height - (padding * 2);
-      
+      // Use full canvas size (which matches video resolution) - no padding needed for recording
+      // Canvas is already at video resolution, so draw video at full size
       const videoAspect = video.videoWidth / video.videoHeight || 16 / 9;
-      const containerAspect = availableWidth / availableHeight;
-      
-      let videoDisplayWidth: number;
-      let videoDisplayHeight: number;
-      
-      if (videoAspect > containerAspect) {
-        videoDisplayWidth = availableWidth;
-        videoDisplayHeight = availableWidth / videoAspect;
-      } else {
-        videoDisplayHeight = availableHeight;
-        videoDisplayWidth = availableHeight * videoAspect;
+      const canvasAspect = canvas.width / canvas.height;
+
+      // Cache video dimensions (only recalculate if video size changed or canvas resized)
+      if (!canvasVideoDimensionsRef.current ||
+        canvasVideoDimensionsRef.current.aspect !== videoAspect ||
+        needsResize) {
+        // For recording, use full canvas/video resolution
+        let videoDisplayWidth: number;
+        let videoDisplayHeight: number;
+
+        // Maintain aspect ratio while filling canvas
+        if (videoAspect > canvasAspect) {
+          // Video is wider - fit to width
+          videoDisplayWidth = canvas.width;
+          videoDisplayHeight = canvas.width / videoAspect;
+        } else {
+          // Video is taller - fit to height
+          videoDisplayHeight = canvas.height;
+          videoDisplayWidth = canvas.height * videoAspect;
+        }
+
+        canvasVideoDimensionsRef.current = {
+          width: videoDisplayWidth,
+          height: videoDisplayHeight,
+          aspect: videoAspect
+        };
       }
+
+      const videoDisplayWidth = canvasVideoDimensionsRef.current.width;
+      const videoDisplayHeight = canvasVideoDimensionsRef.current.height;
 
       // Apply the same transform as the video element (zoom, pan)
       // Read from refs to get current values
@@ -493,22 +719,26 @@ export default function Recorder() {
       const scaledWidth = videoDisplayWidth * currentZoom;
       const scaledHeight = videoDisplayHeight * currentZoom;
 
-      // Calculate offset for cursor following
+      // Calculate offset for cursor following (using canvas/video resolution)
       let offsetX = 0;
       let offsetY = 0;
-      
+
       if (followCursorRef.current && currentCursorPosRef.current) {
-        const containerWidth = canvas.width;
-        const containerHeight = canvas.height;
-        const cursorX = currentCursorPosRef.current.x * containerWidth;
-        const cursorY = currentCursorPosRef.current.y * containerHeight;
-        
-        offsetX = (containerWidth / 2) - (cursorX * currentZoom);
-        offsetY = (containerHeight / 2) - (cursorY * currentZoom);
-        
-        // Clamp offsets
-        const maxOffsetX = Math.max(0, (scaledWidth - containerWidth) / 2);
-        const maxOffsetY = Math.max(0, (scaledHeight - containerHeight) / 2);
+        // Use canvas dimensions (which match video resolution)
+        const canvasWidth = canvas.width;
+        const canvasHeight = canvas.height;
+
+        // Convert normalized cursor position (0-1 relative to window) to canvas coordinates
+        const cursorX = currentCursorPosRef.current.x * canvasWidth;
+        const cursorY = currentCursorPosRef.current.y * canvasHeight;
+
+        // Calculate offset to center cursor (accounting for zoom)
+        offsetX = (canvasWidth / 2) - (cursorX * currentZoom);
+        offsetY = (canvasHeight / 2) - (cursorY * currentZoom);
+
+        // Clamp offsets to prevent panning beyond video bounds
+        const maxOffsetX = Math.max(0, (scaledWidth - canvasWidth) / 2);
+        const maxOffsetY = Math.max(0, (scaledHeight - canvasHeight) / 2);
         offsetX = Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX));
         offsetY = Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY));
       }
@@ -517,11 +747,11 @@ export default function Recorder() {
       ctx.save();
       ctx.translate(canvas.width / 2 + offsetX, canvas.height / 2 + offsetY);
       ctx.scale(currentZoom, currentZoom);
-      
+
       // Draw video frame
       const videoX = -videoDisplayWidth / 2;
       const videoY = -videoDisplayHeight / 2;
-      
+
       // Draw rounded rectangle background for video
       const radius = 8;
       ctx.beginPath();
@@ -538,32 +768,34 @@ export default function Recorder() {
       ctx.fillStyle = '#000';
       ctx.fill();
       ctx.clip();
-      
+
       ctx.drawImage(video, videoX, videoY, videoDisplayWidth, videoDisplayHeight);
       ctx.restore();
 
       // Draw cursor indicator if following (during recording)
-      if (followCursorRef.current && cursorIndicatorPosRef.current && (recordingState === "recording" || recordingState === "countdown")) {
-        const cursorX = cursorIndicatorPosRef.current.x * canvas.width;
-        const cursorY = cursorIndicatorPosRef.current.y * canvas.height;
-        
+      // Use currentCursorPos for accurate positioning (matches actual cursor tracking)
+      if (followCursorRef.current && currentCursorPosRef.current && (recordingState === "recording" || recordingState === "countdown")) {
+        // Convert normalized window coordinates to canvas coordinates
+        const cursorX = currentCursorPosRef.current.x * canvas.width;
+        const cursorY = currentCursorPosRef.current.y * canvas.height;
+
         // Draw cursor indicator
         ctx.save();
         ctx.translate(cursorX, cursorY);
-        
+
         // Outer ring
         ctx.beginPath();
         ctx.arc(0, 0, 16, 0, Math.PI * 2);
         ctx.strokeStyle = 'rgba(59, 130, 246, 0.6)';
         ctx.lineWidth = 2;
         ctx.stroke();
-        
+
         // Inner dot
         ctx.beginPath();
         ctx.arc(0, 0, 6, 0, Math.PI * 2);
         ctx.fillStyle = '#3b82f6';
         ctx.fill();
-        
+
         // Crosshair
         ctx.strokeStyle = 'rgba(59, 130, 246, 0.3)';
         ctx.lineWidth = 1;
@@ -573,68 +805,88 @@ export default function Recorder() {
         ctx.moveTo(0, -32);
         ctx.lineTo(0, 32);
         ctx.stroke();
-        
+
         ctx.restore();
       }
 
-      // Draw click ripples with enhanced effects
+      // Draw click ripples with enhanced effects (optimized - only draw visible ripples)
       const currentTime = (Date.now() - recordingStartTimeRef.current) / 1000;
-      clicksRef.current.forEach((click) => {
+      const maxRadius = Math.min(canvas.width, canvas.height) * 0.08;
+      const RIPPLE_DELAY = 0.075; // 75ms delay - let zoom initiate first
+
+      // Filter clicks to only those that are visible (performance optimization)
+      const visibleClicks = clicksRef.current.filter((click) => {
         const timeSince = currentTime - click.timestamp;
-        if (timeSince >= 0 && timeSince < 0.8) {
-          const progress = Math.min(1, timeSince / 0.6);
-          const maxRadius = Math.min(canvas.width, canvas.height) * 0.08;
-          const currentRadius = maxRadius * (0.2 + 0.8 * progress);
-          const opacity = 1 - Math.pow(progress, 3);
-          
-          const clickX = click.x * canvas.width;
-          const clickY = click.y * canvas.height;
-          
-          ctx.save();
-          ctx.globalAlpha = opacity;
-          
-          // Determine color based on click type
-          const isRightClick = click.type === "rightClick";
-          const color = isRightClick ? "239, 68, 68" : "59, 130, 246";
-          
-          // Enhanced ripple with multiple rings
-          for (let ring = 0; ring < 3; ring++) {
-            const ringProgress = progress + (ring * 0.2);
-            if (ringProgress > 1) continue;
-            const ringRadius = currentRadius * (1 + ring * 0.3);
-            const ringOpacity = opacity * (1 - ring * 0.3);
-            
-            ctx.beginPath();
-            ctx.arc(clickX, clickY, ringRadius, 0, Math.PI * 2);
-            ctx.strokeStyle = `rgba(${color}, ${ringOpacity * 0.6})`;
-            ctx.lineWidth = 2 - ring * 0.5;
-            ctx.stroke();
-          }
-          
-          // Outer ring
-          ctx.beginPath();
-          ctx.arc(clickX, clickY, currentRadius, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(${color}, ${opacity})`;
-          ctx.lineWidth = 2;
-          ctx.stroke();
-          ctx.fillStyle = `rgba(${color}, ${opacity * 0.3})`;
-          ctx.fill();
-          
-          // Inner ring with glow
-          ctx.beginPath();
-          ctx.arc(clickX, clickY, currentRadius * 0.7, 0, Math.PI * 2);
-          ctx.strokeStyle = `rgba(${color}, ${opacity * 0.5})`;
-          ctx.lineWidth = 1;
-          ctx.stroke();
-          
-          // Center dot
-          ctx.beginPath();
-          ctx.arc(clickX, clickY, 3, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(${color}, ${opacity})`;
-          ctx.fill();
-          
-          ctx.restore();
+        return timeSince >= RIPPLE_DELAY && timeSince < 0.8 + RIPPLE_DELAY;
+      });
+
+      visibleClicks.forEach((click) => {
+        const timeSince = currentTime - click.timestamp;
+        // Delay ripple start by 75ms to prevent sensory overload
+        const adjustedTime = Math.max(0, timeSince - RIPPLE_DELAY);
+        const progress = Math.min(1, adjustedTime / 0.6);
+        const currentRadius = maxRadius * (0.2 + 0.8 * progress);
+        const opacity = 1 - Math.pow(progress, 3);
+
+        // Skip drawing if opacity is too low (performance optimization)
+        if (opacity < 0.01) return;
+
+        const clickX = click.x * canvas.width;
+        const clickY = click.y * canvas.height;
+
+        ctx.save();
+        ctx.globalAlpha = opacity;
+
+        // Determine color based on click type and semantics
+        const isRightClick = click.type === "rightClick";
+        let color = "59, 130, 246"; // Default Blue
+
+        if (isRightClick || click.elementInfo?.semanticType === "danger") {
+          color = "239, 68, 68"; // Red
+        } else if (click.elementInfo?.semanticType === "secondary") {
+          color = "156, 163, 175"; // Gray
         }
+
+        // Optimized ripple drawing - batch similar operations
+        const colorRgba = `rgba(${color}, `;
+
+        // Enhanced ripple with multiple rings (optimized)
+        for (let ring = 0; ring < 3; ring++) {
+          const ringProgress = progress + (ring * 0.2);
+          if (ringProgress > 1) continue;
+          const ringRadius = currentRadius * (1 + ring * 0.3);
+          const ringOpacity = opacity * (1 - ring * 0.3);
+
+          ctx.beginPath();
+          ctx.arc(clickX, clickY, ringRadius, 0, Math.PI * 2);
+          ctx.strokeStyle = `${colorRgba}${ringOpacity * 0.6})`;
+          ctx.lineWidth = 2 - ring * 0.5;
+          ctx.stroke();
+        }
+
+        // Outer ring
+        ctx.beginPath();
+        ctx.arc(clickX, clickY, currentRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = `${colorRgba}${opacity})`;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+        ctx.fillStyle = `${colorRgba}${opacity * 0.3})`;
+        ctx.fill();
+
+        // Inner ring with glow
+        ctx.beginPath();
+        ctx.arc(clickX, clickY, currentRadius * 0.7, 0, Math.PI * 2);
+        ctx.strokeStyle = `${colorRgba}${opacity * 0.5})`;
+        ctx.lineWidth = 1;
+        ctx.stroke();
+
+        // Center dot
+        ctx.beginPath();
+        ctx.arc(clickX, clickY, 3, 0, Math.PI * 2);
+        ctx.fillStyle = `${colorRgba}${opacity})`;
+        ctx.fill();
+
+        ctx.restore();
       });
 
       // Draw particle trail if enabled
@@ -642,10 +894,10 @@ export default function Recorder() {
         const now = Date.now();
         const deltaTime = now - lastParticleUpdateRef.current;
         lastParticleUpdateRef.current = now;
-        
+
         const cursorX = currentCursorPosRef.current.x;
         const cursorY = currentCursorPosRef.current.y;
-        
+
         // Calculate velocity for particles
         let velocityX = 0;
         let velocityY = 0;
@@ -658,14 +910,14 @@ export default function Recorder() {
             velocityY = dy / dt;
           }
         }
-        
+
         // Spawn particles at cursor position
         particleSystemRef.current.spawn(cursorX, cursorY, velocityX * 0.1, velocityY * 0.1);
-        
+
         // Update and draw particles
         particleSystemRef.current.update(deltaTime);
         particleSystemRef.current.draw(ctx, canvas.width, canvas.height);
-        
+
         lastCursorPosForParticlesRef.current = { x: cursorX, y: cursorY };
       }
 
@@ -674,25 +926,28 @@ export default function Recorder() {
 
     // Get stream from canvas FIRST (before starting draw loop)
     // This ensures the stream is ready to receive frames
-    const stream = canvas.captureStream(recordingQuality === "high" ? 30 : recordingQuality === "medium" ? 24 : 15);
+    // Use higher FPS for better quality recording
+    const fps = recordingQuality === "high" ? 60 : recordingQuality === "medium" ? 30 : 24;
+    const stream = canvas.captureStream(fps);
     canvasStreamRef.current = stream;
-    
+
     // Verify stream has tracks
     if (stream.getVideoTracks().length === 0) {
       console.error("Canvas stream has no video tracks");
       return null;
     }
-    
+
     // Start drawing loop AFTER stream is created
     // This ensures frames are immediately available to the stream
     // Use requestAnimationFrame to start the loop
     canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
-    
+
     console.log("Canvas recording setup complete:", {
       canvasSize: `${canvas.width}x${canvas.height}`,
       videoSize: `${video.videoWidth}x${video.videoHeight}`,
       streamTracks: stream.getVideoTracks().length,
-      fps: recordingQuality === "high" ? 30 : recordingQuality === "medium" ? 24 : 15
+      fps: fps,
+      quality: recordingQuality
     });
 
     return stream;
@@ -706,7 +961,7 @@ export default function Recorder() {
 
     const container = previewContainerRef.current;
     const video = videoPreviewRef.current;
-    
+
     // Ensure video is ready
     if (video.readyState < 2) {
       // Video metadata not loaded yet, wait for it
@@ -725,7 +980,7 @@ export default function Recorder() {
         }, 5000);
       });
     }
-    
+
     return setupCanvasRecordingSync();
   }, [setupCanvasRecordingSync, cursorTrail]);
 
@@ -758,10 +1013,37 @@ export default function Recorder() {
     if (!target) return undefined;
 
     try {
+      const rect = target.getBoundingClientRect();
+      const clientWidth = window.innerWidth;
+      const clientHeight = window.innerHeight;
+
+      // Determine semantic type based on text content and element attributes
+      const text = target.textContent?.toLowerCase() || "";
+      const primaryKeywords = ["submit", "save", "create", "confirm", "login", "sign up", "continue", "next", "send"];
+      const dangerKeywords = ["delete", "remove", "cancel", "destroy", "stop"];
+
+      let semanticType: "primary" | "secondary" | "danger" | "neutral" | "text" = "neutral";
+      if (primaryKeywords.some(k => text.includes(k))) semanticType = "primary";
+      else if (dangerKeywords.some(k => text.includes(k))) semanticType = "danger";
+      else if (target.tagName === "BUTTON" || target.tagName === "A" || target.getAttribute("role") === "button") semanticType = "secondary";
+      else if (["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "PRE", "CODE", "BLOCKQUOTE", "INPUT", "TEXTAREA"].includes(target.tagName)) semanticType = "text";
+
+      // Safe processing of className which can be non-string for SVG elements
+      const safeClassName = typeof target.className === 'string'
+        ? target.className.slice(0, 50)
+        : (target.getAttribute('class') || '').slice(0, 50);
+
       return {
         tagName: target.tagName.toLowerCase(),
         text: target.textContent?.slice(0, 50) || undefined,
-        className: target.className?.slice(0, 50) || undefined,
+        className: safeClassName || undefined,
+        rect: {
+          left: rect.left / clientWidth,
+          top: rect.top / clientHeight,
+          width: rect.width / clientWidth,
+          height: rect.height / clientHeight
+        },
+        semanticType
       };
     } catch (e) {
       return undefined;
@@ -778,14 +1060,14 @@ export default function Recorder() {
     // Hard debounce (180ms)
     const now = Date.now();
     if (now - lastClickTimeRef.current < 180) return;
-    
+
     // Track interaction for smart insights
     setInteractionCount((prev) => prev + 1);
     if (lastClickTimeRef.current > 0) {
       const interval = now - lastClickTimeRef.current;
       setAvgClickInterval((prev) => prev === null ? interval : (prev + interval) / 2);
     }
-    
+
     lastClickTimeRef.current = now;
 
     // Normalize coordinates relative to client viewport (video bounding box)
@@ -813,27 +1095,129 @@ export default function Recorder() {
       // Update intent tracking
       lastIntentTimeRef.current = now;
       lastClickClusterTimeRef.current = now;
-      
+
       // Set focus point for this interaction
       focusPointRef.current = { x: normalizedX, y: normalizedY };
-      
-      // Cancel any ongoing zoom-out
-      if (zoomState === "DECAY" || zoomState === "HOLD") {
-        setZoomState("FOCUSED");
-      } else if (zoomState === "NEUTRAL") {
-        setZoomState("FOCUSED");
+
+      // 🎯 SCREENSTUDIO-STYLE: Suppress zoom if viewer already sees it clearly
+      // 🛡️ PRODUCTION: Robust zoom suppression with validation
+      const shouldZoom = (() => {
+        try {
+          // Validate inputs
+          if (!Number.isFinite(zoomLevel) || !Number.isFinite(normalizedX) || !Number.isFinite(normalizedY)) {
+            console.warn('shouldZoom: Invalid input detected', { zoomLevel, normalizedX, normalizedY });
+            return false; // Fail safe: don't zoom on invalid input
+          }
+
+          // Clamp normalized coordinates to valid range
+          const safeX = Math.max(0, Math.min(1, normalizedX));
+          const safeY = Math.max(0, Math.min(1, normalizedY));
+
+          // If already zoomed in significantly, don't zoom more
+          if (zoomLevel > CAMERA_CONFIG.ZOOM_SUPPRESS_THRESHOLD) {
+            return false;
+          }
+
+          // Check if cursor is already well-centered (within threshold of center)
+          if (currentCursorPos &&
+            Number.isFinite(currentCursorPos.x) &&
+            Number.isFinite(currentCursorPos.y)) {
+            const centerX = 0.5;
+            const centerY = 0.5;
+            const dx = Math.abs(safeX - centerX);
+            const dy = Math.abs(safeY - centerY);
+            const distanceFromCenter = Math.max(dx, dy);
+
+            // If cursor is already well-centered AND we're not zoomed, skip zoom
+            // This implements "if viewer already sees it clearly, don't zoom"
+            if (distanceFromCenter < CAMERA_CONFIG.CENTER_DISTANCE_THRESHOLD &&
+              zoomLevel <= CAMERA_CONFIG.ZOOM_WELL_CENTERED_THRESHOLD) {
+              return false;
+            }
+          }
+
+          // Check if this is a rapid click cluster (suppress some zooms)
+          const timeSinceLastClick = now - lastClickTimeRef.current;
+          if (Number.isFinite(timeSinceLastClick) &&
+            timeSinceLastClick < CAMERA_CONFIG.RAPID_CLICK_INTERVAL_MS &&
+            zoomLevel > CAMERA_CONFIG.ZOOM_RAPID_CLICK_THRESHOLD) {
+            // Rapid clicks - suppress zoom if already zoomed
+            return false;
+          }
+
+          // 🎯 Probabilistic zoom suppression (ScreenStudio-style restraint)
+          // Even if rules say "zoom", sometimes don't - values restraint over cleverness
+          if (Math.random() < CAMERA_CONFIG.PROBABILISTIC_ZOOM_SUPPRESS_CHANCE) {
+            return false;
+          }
+
+          // Default: allow zoom
+          return true;
+        } catch (error) {
+          console.error('shouldZoom: Error in zoom suppression logic', error);
+          return false; // Fail safe: don't zoom on error
+        }
+      })();
+
+      // Trigger zoom-in (event-driven) - only if shouldZoom is true
+      if (shouldZoom) {
+        try {
+          // Base zoom target (conservative)
+          let targetZoom: number = CAMERA_CONFIG.ZOOM_TARGET_CLICK;
+
+          // 🎯 Conditional boost: Strong zoom (1.4) only for small targets or slow cursor
+          // This makes strong zoom feel "earned" rather than default
+          const elementInfo = getElementInfo(event);
+          const isSlowCursor = cursorSpeedRef.current < 0.3; // Slow movement threshold
+
+          // Check if target is small (heuristic: check element bounding box if available)
+          let isSmallTarget = false;
+          try {
+            const target = event.target as HTMLElement;
+            if (target && target.getBoundingClientRect) {
+              const rect = target.getBoundingClientRect();
+              const viewportArea = window.innerWidth * window.innerHeight;
+              const elementArea = rect.width * rect.height;
+              // Consider element small if it's less than 5% of viewport
+              isSmallTarget = elementArea < viewportArea * 0.05;
+
+              // Store element bounds for zoom-out detection
+              clickedElementBoundsRef.current = {
+                left: rect.left,
+                top: rect.top,
+                right: rect.right,
+                bottom: rect.bottom
+              };
+            }
+          } catch (e) {
+            // Fallback: if we can't determine size, don't boost
+            isSmallTarget = false;
+            clickedElementBoundsRef.current = null;
+          }
+
+          // Boost zoom for small targets or slow, deliberate cursor movement
+          if (isSmallTarget || isSlowCursor) {
+            targetZoom = 1.4; // Strong zoom for precise interactions
+          }
+
+          // Clamp to max zoom
+          targetZoom = Math.max(
+            CAMERA_CONFIG.ZOOM_MIN,
+            Math.min(CAMERA_CONFIG.ZOOM_MAX, targetZoom)
+          );
+
+          zoomTargetRef.current = targetZoom;
+          setZoomState("FOCUSED");
+          // Reset velocity when starting new zoom-in for clean transition
+          zoomVelocityRef.current = 0;
+        } catch (error) {
+          console.error('handlePointerDown: Error setting zoom target', error);
+          // Continue without zoom on error
+        }
+      } else {
+        // If zoom is suppressed, clear element bounds
+        clickedElementBoundsRef.current = null;
       }
-      
-      // Trigger zoom-in (event-driven)
-      // Zoom to 1.4x for clicks (can be adjusted)
-      const targetZoom = 1.4;
-      zoomTargetRef.current = targetZoom;
-      setZoomLevel((prev) => {
-        // Smooth zoom-in with ease
-        const dz = targetZoom - prev;
-        const ease = 0.1; // Zoom-in ease (0.08-0.12 range)
-        return prev + dz * ease;
-      });
     }
   }, [recordingState, followCursor, zoomState]);
 
@@ -852,48 +1236,120 @@ export default function Recorder() {
     const normalizedX = Math.max(0, Math.min(1, event.clientX / clientWidth));
     const normalizedY = Math.max(0, Math.min(1, event.clientY / clientHeight));
 
-    movesRef.current.push({
-      x: normalizedX,
-      y: normalizedY,
-      timestamp: (now - recordingStartTimeRef.current) / 1000,
-      screenWidth: clientWidth,
-      screenHeight: clientHeight,
-    });
+    // [POLISH] Micro Jitter Removal
+    // Ignore updates if cursor moved less than 0.5% of viewport
+    let shouldRecord = true;
+    if (movesRef.current.length > 0) {
+      const lastMove = movesRef.current[movesRef.current.length - 1];
+      const dist = Math.sqrt(
+        Math.pow(normalizedX - lastMove.x, 2) +
+        Math.pow(normalizedY - lastMove.y, 2)
+      );
+      if (dist < 0.005) { // 0.5% threshold
+        shouldRecord = false;
+      }
+    }
+
+    if (shouldRecord) {
+      movesRef.current.push({
+        x: normalizedX,
+        y: normalizedY,
+        timestamp: (now - recordingStartTimeRef.current) / 1000,
+        screenWidth: clientWidth,
+        screenHeight: clientHeight,
+      });
+
+      // ⚡️ EFFECT ENGINE: Detect Elements & Apply Rules
+      // We do this inside the throttling block to avoid excessive DOM checks (expensive)
+      const element = document.elementFromPoint(event.clientX, event.clientY);
+
+      if (element && element !== activeEffectElementRef.current) {
+        // Find matching rule with highest priority
+        const matchedRule = EFFECT_RULES
+          .filter(rule => element.matches(rule.selector))
+          .sort((a, b) => (b.priority || 0) - (a.priority || 0))[0];
+
+        if (matchedRule) {
+          // New valid target found
+          activeEffectElementRef.current = element;
+          const rect = element.getBoundingClientRect();
+
+          // Record ENTRY event
+          effectsRef.current.push({
+            timestamp: (now - recordingStartTimeRef.current) / 1000,
+            type: "enter",
+            selector: matchedRule.selector,
+            action: matchedRule.onEnter,
+            rect: {
+              left: rect.left / clientWidth,
+              top: rect.top / clientHeight,
+              width: rect.width / clientWidth,
+              height: rect.height / clientHeight
+            }
+          });
+
+          // Apply immediate visual feedback (Optional - for recorder preview)
+          // handleEffectPreview(matchedRule.onEnter); 
+        } else if (activeEffectElementRef.current) {
+          // We had an active element, but now we are on something that matches NO rules (or null)
+          // Record LEAVE event
+          effectsRef.current.push({
+            timestamp: (now - recordingStartTimeRef.current) / 1000,
+            type: "leave",
+            selector: "unknown", // or previous selector if we tracked it
+          });
+          activeEffectElementRef.current = null;
+        }
+      } else if (!element && activeEffectElementRef.current) {
+        // Moved off screen or to void
+        effectsRef.current.push({
+          timestamp: (now - recordingStartTimeRef.current) / 1000,
+          type: "leave",
+          selector: "void",
+        });
+        activeEffectElementRef.current = null;
+      }
+    }
 
     // Update current cursor position for preview following
     setCurrentCursorPos({ x: normalizedX, y: normalizedY });
 
-    // 🧠 Intent tracking: Detect focused movement and cursor dwell
-    if (followCursor) {
-      const currentPos = { x: normalizedX, y: normalizedY };
-      
-      // Check if cursor is moving (focused movement)
-      const movementThreshold = 0.01; // 1% of viewport
-      if (cursorDwellPositionRef.current) {
-        const dx = Math.abs(currentPos.x - cursorDwellPositionRef.current.x);
-        const dy = Math.abs(currentPos.y - cursorDwellPositionRef.current.y);
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        
-        if (distance > movementThreshold) {
-          // Cursor is moving - this is focused movement (intent active)
-          lastIntentTimeRef.current = now;
-          cursorDwellStartRef.current = null;
-          cursorDwellPositionRef.current = currentPos;
-        } else {
-          // Cursor is dwelling (staying in place - could be reading)
-          // Don't reset intent immediately, but track dwell start
-          if (cursorDwellStartRef.current === null) {
-            cursorDwellStartRef.current = now;
-          }
-          cursorDwellPositionRef.current = currentPos;
-          // Note: Dwell doesn't reset intent - reading is valid intent
-        }
-      } else {
-        // First position - initialize
-        cursorDwellStartRef.current = now;
-        cursorDwellPositionRef.current = currentPos;
-        lastIntentTimeRef.current = now; // Initial position is intent
+    // Track cursor speed for conditional zoom boost
+    const nowForSpeed = Date.now();
+    if (lastCursorPosForParticlesRef.current && lastCursorMoveTimeRef.current > 0) {
+      const dt = Math.max(1, nowForSpeed - lastCursorMoveTimeRef.current) / 1000; // seconds
+      const dx = normalizedX - lastCursorPosForParticlesRef.current.x;
+      const dy = normalizedY - lastCursorPosForParticlesRef.current.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      const speed = distance / dt; // normalized units per second
+      // Normalize speed (assuming max ~10 units/sec for typical mouse movement)
+      cursorSpeedRef.current = Math.min(1, speed / 10);
+    }
+    lastCursorMoveTimeRef.current = nowForSpeed;
+
+    // 🎯 Check if cursor left the clicked element - zoom out if so
+    if (followCursor && zoomState === "FOCUSED" && clickedElementBoundsRef.current) {
+      const bounds = clickedElementBoundsRef.current;
+      const cursorX = event.clientX;
+      const cursorY = event.clientY;
+
+      // Check if cursor is outside the element bounds (with small padding for tolerance)
+      const padding = 10; // pixels tolerance
+      if (cursorX < bounds.left - padding ||
+        cursorX > bounds.right + padding ||
+        cursorY < bounds.top - padding ||
+        cursorY > bounds.bottom + padding) {
+        // Cursor left the element - zoom out
+        setZoomState("NEUTRAL");
+        zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+        clickedElementBoundsRef.current = null;
+        zoomVelocityRef.current = 0;
       }
+    }
+
+    // 🧠 Intent tracking: Update intent time on movement
+    if (followCursor) {
+      lastIntentTimeRef.current = now;
     }
   }, [recordingState, followCursor, zoomState]);
 
@@ -903,16 +1359,16 @@ export default function Recorder() {
       // Track cursor movement
       window.addEventListener("pointerdown", handlePointerDown, true);
       window.addEventListener("pointermove", handlePointerMove, true);
-      
+
       // Also track mouse movement (fallback)
       const handleMouseMove = (event: MouseEvent) => {
         if (recordingState !== "recording") return;
-        
+
         const clientWidth = window.innerWidth;
         const clientHeight = window.innerHeight;
         const normalizedX = Math.max(0, Math.min(1, event.clientX / clientWidth));
         const normalizedY = Math.max(0, Math.min(1, event.clientY / clientHeight));
-        
+
         // Update current cursor position even if not recording move data
         setCurrentCursorPos({ x: normalizedX, y: normalizedY });
       };
@@ -923,28 +1379,24 @@ export default function Recorder() {
       let scrollTimeout: NodeJS.Timeout | null = null;
       const handleScroll = () => {
         if (!followCursor) return;
-        
+
         const now = Date.now();
         lastScrollTimeRef.current = now;
         isScrollingRef.current = true;
-        
-        // Cancel zoom-in immediately
-        if (zoomState === "FOCUSED" || zoomState === "HOLD" || zoomState === "DECAY") {
+
+        // Cancel zoom-in immediately on scroll
+        if (zoomState === "FOCUSED") {
           setZoomState("NEUTRAL");
-          zoomTargetRef.current = 1;
+          zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+          clickedElementBoundsRef.current = null;
         }
-        
+
         // Clear scroll timeout
         if (scrollTimeout) clearTimeout(scrollTimeout);
-        
+
         // Mark scroll as settled after 400ms
         scrollTimeout = setTimeout(() => {
           isScrollingRef.current = false;
-          // Start zoom-out after scroll settles
-          if (zoomLevel > 1) {
-            setZoomState("HOLD");
-            holdStartTimeRef.current = Date.now();
-          }
         }, 400);
       };
 
@@ -974,156 +1426,42 @@ export default function Recorder() {
     }
   }, [recordingState, handlePointerDown, handlePointerMove, currentCursorPos, followCursor, zoomState, zoomLevel]);
 
-  // 🧠 ZOOM-OUT STATE MACHINE: Intent-driven zoom-out logic
+  // Reset zoom state when not following or not recording
   useEffect(() => {
     if (!followCursor || recordingState !== "recording") {
-      // Reset zoom state when not following or not recording
       if (zoomState !== "NEUTRAL") {
         setZoomState("NEUTRAL");
-        setZoomLevel(1);
-        zoomTargetRef.current = 1;
+        zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+        clickedElementBoundsRef.current = null;
       }
-      return;
     }
+  }, [followCursor, recordingState, zoomState]);
 
-    const checkInterval = setInterval(() => {
-      const now = Date.now();
-      const timeSinceLastIntent = now - lastIntentTimeRef.current;
-      const timeSinceLastClick = now - lastClickTimeRef.current;
-      const timeSinceLastScroll = now - lastScrollTimeRef.current;
-      
-      // Don't process if scrolling
-      if (isScrollingRef.current) return;
-
-      // ✅ TRIGGER 1: Intent Idle (Primary Trigger)
-      const T_idle = 1500; // 1200-1800ms range, using 1500ms as default
-      
-      // Check if cursor is actively dwelling (reading) - this is valid intent
-      const isCursorDwelling = cursorDwellStartRef.current !== null && 
-                               cursorDwellPositionRef.current !== null;
-      const dwellDuration = isCursorDwelling && cursorDwellStartRef.current 
-                          ? now - cursorDwellStartRef.current 
-                          : Infinity;
-      
-      // Intent is idle if: no recent clicks, no recent movement, and not dwelling
-      const isIntentIdle = timeSinceLastIntent > T_idle && 
-                          timeSinceLastClick > T_idle &&
-                          !isCursorDwelling; // Cursor dwell (reading) is valid intent
-
-      // ✅ TRIGGER 2: Cursor Leaves Focus Area
-      let cursorLeftFocus = false;
-      if (focusPointRef.current && currentCursorPos) {
-        const dx = Math.abs(currentCursorPos.x - focusPointRef.current.x);
-        const dy = Math.abs(currentCursorPos.y - focusPointRef.current.y);
-        const viewportDistance = Math.max(dx, dy);
-        
-        if (viewportDistance > 0.45) { // 45% viewport distance
-          // Check if sustained for 400ms
-          const cursorLeaveStart = now - (timeSinceLastIntent);
-          if (cursorLeaveStart > 400) {
-            cursorLeftFocus = true;
-          }
-        }
-      }
-
-      // ✅ TRIGGER 3: Click Cluster Ends
-      const T_cluster = 1000; // 800-1200ms range
-      const clickClusterEnded = timeSinceLastClick > T_cluster && 
-                                clicksRef.current.length > 0 &&
-                                zoomState === "FOCUSED";
-
-      // State machine transitions
-      if (zoomState === "FOCUSED") {
-        // Check if we should enter HOLD state
-        if (isIntentIdle || cursorLeftFocus || clickClusterEnded) {
-          setZoomState("HOLD");
-          holdStartTimeRef.current = now;
-        }
-      } else if (zoomState === "HOLD") {
-        // Hold for 400-600ms before decay
-        const holdDuration = holdStartTimeRef.current ? now - holdStartTimeRef.current : 0;
-        const T_hold = 400; // 300-600ms range
-        
-        if (holdDuration > T_hold) {
-          // Check if new intent occurred during hold
-          if (timeSinceLastIntent < T_idle && timeSinceLastClick < T_idle) {
-            // New intent - cancel zoom-out
-            setZoomState("FOCUSED");
-            holdStartTimeRef.current = null;
-          } else {
-            // Proceed to decay
-            setZoomState("DECAY");
-            // Set partial zoom target (don't always return to 1.0)
-            const currentZoom = zoomLevel;
-            if (currentZoom > 1.3) {
-              zoomTargetRef.current = Math.max(1.15, currentZoom * 0.8); // Partial zoom-out
-            } else {
-              zoomTargetRef.current = 1.0; // Full zoom-out for smaller zooms
-            }
-          }
-        }
-      } else if (zoomState === "DECAY") {
-        // Decay is handled in the cursor following effect
-        // But check if we should cancel decay due to new intent
-        if (timeSinceLastIntent < T_idle && timeSinceLastClick < T_idle) {
-          // New intent detected - cancel zoom-out, re-enter FOCUSED
-          setZoomState("FOCUSED");
-          lastIntentTimeRef.current = now;
-          zoomTargetRef.current = 1.4; // Re-zoom to click target
-        }
-      } else if (zoomState === "NEUTRAL") {
-        // In neutral state, check if we've reached target
-        if (Math.abs(zoomLevel - zoomTargetRef.current) < 0.01) {
-          zoomTargetRef.current = 1.0;
-        }
-      }
-    }, 100); // Check every 100ms
-
-    return () => clearInterval(checkInterval);
-  }, [followCursor, recordingState, zoomState, zoomLevel, currentCursorPos]);
-
-  // Track cursor position directly on container for accurate indicator
+  // Track cursor position - sync indicator with actual cursor tracking (FIXED)
+  // Convert currentCursorPos (window-normalized) to container-relative position
+  // 🎯 SCREENSTUDIO-STYLE: Cursor smoothing happens in camera animation loop for 60fps updates
+  // This effect just initializes/resets the cursor indicator when needed
   useEffect(() => {
-    if (!followCursor || recordingState !== "recording" || !previewContainerRef.current) {
+    if (!followCursor || recordingState !== "recording" || !previewContainerRef.current || !currentCursorPos) {
       setCursorIndicatorPos(null);
+      cursorIndicatorSmoothPosRef.current = null;
+      cursorIndicatorVelocityRef.current = { x: 0, y: 0 };
       return;
     }
+    // Cursor smoothing is handled in the camera animation loop for smooth 60fps updates
+  }, [followCursor, recordingState, currentCursorPos]);
 
-    const container = previewContainerRef.current;
-    
-    const handleContainerMouseMove = (e: MouseEvent) => {
-      const rect = container.getBoundingClientRect();
-      const x = (e.clientX - rect.left) / rect.width;
-      const y = (e.clientY - rect.top) / rect.height;
-      
-      // Clamp to container bounds (0-1)
-      const clampedX = Math.max(0, Math.min(1, x));
-      const clampedY = Math.max(0, Math.min(1, y));
-      
-      setCursorIndicatorPos({ x: clampedX, y: clampedY });
-    };
-
-    const handleContainerMouseLeave = () => {
-      setCursorIndicatorPos(null);
-    };
-
-    container.addEventListener("mousemove", handleContainerMouseMove);
-    container.addEventListener("mouseleave", handleContainerMouseLeave);
-
-    return () => {
-      container.removeEventListener("mousemove", handleContainerMouseMove);
-      container.removeEventListener("mouseleave", handleContainerMouseLeave);
-    };
-  }, [followCursor, recordingState]);
-
-  // Cursor following effect - smooth pan/zoom to follow cursor
+  // Cursor following effect - smooth pan/zoom to follow cursor (OPTIMIZED)
   useEffect(() => {
     if (!followCursor || recordingState !== "recording" || !previewContainerRef.current) {
       // Reset transform when not following
       if (videoPreviewRef.current) {
-        videoPreviewRef.current.style.transform = `scale(${zoomLevel})`;
+        videoPreviewRef.current.style.transform = `scale3d(${zoomLevel}, ${zoomLevel}, 1)`;
         videoPreviewRef.current.style.transition = "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
+        videoPreviewRef.current.style.willChange = "auto";
       }
+      containerDimensionsRef.current = null;
+      videoDimensionsRef.current = null;
       return;
     }
 
@@ -1131,138 +1469,496 @@ export default function Recorder() {
     const video = videoPreviewRef.current;
     if (!container || !video) return;
 
+    // Enable GPU acceleration
+    video.style.willChange = "transform";
+    video.style.backfaceVisibility = "hidden";
+    video.style.perspective = "1000px";
+
     let animationFrameId: number | null = null;
     let lastUpdateTime = 0;
-    let lastIndicatorUpdateTime = 0;
+    const TARGET_FPS = CAMERA_CONFIG.TARGET_FPS;
+    const FRAME_TIME = CAMERA_CONFIG.FRAME_TIME_MS;
+
+    // 🛡️ PRODUCTION: Track if component is mounted to prevent state updates after unmount
+    let isMounted = true;
 
     const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
 
+    // Cache container dimensions (only update every configured duration or on resize)
+    const updateContainerDimensions = () => {
+      try {
+        const now = Date.now();
+        if (!containerDimensionsRef.current ||
+          now - lastDimensionsUpdateRef.current > CAMERA_CONFIG.DIMENSIONS_CACHE_MS) {
+          const rect = container.getBoundingClientRect();
+          if (rect && Number.isFinite(rect.width) && Number.isFinite(rect.height) &&
+            rect.width > 0 && rect.height > 0) {
+            containerDimensionsRef.current = {
+              width: rect.width,
+              height: rect.height
+            };
+            lastDimensionsUpdateRef.current = now;
+          }
+        }
+        return containerDimensionsRef.current;
+      } catch (error) {
+        console.error('updateContainerDimensions: Error', error);
+        return containerDimensionsRef.current;
+      }
+    };
+
+    // Cache video dimensions (only update when video size changes)
+    const updateVideoDimensions = () => {
+      const videoWidth = video.videoWidth;
+      const videoHeight = video.videoHeight;
+
+      if (!videoDimensionsRef.current ||
+        videoDimensionsRef.current.width !== videoWidth ||
+        videoDimensionsRef.current.height !== videoHeight) {
+        const videoAspect = videoWidth / videoHeight || 16 / 9;
+        const containerDims = updateContainerDimensions();
+        const containerAspect = containerDims.width / containerDims.height;
+
+        let videoDisplayWidth: number;
+        let videoDisplayHeight: number;
+
+        if (videoAspect > containerAspect) {
+          videoDisplayWidth = containerDims.width;
+          videoDisplayHeight = containerDims.width / videoAspect;
+        } else {
+          videoDisplayHeight = containerDims.height;
+          videoDisplayWidth = containerDims.height * videoAspect;
+        }
+
+        videoDimensionsRef.current = {
+          width: videoDisplayWidth,
+          height: videoDisplayHeight,
+          aspect: videoAspect
+        };
+      }
+      return videoDimensionsRef.current;
+    };
+
     const updateFollow = (timestamp: number) => {
-      // Throttle to ~60fps for smooth following
-      if (timestamp - lastUpdateTime < 16) {
-        animationFrameId = requestAnimationFrame(updateFollow);
-        return;
-      }
-      lastUpdateTime = timestamp;
-
-      if (!followCursor || !currentCursorPos || recordingState !== "recording") {
+      // 🛡️ PRODUCTION: Safety check - don't update if unmounted
+      if (!isMounted) {
         return;
       }
 
-      const containerRect = container.getBoundingClientRect();
-      const containerWidth = containerRect.width;
-      const containerHeight = containerRect.height;
+      try {
+        // Optimized frame throttling
+        const deltaTime = timestamp - lastUpdateTime;
+        if (!Number.isFinite(deltaTime) || deltaTime < FRAME_TIME) {
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
+        lastUpdateTime = timestamp;
 
-      // Get video dimensions (accounting for aspect ratio)
-      const videoAspect = video.videoWidth / video.videoHeight || 16 / 9;
-      const containerAspect = containerWidth / containerHeight;
-      
-      let videoDisplayWidth: number;
-      let videoDisplayHeight: number;
-      
-      if (videoAspect > containerAspect) {
-        // Video is wider - fit to width
-        videoDisplayWidth = containerWidth;
-        videoDisplayHeight = containerWidth / videoAspect;
-      } else {
-        // Video is taller - fit to height
-        videoDisplayHeight = containerHeight;
-        videoDisplayWidth = containerHeight * videoAspect;
-      }
+        // Early exit checks using refs (no state reads)
+        if (!followCursorRef.current || !currentCursorPosRef.current || recordingState !== "recording") {
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
 
-      // 🧠 ZOOM-IN: Event-driven (smooth ease)
-      if (zoomState === "FOCUSED") {
-        setZoomLevel((prev) => {
-          const targetZoom = zoomTargetRef.current;
-          const dz = targetZoom - prev;
-          const ease = 0.1; // Zoom-in ease (0.08-0.12 range)
-          const updated = prev + dz * ease;
-          return clamp(updated, 1, 3);
-        });
-      }
+        // 🛡️ PRODUCTION: Validate cursor position
+        const cursorPos = currentCursorPosRef.current;
+        if (!cursorPos ||
+          !Number.isFinite(cursorPos.x) ||
+          !Number.isFinite(cursorPos.y) ||
+          cursorPos.x < 0 || cursorPos.x > 1 ||
+          cursorPos.y < 0 || cursorPos.y > 1) {
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
 
-      // 🧠 ZOOM-OUT: State-driven (adaptive decay)
-      if (zoomState === "DECAY") {
-        setZoomLevel((prev) => {
-          const targetZoom = zoomTargetRef.current;
-          const dz = targetZoom - prev;
-          
-          // Improved adaptive decay: Faster and more reliable
-          const absDz = Math.abs(dz);
-          // Increase decay speed for better responsiveness
-          const decaySpeed = clamp(absDz * 0.08, 0.005, 0.03); // Faster decay
-          const updated = prev + dz * decaySpeed;
-          const clamped = clamp(updated, 1, 3);
-          
-          // Check if we've reached target (within threshold)
-          if (Math.abs(clamped - targetZoom) < 0.01) {
-            // Reached target - transition to NEUTRAL if target is 1.0, else continue to next partial zoom
-            if (targetZoom <= 1.01) {
-              setZoomState("NEUTRAL");
-              zoomTargetRef.current = 1.0;
-            } else {
-              // Partial zoom reached, continue to full zoom-out
-              zoomTargetRef.current = 1.0;
+        // Use cached dimensions
+        const containerDims = updateContainerDimensions();
+        const videoDims = updateVideoDimensions();
+
+        // 🛡️ PRODUCTION: Validate dimensions
+        if (!containerDims || !videoDims ||
+          !Number.isFinite(containerDims.width) ||
+          !Number.isFinite(containerDims.height) ||
+          !Number.isFinite(videoDims.width) ||
+          !Number.isFinite(videoDims.height) ||
+          containerDims.width <= 0 || containerDims.height <= 0 ||
+          videoDims.width <= 0 || videoDims.height <= 0) {
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
+
+        const containerWidth = containerDims.width;
+        const containerHeight = containerDims.height;
+        const videoDisplayWidth = videoDims.width;
+        const videoDisplayHeight = videoDims.height;
+
+        // Zoom calculations using refs (avoid setState in loop)
+        const currentZoom = Number.isFinite(currentZoomRef.current)
+          ? currentZoomRef.current
+          : CAMERA_CONFIG.ZOOM_MIN;
+        const currentZoomState = zoomStateRef.current;
+        let newZoom = currentZoom;
+
+        // 🟢 ZOOM-IN: Event-driven with spring-damper smoothing
+        if (currentZoomState === "FOCUSED") {
+          const targetZoom = Number.isFinite(zoomTargetRef.current)
+            ? Math.max(CAMERA_CONFIG.ZOOM_MIN, Math.min(CAMERA_CONFIG.ZOOM_MAX, zoomTargetRef.current))
+            : CAMERA_CONFIG.ZOOM_MIN;
+
+          // Spring smoothing with configured values
+          const { current: smoothedZoom, velocity: zoomVel } = smoothSpring(
+            currentZoom,
+            Number.isFinite(zoomVelocityRef.current) ? zoomVelocityRef.current : 0,
+            targetZoom,
+            CAMERA_CONFIG.ZOOM_STIFFNESS,
+            CAMERA_CONFIG.ZOOM_DAMPING
+          );
+          newZoom = clamp(smoothedZoom, CAMERA_CONFIG.ZOOM_MIN, CAMERA_CONFIG.ZOOM_MAX);
+
+          // 🛡️ PRODUCTION: Validate zoom value before updating
+          if (Number.isFinite(newZoom)) {
+            currentZoomRef.current = newZoom;
+            zoomVelocityRef.current = Number.isFinite(zoomVel) ? zoomVel : 0;
+
+            // Only update state if change is significant (reduce re-renders)
+            if (Math.abs(newZoom - zoomLevelRef.current) > CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD) {
+              if (isMounted) {
+                setZoomLevel(newZoom);
+              }
             }
           }
-          
-          return clamped;
-        });
+        }
+
+        // 🟢 ZOOM-OUT: Smooth zoom-out when state is NEUTRAL
+        if (currentZoomState === "NEUTRAL" && currentZoom > CAMERA_CONFIG.ZOOM_MIN) {
+          const targetZoom = CAMERA_CONFIG.ZOOM_MIN;
+
+          // Use slower stiffness for zoom-out (50% of zoom-in) - makes zoom-out smooth
+          const zoomOutStiffness = CAMERA_CONFIG.ZOOM_STIFFNESS * 0.5;
+
+          // Spring smoothing with slower zoom-out values
+          const { current: smoothedZoom, velocity: zoomVel } = smoothSpring(
+            currentZoom,
+            Number.isFinite(zoomVelocityRef.current) ? zoomVelocityRef.current : 0,
+            targetZoom,
+            zoomOutStiffness,
+            CAMERA_CONFIG.ZOOM_DAMPING
+          );
+          newZoom = clamp(smoothedZoom, CAMERA_CONFIG.ZOOM_MIN, CAMERA_CONFIG.ZOOM_MAX);
+
+          // 🛡️ PRODUCTION: Validate zoom value before updating
+          if (Number.isFinite(newZoom)) {
+            currentZoomRef.current = newZoom;
+            zoomVelocityRef.current = Number.isFinite(zoomVel) ? zoomVel : 0;
+
+            // Only update state if change is significant
+            if (Math.abs(newZoom - zoomLevelRef.current) > CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD) {
+              if (isMounted) {
+                setZoomLevel(newZoom);
+              }
+            }
+
+            // Check if we've reached target (with threshold for spring settling)
+            if (Math.abs(newZoom - targetZoom) < CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD &&
+              Math.abs(zoomVel) < CAMERA_CONFIG.SPRING_SETTLE_THRESHOLD) {
+              zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+              zoomVelocityRef.current = 0; // Reset velocity when reaching neutral
+            }
+          }
+        }
+
+        // Use the latest zoom value
+        const effectiveZoom = Number.isFinite(currentZoomRef.current)
+          ? currentZoomRef.current
+          : CAMERA_CONFIG.ZOOM_MIN;
+        const scaledWidth = videoDisplayWidth * effectiveZoom;
+        const scaledHeight = videoDisplayHeight * effectiveZoom;
+
+        // 🛡️ PRODUCTION: Validate scaled dimensions
+        if (!Number.isFinite(scaledWidth) || !Number.isFinite(scaledHeight) ||
+          scaledWidth <= 0 || scaledHeight <= 0) {
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
+
+        // Calculate cursor position (already validated above)
+        const cursorX = Math.max(0, Math.min(1, cursorPos.x));
+        const cursorY = Math.max(0, Math.min(1, cursorPos.y));
+
+        // Calculate the target offset needed to center the cursor
+        let targetOffsetX = (containerWidth / 2) - (cursorX * scaledWidth);
+        let targetOffsetY = (containerHeight / 2) - (cursorY * scaledHeight);
+
+        // Update neutral reference for camera position
+        if (Number.isFinite(targetOffsetX) && Number.isFinite(targetOffsetY)) {
+          neutralCameraRef.current.x = targetOffsetX;
+          neutralCameraRef.current.y = targetOffsetY;
+        }
+
+        // 🎯 Distance-based stiffness: confident when far, gentle when near
+        const currentCameraX = Number.isFinite(transformCacheRef.current.x) ? transformCacheRef.current.x : 0;
+        const currentCameraY = Number.isFinite(transformCacheRef.current.y) ? transformCacheRef.current.y : 0;
+
+        // 🛡️ PRODUCTION: Validate offsets before calculating distance
+        if (!Number.isFinite(targetOffsetX) || !Number.isFinite(targetOffsetY)) {
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
+
+        const distanceX = Math.abs(targetOffsetX - currentCameraX);
+        const distanceY = Math.abs(targetOffsetY - currentCameraY);
+        const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
+
+        // Effective stiffness: lerp between min and max based on distance
+        // When distance > threshold → stiffness max (confident)
+        // When distance < threshold → stiffness min (gentle)
+        const distanceNormalized = Math.min(1, Math.max(0, distance / CAMERA_CONFIG.DISTANCE_STIFFNESS_THRESHOLD));
+        const effectiveStiffness = lerp(
+          CAMERA_CONFIG.CAMERA_STIFFNESS_MIN,
+          CAMERA_CONFIG.CAMERA_STIFFNESS_MAX,
+          distanceNormalized
+        );
+
+        // 🟢 Apply spring-damper smoothing to camera pan (X/Y)
+        // Uses velocity-based physics for responsive, natural motion
+        const currentVelX = Number.isFinite(cameraVelocityRef.current.x) ? cameraVelocityRef.current.x : 0;
+        const currentVelY = Number.isFinite(cameraVelocityRef.current.y) ? cameraVelocityRef.current.y : 0;
+
+        const { current: smoothedX, velocity: velX } = smoothSpring(
+          currentCameraX,
+          currentVelX,
+          targetOffsetX,
+          effectiveStiffness,
+          CAMERA_CONFIG.CAMERA_DAMPING
+        );
+
+        const { current: smoothedY, velocity: velY } = smoothSpring(
+          currentCameraY,
+          currentVelY,
+          targetOffsetY,
+          effectiveStiffness,
+          CAMERA_CONFIG.CAMERA_DAMPING
+        );
+
+        // 🛡️ PRODUCTION: Validate smoothed values before updating
+        if (Number.isFinite(smoothedX) && Number.isFinite(smoothedY) &&
+          Number.isFinite(velX) && Number.isFinite(velY)) {
+          // Update velocity refs for next frame
+          cameraVelocityRef.current = { x: velX, y: velY };
+        } else {
+          // Fallback: use target directly if smoothing fails
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
+
+        // 🎯 SCREENSTUDIO-STYLE: Cursor indicator smoothing (cursor leads camera)
+        // Update cursor indicator position with faster smoothing than camera
+        // This makes cursor arrive before camera, creating the "cursor leads" effect
+        if (currentCursorPosRef.current && previewContainerRef.current) {
+          try {
+            const container = previewContainerRef.current;
+            const rect = container.getBoundingClientRect();
+
+            // 🛡️ PRODUCTION: Validate container dimensions
+            if (!rect || rect.width <= 0 || rect.height <= 0 ||
+              !Number.isFinite(window.innerWidth) || !Number.isFinite(window.innerHeight)) {
+              animationFrameId = requestAnimationFrame(updateFollow);
+              return;
+            }
+
+            // Convert window-normalized coordinates to container-relative coordinates
+            const windowX = currentCursorPosRef.current.x * window.innerWidth;
+            const windowY = currentCursorPosRef.current.y * window.innerHeight;
+            const containerX = (windowX - rect.left) / rect.width;
+            const containerY = (windowY - rect.top) / rect.height;
+
+            // Clamp to container bounds (0-1) and only show if cursor is over container
+            if (containerX >= 0 && containerX <= 1 && containerY >= 0 && containerY <= 1 &&
+              Number.isFinite(containerX) && Number.isFinite(containerY)) {
+              const targetX = Math.max(0, Math.min(1, containerX));
+              const targetY = Math.max(0, Math.min(1, containerY));
+
+              // Initialize smoothed position if needed
+              if (!cursorIndicatorSmoothPosRef.current) {
+                cursorIndicatorSmoothPosRef.current = { x: targetX, y: targetY };
+              }
+
+              const currentPos = cursorIndicatorSmoothPosRef.current;
+              const currentVelX = Number.isFinite(cursorIndicatorVelocityRef.current.x)
+                ? cursorIndicatorVelocityRef.current.x
+                : 0;
+              const currentVelY = Number.isFinite(cursorIndicatorVelocityRef.current.y)
+                ? cursorIndicatorVelocityRef.current.y
+                : 0;
+
+              // Apply faster smoothing to cursor indicator (higher stiffness than camera)
+              // Higher stiffness = faster response = cursor arrives before camera
+              const { current: smoothedX, velocity: velX } = smoothSpring(
+                Number.isFinite(currentPos.x) ? currentPos.x : targetX,
+                currentVelX,
+                targetX,
+                CAMERA_CONFIG.CURSOR_STIFFNESS,
+                CAMERA_CONFIG.CURSOR_DAMPING
+              );
+
+              const { current: smoothedY, velocity: velY } = smoothSpring(
+                Number.isFinite(currentPos.y) ? currentPos.y : targetY,
+                currentVelY,
+                targetY,
+                CAMERA_CONFIG.CURSOR_STIFFNESS,
+                CAMERA_CONFIG.CURSOR_DAMPING
+              );
+
+              // 🛡️ PRODUCTION: Validate smoothed values before updating
+              if (Number.isFinite(smoothedX) && Number.isFinite(smoothedY) &&
+                Number.isFinite(velX) && Number.isFinite(velY)) {
+                // Update smoothed position and velocity
+                cursorIndicatorSmoothPosRef.current = { x: smoothedX, y: smoothedY };
+                cursorIndicatorVelocityRef.current = { x: velX, y: velY };
+
+                // Update cursor indicator position (only if changed significantly)
+                const currentIndicatorPos = cursorIndicatorPosRef.current;
+                if (!currentIndicatorPos ||
+                  Math.abs(currentIndicatorPos.x - smoothedX) > CAMERA_CONFIG.CURSOR_UPDATE_THRESHOLD ||
+                  Math.abs(currentIndicatorPos.y - smoothedY) > CAMERA_CONFIG.CURSOR_UPDATE_THRESHOLD) {
+                  if (isMounted) {
+                    setCursorIndicatorPos({ x: smoothedX, y: smoothedY });
+                  }
+                }
+              }
+            } else {
+              // Cursor outside container - hide indicator
+              if (cursorIndicatorPosRef.current && isMounted) {
+                setCursorIndicatorPos(null);
+              }
+              cursorIndicatorSmoothPosRef.current = null;
+              cursorIndicatorVelocityRef.current = { x: 0, y: 0 };
+            }
+          } catch (error) {
+            console.error('Cursor indicator smoothing: Error', error);
+            // Continue animation loop even if cursor smoothing fails
+          }
+        }
+
+        // 🎨 Elliptical falloff for edge behavior (smoothstep instead of linear)
+        const maxOffsetX = Math.max(0, (scaledWidth - containerWidth) / 2);
+        const maxOffsetY = Math.max(0, (scaledHeight - containerHeight) / 2);
+
+        // Smoothstep falloff for invisible boundaries
+        const smoothstep = (t: number) => t * t * (3 - 2 * t);
+        const edgePadding = CAMERA_CONFIG.EDGE_PADDING;
+
+        // 🛡️ PRODUCTION: Validate smoothed values before clamping
+        if (!Number.isFinite(smoothedX) || !Number.isFinite(smoothedY)) {
+          animationFrameId = requestAnimationFrame(updateFollow);
+          return;
+        }
+
+        let clampedOffsetX = smoothedX;
+        let clampedOffsetY = smoothedY;
+
+        if (maxOffsetX > 0 && Number.isFinite(maxOffsetX)) {
+          const distFromEdgeX = maxOffsetX - Math.abs(smoothedX);
+          if (distFromEdgeX < edgePadding) {
+            const strength = smoothstep(Math.max(0, distFromEdgeX / edgePadding));
+            clampedOffsetX = Math.sign(smoothedX) * lerp(Math.abs(smoothedX), maxOffsetX, 1 - strength);
+          }
+          clampedOffsetX = Math.max(-maxOffsetX, Math.min(maxOffsetX, clampedOffsetX));
+        }
+
+        if (maxOffsetY > 0 && Number.isFinite(maxOffsetY)) {
+          const distFromEdgeY = maxOffsetY - Math.abs(smoothedY);
+          if (distFromEdgeY < edgePadding) {
+            const strength = smoothstep(Math.max(0, distFromEdgeY / edgePadding));
+            clampedOffsetY = Math.sign(smoothedY) * lerp(Math.abs(smoothedY), maxOffsetY, 1 - strength);
+          }
+          clampedOffsetY = Math.max(-maxOffsetY, Math.min(maxOffsetY, clampedOffsetY));
+        }
+
+        // Only update transform if it changed significantly (reduce DOM writes)
+        const cache = transformCacheRef.current;
+        const transformChanged =
+          Math.abs(cache.x - clampedOffsetX) > CAMERA_CONFIG.CAMERA_UPDATE_THRESHOLD ||
+          Math.abs(cache.y - clampedOffsetY) > CAMERA_CONFIG.CAMERA_UPDATE_THRESHOLD ||
+          Math.abs(cache.scale - effectiveZoom) > CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD;
+
+        if (transformChanged && video) {
+          try {
+            // Use transform3d for GPU acceleration
+            const transform = `translate3d(${clampedOffsetX}px, ${clampedOffsetY}px, 0) scale3d(${effectiveZoom}, ${effectiveZoom}, 1)`;
+            video.style.transform = transform;
+
+            // Cache the transform
+            transformCacheRef.current = {
+              x: clampedOffsetX,
+              y: clampedOffsetY,
+              scale: effectiveZoom
+            };
+          } catch (error) {
+            console.error('Transform update: Error applying transform', error);
+            // Continue animation loop even if transform fails
+          }
+        }
+
+        // Only update transition when state changes (not every frame)
+        const newTransitionState = currentZoomState === "FOCUSED"
+          ? "zoom-in"
+          : "default";
+
+        if (transitionStateRef.current !== newTransitionState && video) {
+          transitionStateRef.current = newTransitionState;
+          try {
+            if (currentZoomState === "FOCUSED") {
+              video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
+            } else {
+              video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
+            }
+          } catch (error) {
+            console.error('Transition update: Error setting transition', error);
+          }
+        }
+
+        animationFrameId = requestAnimationFrame(updateFollow);
+      } catch (error) {
+        console.error('updateFollow: Error in animation loop', error);
+        // Continue animation loop even on error
+        animationFrameId = requestAnimationFrame(updateFollow);
       }
-
-      // Calculate cursor position in video coordinates (normalized 0-1)
-      const cursorX = currentCursorPos.x;
-      const cursorY = currentCursorPos.y;
-
-      // Calculate where cursor is in the scaled video
-      const currentZoom = zoomLevel;
-      const scaledWidth = videoDisplayWidth * currentZoom;
-      const scaledHeight = videoDisplayHeight * currentZoom;
-
-      // Calculate the offset needed to center the cursor
-      let offsetX = (containerWidth / 2) - (cursorX * scaledWidth);
-      let offsetY = (containerHeight / 2) - (cursorY * scaledHeight);
-
-      // 🧠 Gentle camera re-centering during zoom-out (blended with cursor following)
-      if (zoomState === "DECAY") {
-        // Blend re-centering with cursor following (70% cursor, 30% re-center)
-        const reCenterX = 0; // Center of viewport
-        const reCenterY = 0;
-        const blendFactor = 0.3; // How much to blend toward center
-        
-        // Smoothly blend toward center while still following cursor
-        offsetX = offsetX * (1 - blendFactor) + reCenterX * blendFactor;
-        offsetY = offsetY * (1 - blendFactor) + reCenterY * blendFactor;
-      }
-
-      // Clamp offsets to prevent panning beyond video bounds
-      const maxOffsetX = Math.max(0, (scaledWidth - containerWidth) / 2);
-      const maxOffsetY = Math.max(0, (scaledHeight - containerHeight) / 2);
-      
-      const clampedOffsetX = Math.max(-maxOffsetX, Math.min(maxOffsetX, offsetX));
-      const clampedOffsetY = Math.max(-maxOffsetY, Math.min(maxOffsetY, offsetY));
-
-      // Apply smooth transform with pan and zoom
-      const transform = `translate(${clampedOffsetX}px, ${clampedOffsetY}px) scale(${currentZoom})`;
-      video.style.transform = transform;
-      
-      // Use different transitions based on state
-      if (zoomState === "FOCUSED") {
-        video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)"; // Smooth zoom-in
-      } else if (zoomState === "DECAY") {
-        video.style.transition = "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)"; // Calm zoom-out
-      } else {
-        video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
-      }
-
-      animationFrameId = requestAnimationFrame(updateFollow);
     };
+
+    // Handle window resize to invalidate cache
+    const handleResize = () => {
+      try {
+        containerDimensionsRef.current = null;
+        lastDimensionsUpdateRef.current = 0;
+      } catch (error) {
+        console.error('handleResize: Error invalidating cache', error);
+      }
+    };
+    window.addEventListener("resize", handleResize);
 
     animationFrameId = requestAnimationFrame(updateFollow);
 
     return () => {
-      if (animationFrameId !== null) {
-        cancelAnimationFrame(animationFrameId);
+      // 🛡️ PRODUCTION: Proper cleanup to prevent memory leaks and state updates after unmount
+      isMounted = false;
+
+      try {
+        window.removeEventListener("resize", handleResize);
+        if (animationFrameId !== null) {
+          cancelAnimationFrame(animationFrameId);
+          animationFrameId = null;
+        }
+        if (video) {
+          video.style.willChange = "auto";
+          video.style.backfaceVisibility = "";
+          video.style.perspective = "";
+        }
+        // Reset cursor smoothing state
+        cursorIndicatorSmoothPosRef.current = null;
+        cursorIndicatorVelocityRef.current = { x: 0, y: 0 };
+      } catch (error) {
+        console.error('Cleanup: Error during cleanup', error);
       }
     };
   }, [followCursor, currentCursorPos, zoomLevel, recordingState, zoomState]);
@@ -1276,19 +1972,21 @@ export default function Recorder() {
       setCurrentCursorPos(null);
       setCursorIndicatorPos(null);
       setZoomState("NEUTRAL");
-      zoomTargetRef.current = 1;
+      zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
       focusPointRef.current = null;
-      cursorDwellStartRef.current = null;
-      cursorDwellPositionRef.current = null;
-      holdStartTimeRef.current = null;
+      clickedElementBoundsRef.current = null;
       cameraOffsetRef.current = { x: 0, y: 0 };
       lastIntentTimeRef.current = 0;
       lastClickClusterTimeRef.current = 0;
+      // Reset spring-damper velocities
+      cameraVelocityRef.current = { x: 0, y: 0 };
+      zoomVelocityRef.current = 0;
+      transformCacheRef.current = { x: 0, y: 0, scale: 1 };
       // Reset smart insights
       setInteractionCount(0);
       setAvgClickInterval(null);
       setRecordingQualityScore(100);
-      
+
       // Cleanup canvas recording
       if (canvasAnimationFrameRef.current) {
         cancelAnimationFrame(canvasAnimationFrameRef.current);
@@ -1321,6 +2019,8 @@ export default function Recorder() {
     const newZoom = Math.min(zoomLevel + 0.25, 3);
     setZoomLevel(newZoom);
     zoomTargetRef.current = newZoom;
+    currentZoomRef.current = newZoom;
+    zoomVelocityRef.current = 0; // Reset velocity for clean manual zoom
     setZoomState("FOCUSED");
     lastIntentTimeRef.current = Date.now();
     if (currentCursorPos) {
@@ -1332,6 +2032,8 @@ export default function Recorder() {
     const newZoom = Math.max(zoomLevel - 0.25, 0.5);
     setZoomLevel(newZoom);
     zoomTargetRef.current = newZoom;
+    currentZoomRef.current = newZoom;
+    zoomVelocityRef.current = 0; // Reset velocity for clean manual zoom
     if (newZoom <= 1.01) {
       setZoomState("NEUTRAL");
       zoomTargetRef.current = 1.0;
@@ -1344,6 +2046,8 @@ export default function Recorder() {
   const handleResetZoom = () => {
     setZoomLevel(1);
     zoomTargetRef.current = 1;
+    currentZoomRef.current = 1;
+    zoomVelocityRef.current = 0; // Reset velocity for clean reset
     setZoomState("NEUTRAL");
     focusPointRef.current = null;
   };
@@ -1366,12 +2070,12 @@ export default function Recorder() {
       } else {
         canvasStream = streamResult;
       }
-      
+
       // If we got a canvas stream, wait a bit to ensure frames are being produced
       if (canvasStream) {
         // Wait for at least one frame to be drawn before starting MediaRecorder
         await new Promise(resolve => setTimeout(resolve, 100));
-        
+
         // Verify the stream has video tracks
         if (canvasStream.getVideoTracks().length === 0) {
           console.warn("Canvas stream has no video tracks, falling back to screen recording");
@@ -1389,7 +2093,7 @@ export default function Recorder() {
 
     // Use canvas stream if available, otherwise fall back to screen stream
     const recordingStream = canvasStream || mediaStreamRef.current;
-    
+
     // Add audio tracks from original stream if using canvas stream
     if (canvasStream && mediaStreamRef.current) {
       mediaStreamRef.current.getAudioTracks().forEach(track => {
@@ -1425,9 +2129,16 @@ export default function Recorder() {
       return;
     }
 
+    // Use higher bitrates for better quality
+    const bitrates = {
+      high: 12000000,   // 12 Mbps for high quality
+      medium: 6000000,  // 6 Mbps for medium quality
+      low: 3000000      // 3 Mbps for low quality
+    };
+
     const mediaRecorder = new MediaRecorder(recordingStream, {
       mimeType: selectedMimeType,
-      videoBitsPerSecond: recordingQuality === "high" ? 8000000 : recordingQuality === "medium" ? 4000000 : 2000000,
+      videoBitsPerSecond: bitrates[recordingQuality],
     });
 
     mediaRecorder.ondataavailable = (event) => {
@@ -1436,7 +2147,7 @@ export default function Recorder() {
         console.log(`Received chunk: ${event.data.size} bytes, total chunks: ${chunksRef.current.length}`);
       }
     };
-    
+
     mediaRecorder.onerror = (event) => {
       console.error("MediaRecorder error:", event);
       toast({
@@ -1459,7 +2170,7 @@ export default function Recorder() {
       }
 
       const blob = new Blob(chunksRef.current, { type: selectedMimeType });
-      
+
       // Verify blob size
       if (blob.size === 0) {
         toast({
@@ -1504,9 +2215,14 @@ export default function Recorder() {
       }
 
       setRecordingState("stopped");
+
+      // [Auto Chapters] Generate markers from interaction groups
+      const autoChapters = generateChapters(clicksRef.current);
+      const allMarkers = [...markers, ...autoChapters].sort((a, b) => a.timestamp - b.timestamp);
+
       toast({
         title: "Recording saved",
-        description: "Redirecting to editor...",
+        description: `Redirecting to editor... (${autoChapters.length} auto-chapters created)`,
       });
 
       setTimeout(() => {
@@ -1515,13 +2231,14 @@ export default function Recorder() {
             videoUrl,
             clickData: clicksRef.current,
             moveData: movesRef.current,
-            markers: markers,
+            effects: effectsRef.current,
+            markers: allMarkers,
             visualEffects: {
               cursorEffects,
-              clickRipple,
-              cursorGlow,
+              clickRipple: cursorEffects,
+              cursorGlow: cursorEffects,
               cursorTrail,
-              showClickIndicator,
+              showClickIndicator: cursorEffects,
             },
           }
         });
@@ -1531,7 +2248,7 @@ export default function Recorder() {
     // Set recording state BEFORE starting MediaRecorder
     // This ensures the canvas drawing loop continues
     setRecordingState("recording");
-    
+
     // Request data more frequently for better reliability
     mediaRecorder.start(500); // Collect 500ms chunks for better reliability
     mediaRecorderRef.current = mediaRecorder;
@@ -1557,12 +2274,21 @@ export default function Recorder() {
   };
 
   const handleStopRecording = () => {
+    // 🎬 End-of-video settle: Settle camera before stopping
+    // Immediately settle to neutral zoom and center camera for final frames
+    if (followCursor) {
+      setZoomState("NEUTRAL");
+      zoomTargetRef.current = 1.0;
+      zoomVelocityRef.current = 0;
+      // Camera will settle naturally through the update loop
+    }
+
     // Request final data chunk before stopping
     if (mediaRecorderRef.current) {
       if (mediaRecorderRef.current.state === 'recording' || mediaRecorderRef.current.state === 'paused') {
         // Request any remaining data
         mediaRecorderRef.current.requestData();
-        // Small delay to ensure data is collected
+        // Small delay to ensure data is collected and camera settles
         setTimeout(() => {
           if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
             mediaRecorderRef.current.stop();
@@ -1570,7 +2296,7 @@ export default function Recorder() {
         }, 100);
       }
     }
-    
+
     // Cleanup canvas recording after a short delay to ensure final frame is captured
     setTimeout(() => {
       if (canvasAnimationFrameRef.current) {
@@ -1585,7 +2311,7 @@ export default function Recorder() {
         canvasRef.current = null;
       }
     }, 200);
-    
+
     // Stop all tracks
     if (mediaStreamRef.current) {
       mediaStreamRef.current.getTracks().forEach(track => track.stop());
@@ -1810,7 +2536,7 @@ export default function Recorder() {
                 </div>
               </div>
             </div>
-            
+
             <div className="rounded-xl border border-blue-500/20 bg-blue-500/5 p-4 hover:shadow-lg transition-all cursor-pointer group">
               <div className="flex items-start gap-3">
                 <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-blue-500/20 group-hover:bg-blue-500/30 transition-colors">
@@ -1847,15 +2573,14 @@ export default function Recorder() {
             </div>
 
             {/* Preview Area */}
-            <div 
+            <div
               ref={previewContainerRef}
-              className={`relative flex aspect-video flex-col items-center justify-center bg-gradient-subtle transition-all duration-300 overflow-hidden p-4 ${
-                recordingState === "recording" 
-                  ? "ring-2 ring-primary/20 shadow-lg shadow-primary/5" 
-                  : recordingState === "paused"
+              className={`relative flex aspect-video flex-col items-center justify-center bg-gradient-subtle transition-all duration-300 overflow-hidden p-4 ${recordingState === "recording"
+                ? "ring-2 ring-primary/20 shadow-lg shadow-primary/5"
+                : recordingState === "paused"
                   ? "ring-2 ring-warning/20 shadow-lg shadow-warning/5"
                   : ""
-              }`}
+                }`}
             >
               {/* Video Preview */}
               {showPreview && mediaStreamRef.current && recordingState !== "idle" && (
@@ -1872,11 +2597,12 @@ export default function Recorder() {
                 />
               )}
 
-              {/* Cursor Position Indicator (when following) */}
+              {/* Cursor Position Indicator (when following) - FIXED alignment */}
               {followCursor && cursorIndicatorPos && recordingState === "recording" && showPreview && (
                 <div
                   className="absolute z-30 pointer-events-none"
                   style={{
+                    // cursorIndicatorPos is already in container-relative coordinates (0-1)
                     left: `${cursorIndicatorPos.x * 100}%`,
                     top: `${cursorIndicatorPos.y * 100}%`,
                     transform: "translate(-50%, -50%)",
@@ -2017,11 +2743,10 @@ export default function Recorder() {
                           <Button
                             variant={followCursor ? "default" : "outline"}
                             size="sm"
-                            className={`h-7 px-3 gap-1.5 transition-all ${
-                              followCursor 
-                                ? "bg-primary text-primary-foreground shadow-sm" 
-                                : ""
-                            }`}
+                            className={`h-7 px-3 gap-1.5 transition-all ${followCursor
+                              ? "bg-primary text-primary-foreground shadow-sm"
+                              : ""
+                              }`}
                             onClick={() => setFollowCursor(!followCursor)}
                             title="Toggle Cursor Following (F)"
                           >
@@ -2065,7 +2790,7 @@ export default function Recorder() {
                           </div>
                         )}
                       </div>
-                      
+
                       {/* Smart Quality Score */}
                       {recordingState === "recording" && timer > 5 && (
                         <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/90 backdrop-blur-sm border border-border/50 shadow-sm hover:shadow-md transition-shadow">
@@ -2074,18 +2799,16 @@ export default function Recorder() {
                             <span className="text-xs font-medium">Quality Score</span>
                             <div className="flex items-center gap-1">
                               <div className="w-20 h-2 bg-secondary rounded-full overflow-hidden shadow-inner">
-                                <div 
-                                  className={`h-full transition-all duration-700 ease-out ${
-                                    recordingQualityScore >= 80 ? 'bg-gradient-to-r from-green-400 to-green-500' : 
+                                <div
+                                  className={`h-full transition-all duration-700 ease-out ${recordingQualityScore >= 80 ? 'bg-gradient-to-r from-green-400 to-green-500' :
                                     recordingQualityScore >= 60 ? 'bg-gradient-to-r from-yellow-400 to-yellow-500' : 'bg-gradient-to-r from-red-400 to-red-500'
-                                  }`}
+                                    }`}
                                   style={{ width: `${recordingQualityScore}%` }}
                                 />
                               </div>
-                              <span className={`text-xs font-mono font-semibold min-w-[2.5rem] ${
-                                recordingQualityScore >= 80 ? 'text-green-500' : 
+                              <span className={`text-xs font-mono font-semibold min-w-[2.5rem] ${recordingQualityScore >= 80 ? 'text-green-500' :
                                 recordingQualityScore >= 60 ? 'text-yellow-500' : 'text-red-500'
-                              }`}>
+                                }`}>
                                 {Math.round(recordingQualityScore)}%
                               </span>
                             </div>
@@ -2093,36 +2816,36 @@ export default function Recorder() {
                         </div>
                       )}
 
-                    {/* Active Effects Indicator */}
-                    {(cursorEffects || clickRipple || cursorGlow || cursorTrail || showClickIndicator) && (
-                      <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
-                        <Sparkles className="h-3 w-3 text-primary" />
-                        <span className="text-xs text-primary font-medium">
-                          Visual Effects Active
-                        </span>
-                      </div>
-                    )}
-                    
-                    {/* Smart Interaction Insights */}
-                    {recordingState === "recording" && timer > 3 && (
-                      <div className="mt-3 space-y-1.5">
-                        {avgClickInterval && avgClickInterval > 0 && (
-                          <div className="text-xs text-muted-foreground flex items-center justify-center gap-2">
-                            <Activity className="h-3 w-3" />
-                            <span>Avg click interval: {Math.round(avgClickInterval)}ms</span>
-                            {avgClickInterval > 2000 && (
-                              <span className="text-green-500">✓ Good pacing</span>
-                            )}
-                            {avgClickInterval < 1000 && avgClickInterval > 500 && (
-                              <span className="text-yellow-500">⚡ Fast pace</span>
-                            )}
-                            {avgClickInterval < 500 && (
-                              <span className="text-amber-500">⚠ Very fast</span>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                    )}
+                      {/* Active Effects Indicator */}
+                      {(cursorEffects || clickRipple || cursorGlow || cursorTrail || showClickIndicator) && (
+                        <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
+                          <Sparkles className="h-3 w-3 text-primary" />
+                          <span className="text-xs text-primary font-medium">
+                            Visual Effects Active
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Smart Interaction Insights */}
+                      {recordingState === "recording" && timer > 3 && (
+                        <div className="mt-3 space-y-1.5">
+                          {avgClickInterval && avgClickInterval > 0 && (
+                            <div className="text-xs text-muted-foreground flex items-center justify-center gap-2">
+                              <Activity className="h-3 w-3" />
+                              <span>Avg click interval: {Math.round(avgClickInterval)}ms</span>
+                              {avgClickInterval > 2000 && (
+                                <span className="text-green-500">✓ Good pacing</span>
+                              )}
+                              {avgClickInterval < 1000 && avgClickInterval > 500 && (
+                                <span className="text-yellow-500">⚡ Fast pace</span>
+                              )}
+                              {avgClickInterval < 500 && (
+                                <span className="text-amber-500">⚠ Very fast</span>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Cursor Following Indicator */}
                       {followCursor && recordingState === "recording" && (
@@ -2247,39 +2970,13 @@ export default function Recorder() {
 
                   <div className="flex items-center justify-between">
                     <div className="flex flex-col">
-                      <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Cursor Effects</Label>
-                      <span className="text-xs text-muted-foreground">Glow and highlight cursor</span>
+                      <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Visual Effects</Label>
+                      <span className="text-xs text-muted-foreground">Enhance cursor and clicks</span>
                     </div>
                     <Switch
                       id="cursor-effects"
                       checked={cursorEffects}
                       onCheckedChange={setCursorEffects}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="click-ripple" className="cursor-pointer text-sm">Click Ripple</Label>
-                      <span className="text-xs text-muted-foreground">Animated ripple on clicks</span>
-                    </div>
-                    <Switch
-                      id="click-ripple"
-                      checked={clickRipple}
-                      onCheckedChange={setClickRipple}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="cursor-glow" className="cursor-pointer text-sm">Cursor Glow</Label>
-                      <span className="text-xs text-muted-foreground">Glowing effect around cursor</span>
-                    </div>
-                    <Switch
-                      id="cursor-glow"
-                      checked={cursorGlow}
-                      onCheckedChange={setCursorGlow}
                       disabled={recordingState !== "idle"}
                     />
                   </div>
@@ -2293,19 +2990,6 @@ export default function Recorder() {
                       id="cursor-trail"
                       checked={cursorTrail}
                       onCheckedChange={setCursorTrail}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
-
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="click-indicator" className="cursor-pointer text-sm">Click Indicators</Label>
-                      <span className="text-xs text-muted-foreground">Visual markers for clicks</span>
-                    </div>
-                    <Switch
-                      id="click-indicator"
-                      checked={showClickIndicator}
-                      onCheckedChange={setShowClickIndicator}
                       disabled={recordingState !== "idle"}
                     />
                   </div>

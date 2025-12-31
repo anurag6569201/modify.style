@@ -24,26 +24,66 @@ export const clamp = (value: number, min: number, max: number): number => {
     return Math.max(min, Math.min(max, value));
 };
 
-// Get interpolated cursor position at a specific time
+// Smoothstep interpolation
+export const smoothstep = (min: number, max: number, value: number): number => {
+    const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
+    return x * x * (3 - 2 * x);
+};
+
+// Cache for sorted events to avoid re-sorting
+let cachedEvents: (ClickData | MoveData)[] | null = null;
+let cachedSortedEvents: (ClickData | MoveData)[] | null = null;
+
+// Get interpolated cursor position at a specific time (OPTIMIZED)
 export const getCursorPos = (
     time: number,
     events: (ClickData | MoveData)[]
 ): { x: number; y: number } | null => {
     if (!events || events.length === 0) return null;
 
-    // Sort events by timestamp just in case
-    const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+    // Use cached sorted events if events array hasn't changed
+    let sortedEvents: (ClickData | MoveData)[];
+    if (events === cachedEvents && cachedSortedEvents) {
+        sortedEvents = cachedSortedEvents;
+    } else {
+        // Only sort if events array changed
+        sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+        cachedEvents = events;
+        cachedSortedEvents = sortedEvents;
+    }
 
-    // Find surrounding events
+    // Binary search optimization for large arrays (fallback to linear for small arrays)
     let prevEvent: ClickData | MoveData | null = null;
     let nextEvent: ClickData | MoveData | null = null;
 
-    for (const event of sortedEvents) {
-        if (event.timestamp <= time) {
-            prevEvent = event;
-        } else {
-            nextEvent = event;
-            break;
+    if (sortedEvents.length > 50) {
+        // Binary search for large arrays
+        let left = 0;
+        let right = sortedEvents.length - 1;
+        let mid = 0;
+
+        while (left <= right) {
+            mid = Math.floor((left + right) / 2);
+            if (sortedEvents[mid].timestamp <= time) {
+                prevEvent = sortedEvents[mid];
+                left = mid + 1;
+            } else {
+                right = mid - 1;
+            }
+        }
+
+        if (mid + 1 < sortedEvents.length) {
+            nextEvent = sortedEvents[mid + 1];
+        }
+    } else {
+        // Linear search for small arrays (faster for small datasets)
+        for (const event of sortedEvents) {
+            if (event.timestamp <= time) {
+                prevEvent = event;
+            } else {
+                nextEvent = event;
+                break;
+            }
         }
     }
 
@@ -102,8 +142,82 @@ export const paddedFollow = (d: number, inner: number, outer: number): number =>
     const abs = Math.abs(d);
     if (abs < inner) return 0;
 
-    const excess = Math.min(abs - inner, outer - inner);
-    const strength = excess / (outer - inner); // 0 -> 1
+    // Soft boundary using smoothstep
+    // strength goes from 0 to 1 as we go from inner to outer
+    const strength = smoothstep(inner, outer, abs);
 
+    // Return the "excess" purely for direction/magnitude scaling, 
+    // but the *feel* comes from the strength curve being smooth.
+    // Actually, user said: strength = smoothstep(inner, outer, abs(distance));
+    // And applied it to the boundary response.
+
+    // We render the "force" or "shift" as:
+    const excess = abs - inner;
     return Math.sign(d) * strength * excess;
 };
+
+/**
+ * Calculate cursor velocity vector in component normalized units/second
+ * Returns {x: 0, y: 0} if cannot determine
+ */
+export const getCursorVelocityVector = (
+    time: number,
+    events: (ClickData | MoveData)[]
+): { x: number; y: number } => {
+    // Look briefly fast-forward and backward to estimate speed
+    const dt = 0.05; // 50ms window
+    const p1 = getCursorPos(time - dt, events);
+    const p2 = getCursorPos(time + dt, events);
+
+    if (!p1 || !p2) return { x: 0, y: 0 };
+
+    // Distance in normalized units
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+
+    // Velocity components
+    return {
+        x: dx / (2 * dt),
+        y: dy / (2 * dt)
+    };
+};
+
+/**
+ * Filter out micro-movements (jitter) from a sequence of moves
+ * @param moves List of MoveData
+ * @param threshold Normalized distance threshold (e.g. 0.005 for 0.5%)
+ */
+export const cleanJitter = (
+    moves: MoveData[],
+    threshold: number = 0.005
+): MoveData[] => {
+    if (moves.length < 2) return moves;
+
+    const result: MoveData[] = [moves[0]];
+    let lastValid = moves[0];
+
+    for (let i = 1; i < moves.length; i++) {
+        const current = moves[i];
+        const dx = current.x - lastValid.x;
+        const dy = current.y - lastValid.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+
+        // If moved enough, keep it
+        if (dist >= threshold) {
+            result.push(current);
+            lastValid = current;
+        } else {
+            // Check if significant time passed (e.g. not jitter, but slow drift or stop)
+            // If time diff > 0.5s, maybe we SHOULD update to show we stopped here?
+            // For now, simple distance filter as requested.
+        }
+    }
+
+    // Always keep the last one to ensure we end up at the right place
+    if (result[result.length - 1] !== moves[moves.length - 1]) {
+        result.push(moves[moves.length - 1]);
+    }
+
+    return result;
+};
+

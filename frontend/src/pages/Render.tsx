@@ -13,7 +13,7 @@ import { FilterEngine } from "@/lib/effects/filters";
 
 export default function Render() {
   const location = useLocation();
-  const { videoUrl, clickData, moveData } = location.state || {}; // { videoUrl: string, clickData: ClickData[], moveData: MoveData[] }
+  const { videoUrl, clickData, moveData, effects } = location.state || {}; // { videoUrl: string, clickData: ClickData[], moveData: MoveData[], effects: EffectEvent[] }
 
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -81,7 +81,7 @@ export default function Render() {
 
     // Setup MediaRecorder for video formats
     const stream = canvas.captureStream(fps);
-    
+
     // Determine mime type
     let mimeType = "video/webm;codecs=vp9";
     if (exportFormat === "mp4") {
@@ -92,7 +92,7 @@ export default function Render() {
       ];
       mimeType = mp4Types.find(t => MediaRecorder.isTypeSupported(t)) || mimeType;
     }
-    
+
     const mediaRecorder = new MediaRecorder(stream, {
       mimeType,
       videoBitsPerSecond: bitrate,
@@ -147,6 +147,7 @@ export default function Render() {
         0.016,
         clickData || [],
         moveData || [],
+        effects || [],
         { width, height }
       );
 
@@ -241,25 +242,25 @@ export default function Render() {
     const video = videoRef.current!;
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
-    
+
     const frames: ImageData[] = [];
     const frameInterval = 1000 / fps;
     const totalFrames = Math.ceil(video.duration * fps);
-    
+
     video.currentTime = 0;
     await video.play();
-    
+
     let frameCount = 0;
-    
+
     const captureFrame = () => {
       if (video.ended || frameCount >= totalFrames) {
         // Process frames into GIF/APNG
         processAnimatedImage(frames, format);
         return;
       }
-      
+
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-      
+
       // Apply filters if needed
       if (filters.brightness !== 0 || filters.contrast !== 0 || filters.saturation !== 0 || filters.blur > 0) {
         filterEngine.applyFilters(video, {
@@ -271,7 +272,7 @@ export default function Render() {
       } else {
         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
       }
-      
+
       // Draw effects
       const time = video.currentTime;
       const cameraState = updateCameraSystem(
@@ -280,13 +281,14 @@ export default function Render() {
         0.016,
         clickData || [],
         moveData || [],
+        effects || [],
         { width: canvas.width, height: canvas.height }
       );
-      
+
       ctx.save();
       ctx.translate(cameraState.transform.translateX, cameraState.transform.translateY);
       ctx.scale(cameraState.transform.scale, cameraState.transform.scale);
-      
+
       // Draw clicks and cursor (same as video rendering)
       const activeClicks = (clickData || []).filter(
         (c: ClickData) =>
@@ -294,14 +296,14 @@ export default function Render() {
           time >= c.timestamp &&
           time < c.timestamp + 0.8
       );
-      
+
       activeClicks.forEach((click: ClickData) => {
         const timeSince = time - click.timestamp;
         const progress = Math.min(1, timeSince / 0.6);
         const maxRadius = Math.min(canvas.width, canvas.height) * 0.08;
         const currentRadius = maxRadius * (0.2 + 0.8 * progress);
         const opacity = 1 - Math.pow(progress, 3);
-        
+
         ctx.beginPath();
         ctx.arc(click.x * canvas.width, click.y * canvas.height, currentRadius, 0, Math.PI * 2);
         const color = click.type === "rightClick" ? "239, 68, 68" : "59, 130, 246";
@@ -311,7 +313,7 @@ export default function Render() {
         ctx.lineWidth = 2;
         ctx.stroke();
       });
-      
+
       const pos = getCursorPos(time, moveData || []);
       if (pos && cursorImageRef.current) {
         ctx.shadowColor = "rgba(0,0,0,0.3)";
@@ -320,20 +322,20 @@ export default function Render() {
         ctx.drawImage(cursorImageRef.current, pos.x * canvas.width - 2, pos.y * canvas.height - 2, 24, 24);
         ctx.shadowColor = "transparent";
       }
-      
+
       ctx.restore();
-      
+
       // Capture frame
       frames.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
       frameCount++;
       setProgress((frameCount / totalFrames) * 100);
-      
+
       // Advance video
       video.currentTime = (frameCount * frameInterval) / 1000;
-      
+
       setTimeout(captureFrame, frameInterval);
     };
-    
+
     captureFrame();
   };
 
@@ -341,13 +343,13 @@ export default function Render() {
     // For GIF/APNG, we'd need a library like gif.js or apng-js
     // For now, we'll create a simple animated format
     // In production, you'd use a proper library
-    
+
     toast({
       title: "Animated image rendering",
       description: `${format.toUpperCase()} export requires additional libraries. Falling back to WebM.`,
       variant: "default"
     });
-    
+
     // Fallback to video rendering
     setExportFormat("webm");
     setRendering(false);
@@ -444,7 +446,7 @@ export default function Render() {
                       </SelectContent>
                     </Select>
                   </div>
-                  
+
                   <div className="space-y-2">
                     <Label>Quality</Label>
                     <Select value={exportQuality} onValueChange={(v) => setExportQuality(v as any)}>
@@ -458,7 +460,7 @@ export default function Render() {
                       </SelectContent>
                     </Select>
                   </div>
-                  
+
                   <Button
                     variant="outline"
                     size="sm"
@@ -468,7 +470,7 @@ export default function Render() {
                     <Settings className="mr-2 h-4 w-4" />
                     {showSettings ? "Hide" : "Show"} Advanced Settings
                   </Button>
-                  
+
                   {showSettings && (
                     <div className="space-y-3 p-4 border rounded-lg bg-secondary/30">
                       <div className="space-y-2">
