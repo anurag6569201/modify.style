@@ -95,16 +95,16 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
     },
     cursor: {
         size: 1.0,
-        color: '#eb4034', // Default red-ish cursor
-        glow: true,
-        trail: true,
-        trailLength: 20,
+        color: '#000000', // Simple black cursor
+        glow: false,
+        trail: false,
+        trailLength: 0,
     },
     effects: {
-        clickRipple: true,
+        clickRipple: false,
         clickSize: 1.0,
         clickColor: 'rgba(235, 64, 52, 0.5)',
-        clickEmphasis: true,
+        clickEmphasis: false,
     },
     colorGrading: {
         brightness: 0,

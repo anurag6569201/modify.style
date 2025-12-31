@@ -104,12 +104,12 @@ export const getCursorPos = (
     const elapsed = time - prevEvent.timestamp;
     const progress = Math.min(1, Math.max(0, elapsed / duration));
 
-    // Use cubic easing for smoother cursor starts/stops
-    const easedProgress = easeOutCubic(progress);
+    // Linear interpolation for raw input feel
+    // const easedProgress = easeOutCubic(progress);
 
     return {
-        x: lerp(prevEvent.x, nextEvent.x, easedProgress),
-        y: lerp(prevEvent.y, nextEvent.y, easedProgress),
+        x: lerp(prevEvent.x, nextEvent.x, progress),
+        y: lerp(prevEvent.y, nextEvent.y, progress),
     };
 };
 
@@ -219,5 +219,46 @@ export const cleanJitter = (
     }
 
     return result;
+};
+
+/**
+ * Critically Damped Spring Solver
+ * @param current Current value
+ * @param target Target value
+ * @param velocity Current velocity
+ * @param stiffness Spring stiffness (k). Higher = faster/tighter. Good range: 100-200.
+ * @param damping Damping ratio (zeta). 1 = critically damped (no overshoot). <1 = bouncy. >1 = sluggish.
+ * @param mass Mass (m). Usually 1.
+ * @param dt Delta time in seconds.
+ */
+export const solveSpring = (
+    current: number,
+    target: number,
+    velocity: number,
+    stiffness: number,
+    damping: number,
+    mass: number,
+    dt: number
+): { value: number; velocity: number } => {
+    // Force method (Semi-Implicit Euler for stability)
+    // F_spring = -k * (x - target)
+    // F_damp = -c * v
+    // c = damping * 2 * sqrt(k * m)
+
+    // Safety clamp for dt to prevent explosion
+    const safeDt = Math.min(dt, 0.1);
+
+    const displacement = current - target;
+    const springForce = -stiffness * displacement;
+
+    // Calculate critical damping coefficient
+    const criticalDamping = 2 * Math.sqrt(stiffness * mass);
+    const dampingForce = -damping * criticalDamping * velocity;
+
+    const acceleration = (springForce + dampingForce) / mass;
+    const newVelocity = velocity + acceleration * safeDt;
+    const newValue = current + newVelocity * safeDt;
+
+    return { value: newValue, velocity: newVelocity };
 };
 

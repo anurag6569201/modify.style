@@ -35,7 +35,6 @@ import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Label } from "@/components/ui/label";
 import { ParticleSystem } from "@/lib/effects/particles";
-import { generateChapters } from "@/lib/composition/analysis";
 
 type RecordingState = "idle" | "selecting" | "ready" | "countdown" | "recording" | "paused" | "stopped";
 type AudioSource = "system" | "microphone" | "both" | "none";
@@ -58,7 +57,7 @@ export interface ClickData {
       width: number;
       height: number;
     };
-    semanticType?: "primary" | "secondary" | "danger" | "neutral" | "text";
+    semanticType?: "primary" | "secondary" | "danger" | "neutral";
   };
 }
 
@@ -70,66 +69,10 @@ export interface MoveData {
   screenHeight: number;
 }
 
-export interface RecordingMarker {
+interface RecordingMarker {
   timestamp: number;
   label: string;
 }
-
-export interface EffectAction {
-  zoom?: number;
-  blurBackground?: number;
-  spotlight?: boolean;
-  holdMs?: number;
-}
-
-export interface EffectRule {
-  selector: string;
-  onEnter?: EffectAction;
-  onLeave?: EffectAction;
-  priority?: number; // Higher priority wins
-}
-
-export interface EffectEvent {
-  timestamp: number;
-  type: "enter" | "leave";
-  selector: string;
-  action?: EffectAction;
-  rect?: {
-    left: number;
-    top: number;
-    width: number;
-    height: number;
-  };
-}
-
-// ⚡️ EFFECT RULES CONFIGURATION
-const EFFECT_RULES: EffectRule[] = [
-  {
-    selector: '[data-demo-focus], [data-focus-target]',
-    priority: 100,
-    onEnter: { zoom: 1.6, blurBackground: 6, spotlight: true },
-    onLeave: { zoom: 1.0 }
-  },
-  {
-    selector: 'input, textarea, [contenteditable="true"]',
-    priority: 50,
-    onEnter: { zoom: 1.45, spotlight: true },
-    onLeave: { zoom: 1.1 }
-  },
-  {
-    selector: 'button, a, [role="button"]',
-    priority: 10,
-    onEnter: { zoom: 1.35 },
-    onLeave: { zoom: 1.0 }
-  },
-  // Default/Fallback rules can increase depth
-  {
-    selector: 'p, h1, h2, h3, h4, h5, h6, li',
-    priority: 1,
-    onEnter: { zoom: 1.1 },
-    onLeave: { zoom: 1.0 }
-  }
-];
 
 // 🎯 PRODUCTION CONSTANTS - Centralized configuration for maintainability
 const CAMERA_CONFIG = {
@@ -146,7 +89,11 @@ const CAMERA_CONFIG = {
   RAPID_CLICK_INTERVAL_MS: 300, // Rapid clicks within this time
 
   // Zoom state timing (ms)
+  HOLD_DURATION_MS: 600, // Hold before zoom-out (ScreenStudio-style)
+  INTENT_IDLE_MS: 1500, // Intent idle threshold
   CLICK_CLUSTER_MS: 1000, // Click cluster duration
+  CURSOR_LEAVE_FOCUS_MS: 400, // Cursor leave focus threshold
+  CURSOR_LEAVE_DISTANCE: 0.45, // 45% viewport distance
 
   // Spring-damper physics
   ZOOM_STIFFNESS: 0.12,
@@ -154,10 +101,12 @@ const CAMERA_CONFIG = {
   CAMERA_STIFFNESS_MIN: 0.12,
   CAMERA_STIFFNESS_MAX: 0.22,
   CAMERA_DAMPING: 0.75, // Increased from 0.7 for calmer, less twitchy camera
-  CURSOR_STIFFNESS: 0.15, // Higher = cursor leads camera
+  CURSOR_STIFFNESS: 0.35, // Higher = cursor leads camera
   CURSOR_DAMPING: 0.8,
   DISTANCE_STIFFNESS_THRESHOLD: 300, // px - reduced from 400 for snappier diagonal/top-to-bottom moves
 
+  // Camera re-centering
+  DECAY_BLEND_FACTOR: 0.1, // Re-center only 90% during zoom-out (less mechanical, more organic)
 
   // Edge behavior
   EDGE_PADDING: 50, // px - inner boundary for falloff
@@ -217,8 +166,8 @@ export default function Recorder() {
   const [cursorIndicatorPos, setCursorIndicatorPos] = useState<{ x: number; y: number } | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
 
-  // Simplified zoom state machine: FOCUSED or NEUTRAL
-  type ZoomState = "FOCUSED" | "NEUTRAL";
+  // Zoom state machine: FOCUSED -> HOLD -> DECAY -> NEUTRAL
+  type ZoomState = "FOCUSED" | "HOLD" | "DECAY" | "NEUTRAL";
   const [zoomState, setZoomState] = useState<ZoomState>("NEUTRAL");
 
   // Intent tracking refs
@@ -226,8 +175,10 @@ export default function Recorder() {
   const lastClickClusterTimeRef = useRef<number>(0);
   const lastScrollTimeRef = useRef<number>(0);
   const focusPointRef = useRef<{ x: number; y: number } | null>(null);
-  const zoomTargetRef = useRef<number>(1); // Target zoom level
-  const clickedElementBoundsRef = useRef<{ left: number; top: number; right: number; bottom: number } | null>(null); // Track clicked element bounds
+  const cursorDwellStartRef = useRef<number | null>(null);
+  const cursorDwellPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const zoomTargetRef = useRef<number>(1); // Target zoom level (for partial zoom-out)
+  const holdStartTimeRef = useRef<number | null>(null);
   const cameraOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const neutralCameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isScrollingRef = useRef<boolean>(false);
@@ -301,8 +252,6 @@ export default function Recorder() {
   const chunksRef = useRef<Blob[]>([]);
   const clicksRef = useRef<ClickData[]>([]);
   const movesRef = useRef<MoveData[]>([]);
-  const effectsRef = useRef<EffectEvent[]>([]);
-  const activeEffectElementRef = useRef<Element | null>(null);
   const recordingStartTimeRef = useRef<number>(0);
   const lastClickTimeRef = useRef<number>(0);
   const lastMoveTimeRef = useRef<number>(0);
@@ -837,15 +786,9 @@ export default function Recorder() {
         ctx.save();
         ctx.globalAlpha = opacity;
 
-        // Determine color based on click type and semantics
+        // Determine color based on click type
         const isRightClick = click.type === "rightClick";
-        let color = "59, 130, 246"; // Default Blue
-
-        if (isRightClick || click.elementInfo?.semanticType === "danger") {
-          color = "239, 68, 68"; // Red
-        } else if (click.elementInfo?.semanticType === "secondary") {
-          color = "156, 163, 175"; // Gray
-        }
+        const color = isRightClick ? "239, 68, 68" : "59, 130, 246";
 
         // Optimized ripple drawing - batch similar operations
         const colorRgba = `rgba(${color}, `;
@@ -1022,11 +965,10 @@ export default function Recorder() {
       const primaryKeywords = ["submit", "save", "create", "confirm", "login", "sign up", "continue", "next", "send"];
       const dangerKeywords = ["delete", "remove", "cancel", "destroy", "stop"];
 
-      let semanticType: "primary" | "secondary" | "danger" | "neutral" | "text" = "neutral";
+      let semanticType: "primary" | "secondary" | "danger" | "neutral" = "neutral";
       if (primaryKeywords.some(k => text.includes(k))) semanticType = "primary";
       else if (dangerKeywords.some(k => text.includes(k))) semanticType = "danger";
       else if (target.tagName === "BUTTON" || target.tagName === "A" || target.getAttribute("role") === "button") semanticType = "secondary";
-      else if (["P", "H1", "H2", "H3", "H4", "H5", "H6", "LI", "PRE", "CODE", "BLOCKQUOTE", "INPUT", "TEXTAREA"].includes(target.tagName)) semanticType = "text";
 
       // Safe processing of className which can be non-string for SVG elements
       const safeClassName = typeof target.className === 'string'
@@ -1159,6 +1101,28 @@ export default function Recorder() {
         }
       })();
 
+      // Cancel any ongoing zoom-out
+      if (zoomState === "DECAY" || zoomState === "HOLD") {
+        if (shouldZoom) {
+          setZoomState("FOCUSED");
+        } else {
+          // Don't zoom, but still update intent
+          return;
+        }
+      } else if (zoomState === "NEUTRAL") {
+        if (shouldZoom) {
+          setZoomState("FOCUSED");
+        } else {
+          // Don't zoom - suppress this zoom
+          return;
+        }
+      } else if (zoomState === "FOCUSED") {
+        // Already focused - only update if we should zoom more
+        if (!shouldZoom) {
+          return;
+        }
+      }
+
       // Trigger zoom-in (event-driven) - only if shouldZoom is true
       if (shouldZoom) {
         try {
@@ -1180,19 +1144,10 @@ export default function Recorder() {
               const elementArea = rect.width * rect.height;
               // Consider element small if it's less than 5% of viewport
               isSmallTarget = elementArea < viewportArea * 0.05;
-
-              // Store element bounds for zoom-out detection
-              clickedElementBoundsRef.current = {
-                left: rect.left,
-                top: rect.top,
-                right: rect.right,
-                bottom: rect.bottom
-              };
             }
           } catch (e) {
             // Fallback: if we can't determine size, don't boost
             isSmallTarget = false;
-            clickedElementBoundsRef.current = null;
           }
 
           // Boost zoom for small targets or slow, deliberate cursor movement
@@ -1207,16 +1162,12 @@ export default function Recorder() {
           );
 
           zoomTargetRef.current = targetZoom;
-          setZoomState("FOCUSED");
           // Reset velocity when starting new zoom-in for clean transition
           zoomVelocityRef.current = 0;
         } catch (error) {
           console.error('handlePointerDown: Error setting zoom target', error);
           // Continue without zoom on error
         }
-      } else {
-        // If zoom is suppressed, clear element bounds
-        clickedElementBoundsRef.current = null;
       }
     }
   }, [recordingState, followCursor, zoomState]);
@@ -1258,57 +1209,6 @@ export default function Recorder() {
         screenWidth: clientWidth,
         screenHeight: clientHeight,
       });
-
-      // ⚡️ EFFECT ENGINE: Detect Elements & Apply Rules
-      // We do this inside the throttling block to avoid excessive DOM checks (expensive)
-      const element = document.elementFromPoint(event.clientX, event.clientY);
-
-      if (element && element !== activeEffectElementRef.current) {
-        // Find matching rule with highest priority
-        const matchedRule = EFFECT_RULES
-          .filter(rule => element.matches(rule.selector))
-          .sort((a, b) => (b.priority || 0) - (a.priority || 0))[0];
-
-        if (matchedRule) {
-          // New valid target found
-          activeEffectElementRef.current = element;
-          const rect = element.getBoundingClientRect();
-
-          // Record ENTRY event
-          effectsRef.current.push({
-            timestamp: (now - recordingStartTimeRef.current) / 1000,
-            type: "enter",
-            selector: matchedRule.selector,
-            action: matchedRule.onEnter,
-            rect: {
-              left: rect.left / clientWidth,
-              top: rect.top / clientHeight,
-              width: rect.width / clientWidth,
-              height: rect.height / clientHeight
-            }
-          });
-
-          // Apply immediate visual feedback (Optional - for recorder preview)
-          // handleEffectPreview(matchedRule.onEnter); 
-        } else if (activeEffectElementRef.current) {
-          // We had an active element, but now we are on something that matches NO rules (or null)
-          // Record LEAVE event
-          effectsRef.current.push({
-            timestamp: (now - recordingStartTimeRef.current) / 1000,
-            type: "leave",
-            selector: "unknown", // or previous selector if we tracked it
-          });
-          activeEffectElementRef.current = null;
-        }
-      } else if (!element && activeEffectElementRef.current) {
-        // Moved off screen or to void
-        effectsRef.current.push({
-          timestamp: (now - recordingStartTimeRef.current) / 1000,
-          type: "leave",
-          selector: "void",
-        });
-        activeEffectElementRef.current = null;
-      }
     }
 
     // Update current cursor position for preview following
@@ -1327,29 +1227,37 @@ export default function Recorder() {
     }
     lastCursorMoveTimeRef.current = nowForSpeed;
 
-    // 🎯 Check if cursor left the clicked element - zoom out if so
-    if (followCursor && zoomState === "FOCUSED" && clickedElementBoundsRef.current) {
-      const bounds = clickedElementBoundsRef.current;
-      const cursorX = event.clientX;
-      const cursorY = event.clientY;
-
-      // Check if cursor is outside the element bounds (with small padding for tolerance)
-      const padding = 10; // pixels tolerance
-      if (cursorX < bounds.left - padding ||
-        cursorX > bounds.right + padding ||
-        cursorY < bounds.top - padding ||
-        cursorY > bounds.bottom + padding) {
-        // Cursor left the element - zoom out
-        setZoomState("NEUTRAL");
-        zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
-        clickedElementBoundsRef.current = null;
-        zoomVelocityRef.current = 0;
-      }
-    }
-
-    // 🧠 Intent tracking: Update intent time on movement
+    // 🧠 Intent tracking: Detect focused movement and cursor dwell
     if (followCursor) {
-      lastIntentTimeRef.current = now;
+      const currentPos = { x: normalizedX, y: normalizedY };
+
+      // Check if cursor is moving (focused movement)
+      const movementThreshold = 0.01; // 1% of viewport
+      if (cursorDwellPositionRef.current) {
+        const dx = Math.abs(currentPos.x - cursorDwellPositionRef.current.x);
+        const dy = Math.abs(currentPos.y - cursorDwellPositionRef.current.y);
+        const distance = Math.sqrt(dx * dx + dy * dy);
+
+        if (distance > movementThreshold) {
+          // Cursor is moving - this is focused movement (intent active)
+          lastIntentTimeRef.current = now;
+          cursorDwellStartRef.current = null;
+          cursorDwellPositionRef.current = currentPos;
+        } else {
+          // Cursor is dwelling (staying in place - could be reading)
+          // Don't reset intent immediately, but track dwell start
+          if (cursorDwellStartRef.current === null) {
+            cursorDwellStartRef.current = now;
+          }
+          cursorDwellPositionRef.current = currentPos;
+          // Note: Dwell doesn't reset intent - reading is valid intent
+        }
+      } else {
+        // First position - initialize
+        cursorDwellStartRef.current = now;
+        cursorDwellPositionRef.current = currentPos;
+        lastIntentTimeRef.current = now; // Initial position is intent
+      }
     }
   }, [recordingState, followCursor, zoomState]);
 
@@ -1384,11 +1292,10 @@ export default function Recorder() {
         lastScrollTimeRef.current = now;
         isScrollingRef.current = true;
 
-        // Cancel zoom-in immediately on scroll
-        if (zoomState === "FOCUSED") {
+        // Cancel zoom-in immediately
+        if (zoomState === "FOCUSED" || zoomState === "HOLD" || zoomState === "DECAY") {
           setZoomState("NEUTRAL");
-          zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
-          clickedElementBoundsRef.current = null;
+          zoomTargetRef.current = 1;
         }
 
         // Clear scroll timeout
@@ -1397,6 +1304,11 @@ export default function Recorder() {
         // Mark scroll as settled after 400ms
         scrollTimeout = setTimeout(() => {
           isScrollingRef.current = false;
+          // Start zoom-out after scroll settles
+          if (zoomLevel > 1) {
+            setZoomState("HOLD");
+            holdStartTimeRef.current = Date.now();
+          }
         }, 400);
       };
 
@@ -1426,16 +1338,126 @@ export default function Recorder() {
     }
   }, [recordingState, handlePointerDown, handlePointerMove, currentCursorPos, followCursor, zoomState, zoomLevel]);
 
-  // Reset zoom state when not following or not recording
+  // 🧠 ZOOM-OUT STATE MACHINE: Intent-driven zoom-out logic
   useEffect(() => {
     if (!followCursor || recordingState !== "recording") {
+      // Reset zoom state when not following or not recording
       if (zoomState !== "NEUTRAL") {
         setZoomState("NEUTRAL");
-        zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
-        clickedElementBoundsRef.current = null;
+        setZoomLevel(1);
+        zoomTargetRef.current = 1;
       }
+      return;
     }
-  }, [followCursor, recordingState, zoomState]);
+
+    const checkInterval = setInterval(() => {
+      const now = Date.now();
+      const timeSinceLastIntent = now - lastIntentTimeRef.current;
+      const timeSinceLastClick = now - lastClickTimeRef.current;
+      const timeSinceLastScroll = now - lastScrollTimeRef.current;
+
+      // Don't process if scrolling
+      if (isScrollingRef.current) return;
+
+      // ✅ TRIGGER 1: Intent Idle (Primary Trigger)
+      const T_idle = CAMERA_CONFIG.INTENT_IDLE_MS;
+
+      // Check if cursor is actively dwelling (reading) - this is valid intent
+      const isCursorDwelling = cursorDwellStartRef.current !== null &&
+        cursorDwellPositionRef.current !== null;
+      const dwellDuration = isCursorDwelling && cursorDwellStartRef.current
+        ? now - cursorDwellStartRef.current
+        : Infinity;
+
+      // Intent is idle if: no recent clicks, no recent movement, and not dwelling
+      const isIntentIdle = timeSinceLastIntent > T_idle &&
+        timeSinceLastClick > T_idle &&
+        !isCursorDwelling; // Cursor dwell (reading) is valid intent
+
+      // ✅ TRIGGER 2: Cursor Leaves Focus Area
+      let cursorLeftFocus = false;
+      if (focusPointRef.current && currentCursorPos) {
+        const dx = Math.abs(currentCursorPos.x - focusPointRef.current.x);
+        const dy = Math.abs(currentCursorPos.y - focusPointRef.current.y);
+        const viewportDistance = Math.max(dx, dy);
+
+        if (viewportDistance > CAMERA_CONFIG.CURSOR_LEAVE_DISTANCE) {
+          // Check if sustained for configured threshold
+          const cursorLeaveStart = now - (timeSinceLastIntent);
+          if (cursorLeaveStart > CAMERA_CONFIG.CURSOR_LEAVE_FOCUS_MS) {
+            cursorLeftFocus = true;
+          }
+        }
+      }
+
+      // ✅ TRIGGER 3: Click Cluster Ends
+      const T_cluster = CAMERA_CONFIG.CLICK_CLUSTER_MS;
+      const clickClusterEnded = timeSinceLastClick > T_cluster &&
+        clicksRef.current.length > 0 &&
+        zoomState === "FOCUSED";
+
+      // State machine transitions
+      if (zoomState === "FOCUSED") {
+        // Check if we should enter HOLD state
+        if (isIntentIdle || cursorLeftFocus || clickClusterEnded) {
+          setZoomState("HOLD");
+          holdStartTimeRef.current = now;
+        }
+      } else if (zoomState === "HOLD") {
+        // Hold for configured duration before decay (ScreenStudio-style: let brain finish processing)
+        const holdStartTime = holdStartTimeRef.current;
+        const holdDuration = holdStartTime && Number.isFinite(holdStartTime)
+          ? now - holdStartTime
+          : 0;
+
+        // 🛡️ PRODUCTION: Validate hold duration
+        if (holdDuration > CAMERA_CONFIG.HOLD_DURATION_MS && Number.isFinite(holdDuration)) {
+          // Check if new intent occurred during hold
+          if (timeSinceLastIntent < T_idle && timeSinceLastClick < T_idle) {
+            // New intent - cancel zoom-out
+            setZoomState("FOCUSED");
+            holdStartTimeRef.current = null;
+          } else {
+            // Proceed to decay
+            try {
+              setZoomState("DECAY");
+              // Set partial zoom target (don't always return to 1.0)
+              const currentZoom = Number.isFinite(zoomLevel) ? zoomLevel : CAMERA_CONFIG.ZOOM_MIN;
+              if (currentZoom > 1.3) {
+                zoomTargetRef.current = Math.max(
+                  CAMERA_CONFIG.ZOOM_MIN,
+                  Math.min(CAMERA_CONFIG.ZOOM_MAX, Math.max(1.15, currentZoom * 0.8))
+                ); // Partial zoom-out
+              } else {
+                zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN; // Full zoom-out for smaller zooms
+              }
+            } catch (error) {
+              console.error('Zoom state transition: Error in HOLD -> DECAY', error);
+              // Fail safe: reset to neutral
+              setZoomState("NEUTRAL");
+              zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+            }
+          }
+        }
+      } else if (zoomState === "DECAY") {
+        // Decay is handled in the cursor following effect
+        // But check if we should cancel decay due to new intent
+        if (timeSinceLastIntent < T_idle && timeSinceLastClick < T_idle) {
+          // New intent detected - cancel zoom-out, re-enter FOCUSED
+          setZoomState("FOCUSED");
+          lastIntentTimeRef.current = now;
+          zoomTargetRef.current = 1.4; // Re-zoom to click target
+        }
+      } else if (zoomState === "NEUTRAL") {
+        // In neutral state, check if we've reached target
+        if (Math.abs(zoomLevel - zoomTargetRef.current) < 0.01) {
+          zoomTargetRef.current = 1.0;
+        }
+      }
+    }, 100); // Check every 100ms
+
+    return () => clearInterval(checkInterval);
+  }, [followCursor, recordingState, zoomState, zoomLevel, currentCursorPos]);
 
   // Track cursor position - sync indicator with actual cursor tracking (FIXED)
   // Convert currentCursorPos (window-normalized) to container-relative position
@@ -1629,11 +1651,14 @@ export default function Recorder() {
           }
         }
 
-        // 🟢 ZOOM-OUT: Smooth zoom-out when state is NEUTRAL
-        if (currentZoomState === "NEUTRAL" && currentZoom > CAMERA_CONFIG.ZOOM_MIN) {
-          const targetZoom = CAMERA_CONFIG.ZOOM_MIN;
+        // 🟢 ZOOM-OUT: State-driven with spring-damper smoothing
+        // ScreenStudio-style: Zoom-out is slower/more gentle than zoom-in
+        if (currentZoomState === "DECAY") {
+          const targetZoom = Number.isFinite(zoomTargetRef.current)
+            ? Math.max(CAMERA_CONFIG.ZOOM_MIN, Math.min(CAMERA_CONFIG.ZOOM_MAX, zoomTargetRef.current))
+            : CAMERA_CONFIG.ZOOM_MIN;
 
-          // Use slower stiffness for zoom-out (50% of zoom-in) - makes zoom-out smooth
+          // Use slower stiffness for zoom-out (50% of zoom-in) - makes zoom-out nearly invisible
           const zoomOutStiffness = CAMERA_CONFIG.ZOOM_STIFFNESS * 0.5;
 
           // Spring smoothing with slower zoom-out values
@@ -1661,8 +1686,15 @@ export default function Recorder() {
             // Check if we've reached target (with threshold for spring settling)
             if (Math.abs(newZoom - targetZoom) < CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD &&
               Math.abs(zoomVel) < CAMERA_CONFIG.SPRING_SETTLE_THRESHOLD) {
-              zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
-              zoomVelocityRef.current = 0; // Reset velocity when reaching neutral
+              if (targetZoom <= CAMERA_CONFIG.ZOOM_MIN + 0.01) {
+                if (isMounted) {
+                  setZoomState("NEUTRAL");
+                }
+                zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+                zoomVelocityRef.current = 0; // Reset velocity when reaching neutral
+              } else {
+                zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+              }
             }
           }
         }
@@ -1689,10 +1721,29 @@ export default function Recorder() {
         let targetOffsetX = (containerWidth / 2) - (cursorX * scaledWidth);
         let targetOffsetY = (containerHeight / 2) - (cursorY * scaledHeight);
 
-        // Update neutral reference for camera position
-        if (Number.isFinite(targetOffsetX) && Number.isFinite(targetOffsetY)) {
-          neutralCameraRef.current.x = targetOffsetX;
-          neutralCameraRef.current.y = targetOffsetY;
+        // 🧠 Gentle camera re-centering during zoom-out (80-90% instead of perfect)
+        if (currentZoomState === "DECAY") {
+          const blendFactor = CAMERA_CONFIG.DECAY_BLEND_FACTOR;
+          const neutralX = Number.isFinite(neutralCameraRef.current.x) ? neutralCameraRef.current.x : 0;
+          const neutralY = Number.isFinite(neutralCameraRef.current.y) ? neutralCameraRef.current.y : 0;
+
+          // 🛡️ PRODUCTION: Validate offsets before blending
+          if (Number.isFinite(targetOffsetX) && Number.isFinite(targetOffsetY) &&
+            Number.isFinite(neutralX) && Number.isFinite(neutralY)) {
+            // Blend towards neutral with natural drift
+            targetOffsetX = lerp(neutralX, targetOffsetX, 1 - blendFactor);
+            targetOffsetY = lerp(neutralY, targetOffsetY, 1 - blendFactor);
+
+            // Update neutral reference slowly (adds organic imperfection)
+            neutralCameraRef.current.x = lerp(neutralCameraRef.current.x, targetOffsetX, 0.1);
+            neutralCameraRef.current.y = lerp(neutralCameraRef.current.y, targetOffsetY, 0.1);
+          }
+        } else {
+          // Update neutral reference when not zooming out
+          if (Number.isFinite(targetOffsetX) && Number.isFinite(targetOffsetY)) {
+            neutralCameraRef.current.x = targetOffsetX;
+            neutralCameraRef.current.y = targetOffsetY;
+          }
         }
 
         // 🎯 Distance-based stiffness: confident when far, gentle when near
@@ -1903,13 +1954,17 @@ export default function Recorder() {
         // Only update transition when state changes (not every frame)
         const newTransitionState = currentZoomState === "FOCUSED"
           ? "zoom-in"
-          : "default";
+          : currentZoomState === "DECAY"
+            ? "zoom-out"
+            : "default";
 
         if (transitionStateRef.current !== newTransitionState && video) {
           transitionStateRef.current = newTransitionState;
           try {
             if (currentZoomState === "FOCUSED") {
               video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
+            } else if (currentZoomState === "DECAY") {
+              video.style.transition = "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
             } else {
               video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
             }
@@ -1972,9 +2027,11 @@ export default function Recorder() {
       setCurrentCursorPos(null);
       setCursorIndicatorPos(null);
       setZoomState("NEUTRAL");
-      zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+      zoomTargetRef.current = 1;
       focusPointRef.current = null;
-      clickedElementBoundsRef.current = null;
+      cursorDwellStartRef.current = null;
+      cursorDwellPositionRef.current = null;
+      holdStartTimeRef.current = null;
       cameraOffsetRef.current = { x: 0, y: 0 };
       lastIntentTimeRef.current = 0;
       lastClickClusterTimeRef.current = 0;
@@ -2215,14 +2272,9 @@ export default function Recorder() {
       }
 
       setRecordingState("stopped");
-
-      // [Auto Chapters] Generate markers from interaction groups
-      const autoChapters = generateChapters(clicksRef.current);
-      const allMarkers = [...markers, ...autoChapters].sort((a, b) => a.timestamp - b.timestamp);
-
       toast({
         title: "Recording saved",
-        description: `Redirecting to editor... (${autoChapters.length} auto-chapters created)`,
+        description: "Redirecting to editor...",
       });
 
       setTimeout(() => {
@@ -2231,14 +2283,13 @@ export default function Recorder() {
             videoUrl,
             clickData: clicksRef.current,
             moveData: movesRef.current,
-            effects: effectsRef.current,
-            markers: allMarkers,
+            markers: markers,
             visualEffects: {
               cursorEffects,
-              clickRipple: cursorEffects,
-              cursorGlow: cursorEffects,
+              clickRipple,
+              cursorGlow,
               cursorTrail,
-              showClickIndicator: cursorEffects,
+              showClickIndicator,
             },
           }
         });
@@ -2970,13 +3021,39 @@ export default function Recorder() {
 
                   <div className="flex items-center justify-between">
                     <div className="flex flex-col">
-                      <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Visual Effects</Label>
-                      <span className="text-xs text-muted-foreground">Enhance cursor and clicks</span>
+                      <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Cursor Effects</Label>
+                      <span className="text-xs text-muted-foreground">Glow and highlight cursor</span>
                     </div>
                     <Switch
                       id="cursor-effects"
                       checked={cursorEffects}
                       onCheckedChange={setCursorEffects}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="click-ripple" className="cursor-pointer text-sm">Click Ripple</Label>
+                      <span className="text-xs text-muted-foreground">Animated ripple on clicks</span>
+                    </div>
+                    <Switch
+                      id="click-ripple"
+                      checked={clickRipple}
+                      onCheckedChange={setClickRipple}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="cursor-glow" className="cursor-pointer text-sm">Cursor Glow</Label>
+                      <span className="text-xs text-muted-foreground">Glowing effect around cursor</span>
+                    </div>
+                    <Switch
+                      id="cursor-glow"
+                      checked={cursorGlow}
+                      onCheckedChange={setCursorGlow}
                       disabled={recordingState !== "idle"}
                     />
                   </div>
@@ -2990,6 +3067,19 @@ export default function Recorder() {
                       id="cursor-trail"
                       checked={cursorTrail}
                       onCheckedChange={setCursorTrail}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="click-indicator" className="cursor-pointer text-sm">Click Indicators</Label>
+                      <span className="text-xs text-muted-foreground">Visual markers for clicks</span>
+                    </div>
+                    <Switch
+                      id="click-indicator"
+                      checked={showClickIndicator}
+                      onCheckedChange={setShowClickIndicator}
                       disabled={recordingState !== "idle"}
                     />
                   </div>

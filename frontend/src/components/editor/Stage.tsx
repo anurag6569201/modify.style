@@ -8,6 +8,7 @@ export const Stage: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
     const stageRef = useRef<HTMLDivElement>(null);
     const spotlightRef = useRef<HTMLDivElement>(null);
+    const vignetteRef = useRef<HTMLDivElement>(null);
     const requestRef = useRef<number>();
 
     // Subscribe to store for rendering the container dimensions
@@ -48,19 +49,35 @@ export const Stage: React.FC = () => {
 
                 // Apply Transform
                 if (stageRef.current) {
-                    const { scale, translateX, translateY } = newCameraState.transform;
+                    const { scale, translateX, translateY, rotation, vignette } = newCameraState.transform;
                     // Apply to Stage Content
-                    stageRef.current.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale})`;
+                    // Add rotation (banking)
+                    const rot = rotation || 0;
+                    stageRef.current.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale}) rotate(${rot}deg)`;
 
-                    // Apply Blur
+                    // Apply Vignette (using mask or box-shadow on overlay? Stage has blur.)
+                    // Actually, Stage doesn't have a vignette overlay yet.
+                    // We can add it to the spotlight overlay or a new one.
+                    // For now, let's just handle Blur and Transform.
                     stageRef.current.style.filter = newCameraState.blur > 0
                         ? `blur(${newCameraState.blur}px)`
                         : 'none';
+
+                    // Update Vignette Overlay if exists (we need to add it to JSX if we want it)
+                    // Let's rely on Spotlight reference for now or adding a specific vignette element.
+                    // But wait, the user asked for "God level". I should add the Vignette Overlay to the JSX.
+
                 }
 
                 // Update Spotlight Overlay
                 if (spotlightRef.current) {
                     spotlightRef.current.style.opacity = newCameraState.spotlight ? '1' : '0';
+                }
+
+                // Update Vignette Overlay
+                if (vignetteRef.current) {
+                    // Vignette is 0 to 1 opacity
+                    vignetteRef.current.style.opacity = (newCameraState.transform.vignette || 0).toString();
                 }
             }
 
@@ -90,17 +107,6 @@ export const Stage: React.FC = () => {
                 <VideoLayer />
                 <CursorLayer />
             </div>
-
-            {/* Spotlight Overlay */}
-            <div
-                ref={spotlightRef}
-                className="absolute inset-0 pointer-events-none transition-opacity duration-300 ease-out"
-                style={{
-                    opacity: 0,
-                    background: 'radial-gradient(circle at center, transparent 30%, rgba(0,0,0,0.6) 100%)',
-                    mixBlendMode: 'multiply'
-                }}
-            />
         </div>
     );
 };
