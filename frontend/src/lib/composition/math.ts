@@ -1,5 +1,4 @@
 import { ClickData, MoveData } from "../../pages/Recorder";
-import { Move } from "lucide-react";
 
 // Linear interpolation
 export const lerp = (start: number, end: number, t: number): number => {
@@ -29,6 +28,18 @@ export const smoothstep = (min: number, max: number, value: number): number => {
     const x = Math.max(0, Math.min(1, (value - min) / (max - min)));
     return x * x * (3 - 2 * x);
 };
+
+// Interpolate with optional easing
+export const interpolate = (
+    a: number,
+    b: number,
+    t: number,
+    ease: (x: number) => number = (x) => x
+) => a + (b - a) * ease(t);
+
+// Clamp vector magnitude
+export const clampVec = (v: number, max = 5) =>
+    Math.sign(v) * Math.min(Math.abs(v), max);
 
 // Cache for sorted events to avoid re-sorting
 let cachedEvents: (ClickData | MoveData)[] | null = null;
@@ -60,20 +71,27 @@ export const getCursorPos = (
         // Binary search for large arrays
         let left = 0;
         let right = sortedEvents.length - 1;
-        let mid = 0;
+        let idx = -1;
 
         while (left <= right) {
-            mid = Math.floor((left + right) / 2);
+            const mid = Math.floor((left + right) / 2);
             if (sortedEvents[mid].timestamp <= time) {
-                prevEvent = sortedEvents[mid];
+                // Potential prev, try to find a later one
+                idx = mid;
                 left = mid + 1;
             } else {
                 right = mid - 1;
             }
         }
 
-        if (mid + 1 < sortedEvents.length) {
-            nextEvent = sortedEvents[mid + 1];
+        if (idx !== -1) {
+            prevEvent = sortedEvents[idx];
+            nextEvent = sortedEvents[idx + 1] ?? null;
+        } else {
+            // Time is before the first event or not found suitably (should catch first event if time < first)
+            // If idx is -1, it means all timestamps > time (time is BEFORE everything)
+            // So prevEvent is null, nextEvent is sortedEvents[0]
+            nextEvent = sortedEvents[0];
         }
     } else {
         // Linear search for small arrays (faster for small datasets)
@@ -104,92 +122,78 @@ export const getCursorPos = (
     const elapsed = time - prevEvent.timestamp;
     const progress = Math.min(1, Math.max(0, elapsed / duration));
 
-    // Linear interpolation for raw input feel
-    // const easedProgress = easeOutCubic(progress);
+    const eased = easeOutCubic(progress);
 
+    // Using interpolate helper now
     return {
-        x: lerp(prevEvent.x, nextEvent.x, progress),
-        y: lerp(prevEvent.y, nextEvent.y, progress),
+        x: interpolate(prevEvent.x, nextEvent.x, eased),
+        y: interpolate(prevEvent.y, nextEvent.y, eased),
     };
 };
 
 /**
  * Calculate cursor velocity in pixels/second (normalized units/second)
- * Returns 0 if cannot determine
+ * Returns 0 if cannot determine. Stable version.
  */
 export const getCursorVelocity = (
     time: number,
-    events: (ClickData | MoveData)[]
+    events: (ClickData | MoveData)[],
+    window: number = 0.08
 ): number => {
-    // Look briefly fast-forward and backward to estimate speed
-    const dt = 0.05; // 50ms window
-    const p1 = getCursorPos(time - dt, events);
-    const p2 = getCursorPos(time + dt, events);
-
+    const p1 = getCursorPos(time - window, events);
+    const p2 = getCursorPos(time + window, events);
     if (!p1 || !p2) return 0;
 
-    // Distance in normalized units
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-
-    // Speed = distance / time (2 * dt)
-    return dist / (2 * dt);
+    return Math.hypot(dx, dy) / (2 * window);
 };
 
-// Calculate camera follow strength based on padding zones
-export const paddedFollow = (d: number, inner: number, outer: number): number => {
+// Calculate camera follow strength based on padding zones - NORMALIZED FORCE
+export const paddedFollow = (
+    d: number,
+    inner: number,
+    outer: number
+): number => {
     const abs = Math.abs(d);
-    if (abs < inner) return 0;
+    if (abs <= inner) return 0;
 
-    // Soft boundary using smoothstep
-    // strength goes from 0 to 1 as we go from inner to outer
-    const strength = smoothstep(inner, outer, abs);
-
-    // Return the "excess" purely for direction/magnitude scaling, 
-    // but the *feel* comes from the strength curve being smooth.
-    // Actually, user said: strength = smoothstep(inner, outer, abs(distance));
-    // And applied it to the boundary response.
-
-    // We render the "force" or "shift" as:
-    const excess = abs - inner;
-    return Math.sign(d) * strength * excess;
+    const t = clamp((abs - inner) / (outer - inner), 0, 1);
+    return Math.sign(d) * easeInOutCubic(t);
 };
 
 /**
  * Calculate cursor velocity vector in component normalized units/second
- * Returns {x: 0, y: 0} if cannot determine
+ * Returns {x: 0, y: 0} if cannot determine. Clamped.
  */
 export const getCursorVelocityVector = (
     time: number,
-    events: (ClickData | MoveData)[]
+    events: (ClickData | MoveData)[],
+    dt: number = 0.05
 ): { x: number; y: number } => {
-    // Look briefly fast-forward and backward to estimate speed
-    const dt = 0.05; // 50ms window
     const p1 = getCursorPos(time - dt, events);
     const p2 = getCursorPos(time + dt, events);
 
     if (!p1 || !p2) return { x: 0, y: 0 };
 
-    // Distance in normalized units
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
 
-    // Velocity components
+    // Use clampVec to prevent spikes
     return {
-        x: dx / (2 * dt),
-        y: dy / (2 * dt)
+        x: clampVec(dx / (2 * dt)),
+        y: clampVec(dy / (2 * dt)),
     };
 };
 
 /**
  * Filter out micro-movements (jitter) from a sequence of moves
- * @param moves List of MoveData
- * @param threshold Normalized distance threshold (e.g. 0.005 for 0.5%)
+ * Time + Distance aware.
  */
 export const cleanJitter = (
     moves: MoveData[],
-    threshold: number = 0.005
+    distThreshold: number = 0.005,
+    timeThresholdMs: number = 300
 ): MoveData[] => {
     if (moves.length < 2) return moves;
 
@@ -201,15 +205,12 @@ export const cleanJitter = (
         const dx = current.x - lastValid.x;
         const dy = current.y - lastValid.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
+        const timeDiff = (current.timestamp - lastValid.timestamp) * 1000;
 
-        // If moved enough, keep it
-        if (dist >= threshold) {
+        // Keep if moved enough OR if significant time passed (intentional stop/slow move)
+        if (dist >= distThreshold || timeDiff > timeThresholdMs) {
             result.push(current);
             lastValid = current;
-        } else {
-            // Check if significant time passed (e.g. not jitter, but slow drift or stop)
-            // If time diff > 0.5s, maybe we SHOULD update to show we stopped here?
-            // For now, simple distance filter as requested.
         }
     }
 
@@ -240,20 +241,17 @@ export const solveSpring = (
     mass: number,
     dt: number
 ): { value: number; velocity: number } => {
-    // Force method (Semi-Implicit Euler for stability)
-    // F_spring = -k * (x - target)
-    // F_damp = -c * v
-    // c = damping * 2 * sqrt(k * m)
-
     // Safety clamp for dt to prevent explosion
     const safeDt = Math.min(dt, 0.1);
 
     const displacement = current - target;
     const springForce = -stiffness * displacement;
 
-    // Calculate critical damping coefficient
+    // Calculate damping coefficient based on ratio (zeta)
+    // critical damping c = 2 * sqrt(k * m)
     const criticalDamping = 2 * Math.sqrt(stiffness * mass);
-    const dampingForce = -damping * criticalDamping * velocity;
+    const c = damping * criticalDamping;
+    const dampingForce = -c * velocity;
 
     const acceleration = (springForce + dampingForce) / mass;
     const newVelocity = velocity + acceleration * safeDt;
@@ -261,4 +259,13 @@ export const solveSpring = (
 
     return { value: newValue, velocity: newVelocity };
 };
+
+// Preset for critical damping
+export const springCritical = (
+    current: number,
+    target: number,
+    velocity: number,
+    k: number, // Stiffness (e.g., 120)
+    dt: number
+) => solveSpring(current, target, velocity, k, 1.0, 1.0, dt);
 

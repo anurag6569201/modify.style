@@ -42,41 +42,52 @@ export const CursorLayer: React.FC = () => {
             ctx.clearRect(0, 0, width, height);
 
             // -------------------------------------------------------------
-            // 1. Draw Clicks (Ripples)
+            // 1. Draw Click Animations
             // -------------------------------------------------------------
-            if (state.effects.clickRipple) {
+            if (state.effects.clickAnimationStyle !== 'none' && state.effects.clickRipple) {
                 const CLICK_DELAY = 0.08; // 80ms delay
+                const ANIMATION_DURATION = 0.6; // 600ms total
                 const activeClicks = state.events.clicks.filter(c => {
                     const diff = time - c.timestamp;
-                    return diff >= CLICK_DELAY && diff < CLICK_DELAY + 0.6; // 600ms lifetime after delay
+                    return diff >= CLICK_DELAY && diff < CLICK_DELAY + ANIMATION_DURATION;
                 });
 
                 activeClicks.forEach(click => {
-                    const CLICK_DELAY = 0.08;
-                    const progress = (time - (click.timestamp + CLICK_DELAY)) / 0.6;
-                    const ease = 1 - Math.pow(1 - progress, 3); // Cubic ease out
-
-                    const maxRadius = Math.min(width, height) * 0.05 * state.effects.clickSize;
-                    const radius = maxRadius * (0.5 + 0.5 * ease);
-                    const opacity = 1 - Math.pow(progress, 2);
-
+                    const timeSinceClick = time - click.timestamp;
+                    const progress = Math.max(0, Math.min(1, (timeSinceClick - CLICK_DELAY) / ANIMATION_DURATION));
+                    
+                    // Apply easing
+                    const easedProgress = applyEasing(progress, state.effects.clickEasing);
+                    
+                    // Apply force multiplier
+                    const force = state.effects.clickForce;
+                    
                     const cx = click.x * width;
                     const cy = click.y * height;
-
-                    ctx.beginPath();
-                    ctx.arc(cx, cy, radius, 0, Math.PI * 2);
-
-                    // Parse color or use default
-                    ctx.fillStyle = click.type === 'rightClick'
-                        ? `rgba(239, 68, 68, ${opacity * 0.2})`
-                        : `rgba(59, 130, 246, ${opacity * 0.2})`;
-                    ctx.fill();
-
-                    ctx.strokeStyle = click.type === 'rightClick'
-                        ? `rgba(239, 68, 68, ${opacity})`
-                        : `rgba(59, 130, 246, ${opacity})`;
-                    ctx.lineWidth = 2;
-                    ctx.stroke();
+                    
+                    // Get color based on click type
+                    const baseColor = click.type === 'rightClick'
+                        ? { r: 239, g: 68, b: 68 }
+                        : { r: 59, g: 130, b: 246 };
+                    
+                    // Render based on animation style
+                    switch (state.effects.clickAnimationStyle) {
+                        case 'ripple':
+                            drawRipple(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            break;
+                        case 'orb':
+                            drawOrb(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            break;
+                        case 'pulse':
+                            drawPulse(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            break;
+                        case 'ring':
+                            drawRing(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            break;
+                        case 'splash':
+                            drawSplash(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            break;
+                    }
                 });
             }
 
@@ -138,3 +149,188 @@ export const CursorLayer: React.FC = () => {
         />
     );
 };
+
+// Easing functions
+function applyEasing(t: number, easing: string): number {
+    switch (easing) {
+        case 'linear':
+            return t;
+        case 'ease-out':
+            return 1 - Math.pow(1 - t, 3);
+        case 'ease-in-out':
+            return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2;
+        case 'bounce':
+            const n1 = 7.5625;
+            const d1 = 2.75;
+            if (t < 1 / d1) {
+                return n1 * t * t;
+            } else if (t < 2 / d1) {
+                return n1 * (t -= 1.5 / d1) * t + 0.75;
+            } else if (t < 2.5 / d1) {
+                return n1 * (t -= 2.25 / d1) * t + 0.9375;
+            } else {
+                return n1 * (t -= 2.625 / d1) * t + 0.984375;
+            }
+        case 'elastic':
+            const c4 = (2 * Math.PI) / 3;
+            return t === 0 ? 0 : t === 1 ? 1 : Math.pow(2, -10 * t) * Math.sin((t * 10 - 0.75) * c4) + 1;
+        default:
+            return 1 - Math.pow(1 - t, 3);
+    }
+}
+
+// Animation drawing functions
+function drawRipple(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    progress: number,
+    eased: number,
+    width: number,
+    height: number,
+    sizeMultiplier: number,
+    force: number,
+    color: { r: number; g: number; b: number }
+) {
+    const maxRadius = Math.min(width, height) * 0.05 * sizeMultiplier * force;
+    const radius = maxRadius * (0.3 + 0.7 * eased);
+    const opacity = (1 - progress) * force;
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity * 0.2})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`;
+    ctx.lineWidth = 2 * force;
+    ctx.stroke();
+}
+
+function drawOrb(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    progress: number,
+    eased: number,
+    width: number,
+    height: number,
+    sizeMultiplier: number,
+    force: number,
+    color: { r: number; g: number; b: number }
+) {
+    const maxRadius = Math.min(width, height) * 0.04 * sizeMultiplier * force;
+    const radius = maxRadius * eased;
+    const opacity = (1 - Math.pow(progress, 2)) * force;
+
+    // Outer glow
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius);
+    gradient.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`);
+    gradient.addColorStop(0.5, `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity * 0.5})`);
+    gradient.addColorStop(1, `rgba(${color.r}, ${color.g}, ${color.b}, 0)`);
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+}
+
+function drawPulse(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    progress: number,
+    eased: number,
+    width: number,
+    height: number,
+    sizeMultiplier: number,
+    force: number,
+    color: { r: number; g: number; b: number }
+) {
+    const maxRadius = Math.min(width, height) * 0.06 * sizeMultiplier * force;
+    const pulse = Math.sin(progress * Math.PI * 4) * 0.5 + 0.5; // Pulsing effect
+    const radius = maxRadius * (0.4 + 0.6 * eased) * (1 + pulse * 0.2);
+    const opacity = (1 - progress) * force * (0.7 + pulse * 0.3);
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity * 0.3})`;
+    ctx.fill();
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`;
+    ctx.lineWidth = 3 * force;
+    ctx.stroke();
+}
+
+function drawRing(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    progress: number,
+    eased: number,
+    width: number,
+    height: number,
+    sizeMultiplier: number,
+    force: number,
+    color: { r: number; g: number; b: number }
+) {
+    const maxRadius = Math.min(width, height) * 0.05 * sizeMultiplier * force;
+    const radius = maxRadius * eased;
+    const opacity = (1 - progress) * force;
+    const ringWidth = 4 * force;
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`;
+    ctx.lineWidth = ringWidth;
+    ctx.stroke();
+
+    // Inner ring
+    if (progress < 0.5) {
+        const innerRadius = radius * 0.6;
+        ctx.beginPath();
+        ctx.arc(x, y, innerRadius, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity * 0.5})`;
+        ctx.lineWidth = ringWidth * 0.5;
+        ctx.stroke();
+    }
+}
+
+function drawSplash(
+    ctx: CanvasRenderingContext2D,
+    x: number,
+    y: number,
+    progress: number,
+    eased: number,
+    width: number,
+    height: number,
+    sizeMultiplier: number,
+    force: number,
+    color: { r: number; g: number; b: number }
+) {
+    const maxRadius = Math.min(width, height) * 0.08 * sizeMultiplier * force;
+    const radius = maxRadius * eased;
+    const opacity = (1 - Math.pow(progress, 1.5)) * force;
+    const particles = 8;
+
+    // Central orb
+    const gradient = ctx.createRadialGradient(x, y, 0, x, y, radius * 0.5);
+    gradient.addColorStop(0, `rgba(${color.r}, ${color.g}, ${color.b}, ${opacity})`);
+    gradient.addColorStop(1, `rgba(${color.r}, ${color.g}, ${color.b}, 0)`);
+    ctx.beginPath();
+    ctx.arc(x, y, radius * 0.5, 0, Math.PI * 2);
+    ctx.fillStyle = gradient;
+    ctx.fill();
+
+    // Splash particles
+    for (let i = 0; i < particles; i++) {
+        const angle = (i / particles) * Math.PI * 2;
+        const distance = radius * (0.5 + eased * 0.5);
+        const px = x + Math.cos(angle) * distance;
+        const py = y + Math.sin(angle) * distance;
+        const particleSize = (radius * 0.1) * (1 - progress);
+        const particleOpacity = opacity * (1 - progress * 0.5);
+
+        ctx.beginPath();
+        ctx.arc(px, py, particleSize, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(${color.r}, ${color.g}, ${color.b}, ${particleOpacity})`;
+        ctx.fill();
+    }
+}

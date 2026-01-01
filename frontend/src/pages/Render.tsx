@@ -1,19 +1,36 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useRef } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
 import { Check, ArrowLeft, Download, Loader2, Video, FileVideo, Image as ImageIcon, Settings } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { getCursorPos } from "@/lib/composition/math";
-import { getInitialCameraState, updateCameraSystem } from "@/lib/composition/camera";
-import { ClickData, MoveData } from "./Recorder";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
-import { FilterEngine } from "@/lib/effects/filters";
 
 export default function Render() {
   const location = useLocation();
-  const { videoUrl, clickData, moveData, effects } = location.state || {}; // { videoUrl: string, clickData: ClickData[], moveData: MoveData[], effects: EffectEvent[] }
+  const {
+    videoUrl,
+    clickData,
+    moveData,
+  } = location.state || {}; // location.state can be null/undefined
+  
+  // Get screen dimensions from recorded data (use first click/move to get screen size)
+  const getScreenDimensions = () => {
+    if (clickData && clickData.length > 0) {
+      return {
+        width: clickData[0].screenWidth,
+        height: clickData[0].screenHeight,
+      };
+    }
+    if (moveData && moveData.length > 0) {
+      return {
+        width: moveData[0].screenWidth,
+        height: moveData[0].screenHeight,
+      };
+    }
+    return null;
+  };
 
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -32,15 +49,8 @@ export default function Render() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
+  const containerDimsRef = useRef<{ width: number; height: number } | null>(null);
   const { toast } = useToast();
-
-  // Load cursor image
-  const cursorImageRef = useRef<HTMLImageElement | null>(null);
-  useEffect(() => {
-    const img = new Image();
-    img.src = `data:image/svg+xml;utf8,<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M5.5 3.5L11.5 19.5L14.5 13.5L20.5 13.5L5.5 3.5Z" fill="black" stroke="white" stroke-width="1.5"/></svg>`;
-    cursorImageRef.current = img;
-  }, []);
 
   const startRendering = async () => {
     if (!videoUrl || !canvasRef.current || !videoRef.current) return;
@@ -55,19 +65,47 @@ export default function Render() {
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
 
-    // Wait for video metadata
+    // Wait for video metadata to be fully loaded
     if (video.readyState < 2) {
       await new Promise(r => { video.onloadedmetadata = r; });
     }
+    
+    // Wait a bit more to ensure video dimensions are available
+    await new Promise(resolve => setTimeout(resolve, 100));
 
-    // Set canvas size to video size
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const width = canvas.width;
-    const height = canvas.height;
+    // Get video dimensions - ensure they're valid
+    let videoWidth = video.videoWidth;
+    let videoHeight = video.videoHeight;
+    
+    // Fallback if dimensions are not available
+    if (!videoWidth || !videoHeight || videoWidth === 0 || videoHeight === 0) {
+      // Wait for video to load dimensions
+      await new Promise(resolve => {
+        const checkDimensions = () => {
+          if (video.videoWidth > 0 && video.videoHeight > 0) {
+            videoWidth = video.videoWidth;
+            videoHeight = video.videoHeight;
+            resolve(undefined);
+          } else {
+            setTimeout(checkDimensions, 50);
+          }
+        };
+        checkDimensions();
+      });
+    }
 
-    // Initialize filter engine
-    const filterEngine = new FilterEngine(ctx, width, height);
+    // Get screen dimensions from recorded data (container wrapper size)
+    const screenDims = getScreenDimensions();
+    const containerWidth = screenDims?.width || videoWidth;
+    const containerHeight = screenDims?.height || videoHeight;
+    
+    // Store container dimensions for use in render loop
+    containerDimsRef.current = { width: containerWidth, height: containerHeight };
+
+    // Set canvas size to match screen/container dimensions (wrapper size)
+    // This is the container that will hold the video
+    canvas.width = containerWidth;
+    canvas.height = containerHeight;
 
     // Determine FPS based on quality
     const fps = exportQuality === "high" ? 60 : exportQuality === "medium" ? 30 : 24;
@@ -75,7 +113,7 @@ export default function Render() {
 
     // Handle different export formats
     if (exportFormat === "gif" || exportFormat === "apng") {
-      await renderAnimatedImage(exportFormat, fps, filterEngine);
+      await renderAnimatedImage(exportFormat, fps);
       return;
     }
 
@@ -120,110 +158,25 @@ export default function Render() {
     video.currentTime = 0;
     await video.play();
 
-    // Rendering Loop
-    let cameraState = getInitialCameraState();
-
-    // We update manually frame-by-frame or just let it play and sync?
-    // "Replay composition programmatically"
-    // Ideally we'd use requestVideoFrameCallback but let's use requestAnimationFrame + video sync for broad support
-
+    // Simple rendering loop - just draw raw video frame
     const renderLoop = () => {
       if (video.ended || video.paused) {
         if (video.ended) {
           mediaRecorder.stop();
           return;
         }
-        // If paused but not ended, maybe buffering? keep checking
       }
 
       const time = video.currentTime;
       setProgress((time / video.duration) * 100);
 
-      // 1. Calculate Camera State
-      // Using fixed time step for physics consistency (60fps)
-      cameraState = updateCameraSystem(
-        cameraState,
-        time,
-        0.016,
-        clickData || [],
-        moveData || [],
-        effects || [],
-        { width, height }
-      );
-
-      const currentTransform = cameraState.transform;
-
-      // 2. Clear & Setup Transform
-      // Important: We want to transform the video AND the effects.
-      // So we apply transform to context first.
-
-      ctx.save();
-      ctx.clearRect(0, 0, width, height);
-
-      // We need to apply transform:
-      // Translate to Origin(0,0) -> Scale -> Translate back? 
-      // Our camera logic returns translateX/Y which are top-left based offsets relative to 0,0.
-      // And we assume transform-origin is 0,0.
-
-      ctx.translate(currentTransform.translateX, currentTransform.translateY);
-      ctx.scale(currentTransform.scale, currentTransform.scale);
-
-      // 3. Draw Video Frame with Filters
-      if (filters.brightness !== 0 || filters.contrast !== 0 || filters.saturation !== 0 || filters.blur > 0) {
-        filterEngine.applyFilters(video, {
-          brightness: filters.brightness,
-          contrast: filters.contrast,
-          saturation: filters.saturation,
-          blur: filters.blur,
-        });
-      } else {
-        ctx.drawImage(video, 0, 0, width, height);
-      }
-
-      // 4. Draw Ripples
-      const activeClicks = (clickData || []).filter(
-        (c: ClickData) =>
-          (c.type?.includes("click") || c.type === "rightClick") &&
-          time >= c.timestamp &&
-          time < c.timestamp + 0.8
-      );
-
-      activeClicks.forEach((click: ClickData) => {
-        const timeSince = time - click.timestamp;
-        const progress = Math.min(1, timeSince / 0.6);
-        const maxRadius = Math.min(width, height) * 0.08;
-        const currentRadius = maxRadius * (0.2 + 0.8 * progress);
-        const opacity = 1 - Math.pow(progress, 3);
-
-        ctx.beginPath();
-        ctx.arc(click.x * width, click.y * height, currentRadius, 0, Math.PI * 2);
-        const color = click.type === "rightClick" ? "239, 68, 68" : "59, 130, 246";
-        ctx.fillStyle = `rgba(${color}, ${opacity * 0.3})`;
-        ctx.fill();
-        ctx.strokeStyle = `rgba(${color}, ${opacity})`;
-        ctx.lineWidth = 2; // Fixed width - gets scaled by camera
-        // To keep line width constant on screen, divide by scale? 
-        // "Cinematic" usually implies elements scale with the world. Keep it scaling.
-        ctx.stroke();
-      });
-
-      // 5. Draw Cursor
-      const pos = getCursorPos(time, moveData || []);
-      if (pos) {
-        const cx = pos.x * width;
-        const cy = pos.y * height;
-        if (cursorImageRef.current) {
-          // Draw cursor
-          // Shadow
-          ctx.shadowColor = "rgba(0,0,0,0.3)";
-          ctx.shadowBlur = 4;
-          ctx.shadowOffsetY = 2;
-          ctx.drawImage(cursorImageRef.current, cx - 2, cy - 2, 24, 24);
-          ctx.shadowColor = "transparent";
-        }
-      }
-
-      ctx.restore();
+      // Clear canvas (container wrapper)
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      
+      // Draw video inside the container, filling it exactly (no padding, no letterboxing)
+      // The video is scaled/stretched to fill the container dimensions
+      const containerDims = containerDimsRef.current || { width: canvas.width, height: canvas.height };
+      ctx.drawImage(video, 0, 0, containerDims.width, containerDims.height);
 
       if (!video.ended) {
         requestAnimationFrame(renderLoop);
@@ -233,15 +186,31 @@ export default function Render() {
     requestAnimationFrame(renderLoop);
   };
 
-  // Render animated image (GIF/APNG)
+  // Render animated image (GIF/APNG) - simplified to raw video
   const renderAnimatedImage = async (
     format: "gif" | "apng",
-    fps: number,
-    filterEngine: FilterEngine
+    fps: number
   ) => {
     const video = videoRef.current!;
     const canvas = canvasRef.current!;
     const ctx = canvas.getContext("2d")!;
+
+    // Wait for video metadata
+    if (video.readyState < 2) {
+      await new Promise(r => { video.onloadedmetadata = r; });
+    }
+    
+    // Get screen dimensions for container wrapper
+    const screenDims = getScreenDimensions();
+    const containerWidth = screenDims?.width || video.videoWidth;
+    const containerHeight = screenDims?.height || video.videoHeight;
+    
+    // Store container dimensions for use in captureFrame
+    containerDimsRef.current = { width: containerWidth, height: containerHeight };
+    
+    // Set canvas to match container/screen dimensions (wrapper size)
+    canvas.width = containerWidth;
+    canvas.height = containerHeight;
 
     const frames: ImageData[] = [];
     const frameInterval = 1000 / fps;
@@ -259,71 +228,10 @@ export default function Render() {
         return;
       }
 
+      // Draw video inside container wrapper, filling it exactly
+      const containerDims = containerDimsRef.current || { width: canvas.width, height: canvas.height };
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-      // Apply filters if needed
-      if (filters.brightness !== 0 || filters.contrast !== 0 || filters.saturation !== 0 || filters.blur > 0) {
-        filterEngine.applyFilters(video, {
-          brightness: filters.brightness,
-          contrast: filters.contrast,
-          saturation: filters.saturation,
-          blur: filters.blur,
-        });
-      } else {
-        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-      }
-
-      // Draw effects
-      const time = video.currentTime;
-      const cameraState = updateCameraSystem(
-        getInitialCameraState(),
-        time,
-        0.016,
-        clickData || [],
-        moveData || [],
-        effects || [],
-        { width: canvas.width, height: canvas.height }
-      );
-
-      ctx.save();
-      ctx.translate(cameraState.transform.translateX, cameraState.transform.translateY);
-      ctx.scale(cameraState.transform.scale, cameraState.transform.scale);
-
-      // Draw clicks and cursor (same as video rendering)
-      const activeClicks = (clickData || []).filter(
-        (c: ClickData) =>
-          (c.type?.includes("click") || c.type === "rightClick") &&
-          time >= c.timestamp &&
-          time < c.timestamp + 0.8
-      );
-
-      activeClicks.forEach((click: ClickData) => {
-        const timeSince = time - click.timestamp;
-        const progress = Math.min(1, timeSince / 0.6);
-        const maxRadius = Math.min(canvas.width, canvas.height) * 0.08;
-        const currentRadius = maxRadius * (0.2 + 0.8 * progress);
-        const opacity = 1 - Math.pow(progress, 3);
-
-        ctx.beginPath();
-        ctx.arc(click.x * canvas.width, click.y * canvas.height, currentRadius, 0, Math.PI * 2);
-        const color = click.type === "rightClick" ? "239, 68, 68" : "59, 130, 246";
-        ctx.fillStyle = `rgba(${color}, ${opacity * 0.3})`;
-        ctx.fill();
-        ctx.strokeStyle = `rgba(${color}, ${opacity})`;
-        ctx.lineWidth = 2;
-        ctx.stroke();
-      });
-
-      const pos = getCursorPos(time, moveData || []);
-      if (pos && cursorImageRef.current) {
-        ctx.shadowColor = "rgba(0,0,0,0.3)";
-        ctx.shadowBlur = 4;
-        ctx.shadowOffsetY = 2;
-        ctx.drawImage(cursorImageRef.current, pos.x * canvas.width - 2, pos.y * canvas.height - 2, 24, 24);
-        ctx.shadowColor = "transparent";
-      }
-
-      ctx.restore();
+      ctx.drawImage(video, 0, 0, containerDims.width, containerDims.height);
 
       // Capture frame
       frames.push(ctx.getImageData(0, 0, canvas.width, canvas.height));
@@ -392,14 +300,14 @@ export default function Render() {
               {/* Canvas Preview - Matching Recorder Preview Style */}
               <div className="relative mx-auto mb-8 aspect-video w-full max-w-md overflow-hidden rounded-xl border border-border bg-gradient-subtle shadow-xl p-4">
                 <div className="relative w-full h-full flex items-center justify-center">
-                  <div className="absolute inset-4 w-[calc(100%-2rem)] h-[calc(100%-2rem)] rounded-lg shadow-2xl border border-border/50 overflow-hidden bg-black">
+                  <div className="absolute inset-4 rounded-lg shadow-2xl border border-border/50 overflow-hidden bg-black">
                     <canvas
                       ref={canvasRef}
                       className="w-full h-full object-contain"
                     />
                   </div>
                   {rendering && (
-                    <div className="absolute inset-4 w-[calc(100%-2rem)] h-[calc(100%-2rem)] flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-lg">
+                    <div className="absolute inset-4  flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-lg">
                       <div className="text-center">
                         <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto mb-2" />
                         <div className="font-mono text-foreground">{Math.round(progress)}%</div>

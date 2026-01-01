@@ -8,6 +8,7 @@ import { Stage } from "@/components/editor/Stage";
 import { CameraDebugOverlay } from "@/components/editor/CameraDebugOverlay";
 import { editorStore, useEditorState } from "@/lib/editor/store";
 import { TransitionEngine, TransitionType, easings } from "@/lib/effects/transitions";
+import { calculateOutputDimensions } from "@/lib/composition/aspectRatio";
 
 
 
@@ -52,6 +53,12 @@ import {
   Redo2,
   RotateCcw,
   Minus,
+  Monitor,
+  Image,
+  Palette,
+  Frame,
+  Upload,
+  X,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -94,6 +101,7 @@ export default function Editor() {
   const clickData = location.state?.clickData || [];
   const moveData = location.state?.moveData || [];
   const capturedEffects = location.state?.effects || [];
+  const rawRecording = location.state?.rawRecording || false;
   const videoRef = useRef<HTMLVideoElement>(null); // Kept for legacy ref passing to old components if any remain
   const videoContainerRef = useRef<HTMLDivElement>(null);
 
@@ -198,6 +206,12 @@ export default function Editor() {
   };
 
   const handleRender = () => {
+    // Enable layered rendering if raw recording was used
+    const presentationConfig = {
+      ...editorState.presentation,
+      layeredRendering: rawRecording ? true : (editorState.presentation.layeredRendering !== false),
+    };
+    
     navigate("/render", {
       state: {
         videoUrl,
@@ -206,6 +220,10 @@ export default function Editor() {
         effects: editorState.events.effects,
         colorGrading: editorState.colorGrading,
         textOverlays: editorState.textOverlays,
+        presentation: presentationConfig,
+        effectsConfig: editorState.effects,
+        cursorConfig: editorState.cursor,
+        rawRecording, // Pass raw recording flag
       }
     });
   };
@@ -369,8 +387,13 @@ export default function Editor() {
                 {/* Video Preview */}
                 <div
                   ref={videoContainerRef}
-                  className="relative aspect-video bg-black flex items-center justify-center overflow-hidden rounded-lg shadow-2xl border border-border/50"
-                  style={{ isolation: 'isolate' }}
+                  className="relative bg-black flex items-center justify-center overflow-hidden rounded-lg shadow-2xl border border-border/50"
+                  style={{ 
+                    isolation: 'isolate',
+                    aspectRatio: editorState.video.width > 0 && editorState.video.height > 0 
+                      ? `${editorState.video.width} / ${editorState.video.height}`
+                      : `${editorState.presentation.outputWidth} / ${editorState.presentation.outputHeight}`,
+                  }}
                 >
                   {videoUrl ? (
                     <>
@@ -518,6 +541,10 @@ export default function Editor() {
                   <TabsTrigger value="text" className="gap-2">
                     <Sparkles className="h-4 w-4" />
                     Text
+                  </TabsTrigger>
+                  <TabsTrigger value="presentation" className="gap-2">
+                    <Monitor className="h-4 w-4" />
+                    Presentation
                   </TabsTrigger>
                 </TabsList>
 
@@ -852,6 +879,516 @@ export default function Editor() {
                         ))}
                       </div>
                     )}
+                  </div>
+                </TabsContent>
+
+                <TabsContent value="presentation" className="flex-1 p-4 overflow-y-auto">
+                  <div className="space-y-6">
+                    {/* Aspect Ratio */}
+                    <div className="space-y-3">
+                      <Label className="text-base font-medium">Aspect Ratio</Label>
+                      <Select
+                        value={editorState.presentation.aspectRatio}
+                        onValueChange={(value: any) => {
+                          const dims = calculateOutputDimensions(
+                            value,
+                            editorState.video.width,
+                            editorState.video.height,
+                            editorState.presentation.customAspectRatio
+                          );
+                          editorStore.setState({
+                            presentation: {
+                              ...editorState.presentation,
+                              aspectRatio: value,
+                              outputWidth: dims.width,
+                              outputHeight: dims.height,
+                            }
+                          });
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="native">Native ({editorState.video.width}x{editorState.video.height})</SelectItem>
+                          <SelectItem value="16:9">16:9 (Widescreen)</SelectItem>
+                          <SelectItem value="9:16">9:16 (Portrait)</SelectItem>
+                          <SelectItem value="1:1">1:1 (Square)</SelectItem>
+                          <SelectItem value="4:3">4:3 (Classic)</SelectItem>
+                          <SelectItem value="21:9">21:9 (Ultrawide)</SelectItem>
+                          <SelectItem value="custom">Custom</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {editorState.presentation.aspectRatio === 'custom' && (
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <Label className="text-xs">Width</Label>
+                            <input
+                              type="number"
+                              value={editorState.presentation.customAspectRatio?.width || 1920}
+                              onChange={(e) => {
+                                const width = parseInt(e.target.value) || 1920;
+                                const height = editorState.presentation.customAspectRatio?.height || 1080;
+                                const dims = calculateOutputDimensions('custom', width, height, { width, height });
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    customAspectRatio: { width, height },
+                                    outputWidth: dims.width,
+                                    outputHeight: dims.height,
+                                  }
+                                });
+                              }}
+                              className="w-full px-2 py-1 text-sm border rounded"
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Height</Label>
+                            <input
+                              type="number"
+                              value={editorState.presentation.customAspectRatio?.height || 1080}
+                              onChange={(e) => {
+                                const height = parseInt(e.target.value) || 1080;
+                                const width = editorState.presentation.customAspectRatio?.width || 1920;
+                                const dims = calculateOutputDimensions('custom', width, height, { width, height });
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    customAspectRatio: { width, height },
+                                    outputWidth: dims.width,
+                                    outputHeight: dims.height,
+                                  }
+                                });
+                              }}
+                              className="w-full px-2 py-1 text-sm border rounded"
+                            />
+                          </div>
+                        </div>
+                      )}
+                      <p className="text-xs text-muted-foreground">
+                        Output: {editorState.presentation.outputWidth}x{editorState.presentation.outputHeight}
+                      </p>
+                    </div>
+
+                    {/* Background */}
+                    <div className="space-y-3">
+                      <Label className="text-base font-medium">Background</Label>
+                      <Select
+                        value={editorState.presentation.backgroundMode}
+                        onValueChange={(value: any) => {
+                          editorStore.setState({
+                            presentation: {
+                              ...editorState.presentation,
+                              backgroundMode: value,
+                            }
+                          });
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="hidden">Hidden (Black)</SelectItem>
+                          <SelectItem value="solid">Solid Color</SelectItem>
+                          <SelectItem value="gradient">Gradient</SelectItem>
+                          <SelectItem value="image">Image</SelectItem>
+                        </SelectContent>
+                      </Select>
+
+                      {editorState.presentation.backgroundMode === 'solid' && (
+                        <div className="space-y-2">
+                          <Label className="text-xs">Color</Label>
+                          <input
+                            type="color"
+                            value={editorState.presentation.backgroundColor}
+                            onChange={(e) => {
+                              editorStore.setState({
+                                presentation: {
+                                  ...editorState.presentation,
+                                  backgroundColor: e.target.value,
+                                }
+                              });
+                            }}
+                            className="w-full h-10 rounded border"
+                          />
+                        </div>
+                      )}
+
+                      {editorState.presentation.backgroundMode === 'gradient' && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs">Type</Label>
+                            <Select
+                              value={editorState.presentation.backgroundGradient.type}
+                              onValueChange={(value: 'linear' | 'radial') => {
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    backgroundGradient: {
+                                      ...editorState.presentation.backgroundGradient,
+                                      type: value,
+                                    }
+                                  }
+                                });
+                              }}
+                            >
+                              <SelectTrigger className="w-32">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="linear">Linear</SelectItem>
+                                <SelectItem value="radial">Radial</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {editorState.presentation.backgroundGradient.type === 'linear' && (
+                            <div>
+                              <Label className="text-xs">Angle: {editorState.presentation.backgroundGradient.angle}°</Label>
+                              <Slider
+                                min={0}
+                                max={360}
+                                step={1}
+                                value={[editorState.presentation.backgroundGradient.angle || 135]}
+                                onValueChange={([value]) => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      backgroundGradient: {
+                                        ...editorState.presentation.backgroundGradient,
+                                        angle: value,
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                            </div>
+                          )}
+                          <div className="space-y-1">
+                            {editorState.presentation.backgroundGradient.stops.map((stop, idx) => (
+                              <div key={idx} className="flex gap-2 items-center">
+                                <input
+                                  type="color"
+                                  value={stop.color}
+                                  onChange={(e) => {
+                                    const newStops = [...editorState.presentation.backgroundGradient.stops];
+                                    newStops[idx] = { ...stop, color: e.target.value };
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        backgroundGradient: {
+                                          ...editorState.presentation.backgroundGradient,
+                                          stops: newStops,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                  className="w-12 h-8 rounded border"
+                                />
+                                <Slider
+                                  min={0}
+                                  max={1}
+                                  step={0.01}
+                                  value={[stop.position]}
+                                  onValueChange={([value]) => {
+                                    const newStops = [...editorState.presentation.backgroundGradient.stops];
+                                    newStops[idx] = { ...stop, position: value };
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        backgroundGradient: {
+                                          ...editorState.presentation.backgroundGradient,
+                                          stops: newStops,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                  className="flex-1"
+                                />
+                                <span className="text-xs w-12 text-right">{Math.round(stop.position * 100)}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+
+                      {editorState.presentation.backgroundMode === 'image' && (
+                        <div className="space-y-2">
+                          <Label className="text-xs">Image</Label>
+                          {editorState.presentation.backgroundImage ? (
+                            <div className="relative">
+                              <img
+                                src={editorState.presentation.backgroundImage}
+                                alt="Background"
+                                className="w-full h-32 object-cover rounded border"
+                              />
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="absolute top-1 right-1 h-6 w-6"
+                                onClick={() => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      backgroundImage: undefined,
+                                    }
+                                  });
+                                }}
+                              >
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </div>
+                          ) : (
+                            <label className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer hover:bg-secondary/50">
+                              <Upload className="h-8 w-8 text-muted-foreground mb-2" />
+                              <span className="text-sm text-muted-foreground">Upload Image</span>
+                              <input
+                                type="file"
+                                accept="image/*"
+                                className="hidden"
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+                                  if (file) {
+                                    const reader = new FileReader();
+                                    reader.onload = (event) => {
+                                      editorStore.setState({
+                                        presentation: {
+                                          ...editorState.presentation,
+                                          backgroundImage: event.target?.result as string,
+                                        }
+                                      });
+                                    };
+                                    reader.readAsDataURL(file);
+                                  }
+                                }}
+                              />
+                            </label>
+                          )}
+                        </div>
+                      )}
+
+                      {(editorState.presentation.backgroundMode === 'image' || 
+                        editorState.presentation.backgroundMode === 'gradient' ||
+                        editorState.presentation.backgroundMode === 'solid') && (
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-xs">Blur</Label>
+                            <span className="text-xs text-muted-foreground">{editorState.presentation.backgroundBlur}px</span>
+                          </div>
+                          <Slider
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={[editorState.presentation.backgroundBlur]}
+                            onValueChange={([value]) => {
+                              editorStore.setState({
+                                presentation: {
+                                  ...editorState.presentation,
+                                  backgroundBlur: value,
+                                }
+                              });
+                            }}
+                          />
+                          <Select
+                            value={editorState.presentation.backgroundBlurType}
+                            onValueChange={(value: 'gaussian' | 'stack') => {
+                              editorStore.setState({
+                                presentation: {
+                                  ...editorState.presentation,
+                                  backgroundBlurType: value,
+                                }
+                              });
+                            }}
+                          >
+                            <SelectTrigger className="w-full">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="gaussian">Gaussian Blur</SelectItem>
+                              <SelectItem value="stack">Stack Blur</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Browser Frame */}
+                    <div className="space-y-3">
+                      <Label className="text-base font-medium">Browser Frame</Label>
+                      <Select
+                        value={editorState.presentation.browserFrameMode}
+                        onValueChange={(value: any) => {
+                          editorStore.setState({
+                            presentation: {
+                              ...editorState.presentation,
+                              browserFrameMode: value,
+                            }
+                          });
+                        }}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Default</SelectItem>
+                          <SelectItem value="minimal">Minimal</SelectItem>
+                          <SelectItem value="hidden">Hidden</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      {editorState.presentation.browserFrameMode !== 'hidden' && (
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <Label className="text-sm">Border</Label>
+                            <Switch
+                              checked={editorState.presentation.browserFrameBorder}
+                              onCheckedChange={(checked) => {
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    browserFrameBorder: checked,
+                                  }
+                                });
+                              }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <Label className="text-sm">Shadow</Label>
+                            <Switch
+                              checked={editorState.presentation.browserFrameShadow}
+                              onCheckedChange={(checked) => {
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    browserFrameShadow: checked,
+                                  }
+                                });
+                              }}
+                            />
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* Click Animations */}
+                    <div className="space-y-3">
+                      <Label className="text-base font-medium">Click Animations</Label>
+                      <div className="flex items-center justify-between">
+                        <Label className="text-sm">Enable Click Effects</Label>
+                        <Switch
+                          checked={editorState.effects.clickRipple}
+                          onCheckedChange={(checked) => {
+                            editorStore.setState({
+                              effects: {
+                                ...editorState.effects,
+                                clickRipple: checked,
+                              }
+                            });
+                          }}
+                        />
+                      </div>
+                      {editorState.effects.clickRipple && (
+                        <>
+                          <div>
+                            <Label className="text-xs">Style</Label>
+                            <Select
+                              value={editorState.effects.clickAnimationStyle}
+                              onValueChange={(value: any) => {
+                                editorStore.setState({
+                                  effects: {
+                                    ...editorState.effects,
+                                    clickAnimationStyle: value,
+                                  }
+                                });
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="ripple">Ripple</SelectItem>
+                                <SelectItem value="orb">Orb</SelectItem>
+                                <SelectItem value="pulse">Pulse</SelectItem>
+                                <SelectItem value="ring">Ring</SelectItem>
+                                <SelectItem value="splash">Splash</SelectItem>
+                                <SelectItem value="none">None</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs">Force</Label>
+                              <span className="text-xs text-muted-foreground">{(editorState.effects.clickForce * 100).toFixed(0)}%</span>
+                            </div>
+                            <Slider
+                              min={0}
+                              max={1}
+                              step={0.1}
+                              value={[editorState.effects.clickForce]}
+                              onValueChange={([value]) => {
+                                editorStore.setState({
+                                  effects: {
+                                    ...editorState.effects,
+                                    clickForce: value,
+                                  }
+                                });
+                              }}
+                            />
+                          </div>
+                          <div>
+                            <Label className="text-xs">Easing</Label>
+                            <Select
+                              value={editorState.effects.clickEasing}
+                              onValueChange={(value: any) => {
+                                editorStore.setState({
+                                  effects: {
+                                    ...editorState.effects,
+                                    clickEasing: value,
+                                  }
+                                });
+                              }}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="linear">Linear</SelectItem>
+                                <SelectItem value="ease-out">Ease Out</SelectItem>
+                                <SelectItem value="ease-in-out">Ease In Out</SelectItem>
+                                <SelectItem value="bounce">Bounce</SelectItem>
+                                <SelectItem value="elastic">Elastic</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                        </>
+                      )}
+                    </div>
+
+                    {/* Screen DPR */}
+                    <div className="space-y-3">
+                      <Label className="text-base font-medium">Render Quality</Label>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-xs">Device Pixel Ratio (DPR)</Label>
+                          <span className="text-xs text-muted-foreground">{editorState.presentation.screenDPR}x</span>
+                        </div>
+                        <Slider
+                          min={0.5}
+                          max={3}
+                          step={0.1}
+                          value={[editorState.presentation.screenDPR]}
+                          onValueChange={([value]) => {
+                            editorStore.setState({
+                              presentation: {
+                                ...editorState.presentation,
+                                screenDPR: value,
+                              }
+                            });
+                          }}
+                        />
+                        <p className="text-xs text-muted-foreground">
+                          Higher values produce sharper output for high-resolution displays
+                        </p>
+                      </div>
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>

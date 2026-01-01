@@ -246,16 +246,101 @@ This document outlines all the advanced features added to transform the recordin
 
 ## 🎥 Advanced Camera System (`lib/composition/camera.ts`)
 
-### 🎯 Intelligent Framing
+### 🎬 Next-Level Camera Intelligence (Professional Demo Creator Mode)
 
-**Features:**
-- **Bezier curve paths** for smooth camera movements
-- **Adaptive zoom** based on cursor velocity
-- **Padded follow zones** for natural tracking
-- **State machine** for smooth transitions
-- **Intent detection** for automatic framing
+**Designed with a professional demo creator mindset** - the camera now makes intelligent decisions about when to zoom, how much to zoom, and how to frame shots for maximum impact.
 
-### 📊 Camera Modes
+#### 🧠 Intelligent Zoom Decisions
+
+**Context-Aware Zoom Levels:**
+- **Dynamic zoom calculation** based on target size:
+  - Small UI elements (< 5% viewport): 1.6x zoom for clarity
+  - Standard targets: 1.3x zoom (default)
+  - Large areas (> 30% viewport): 1.15x zoom (subtle emphasis)
+  - Dramatic moments: Up to 1.8x zoom for impact
+
+**Velocity-Based Zoom Adjustment:**
+- **Slow cursor movement** (< 0.3 units/sec): More zoom for deliberate actions
+- **Fast cursor movement** (> 1.5 units/sec): Less zoom to keep pace
+- **Adaptive zoom multiplier** based on movement speed
+
+**Smart Zoom Suppression:**
+- **Rapid click detection**: Suppresses zoom on rapid clicks (< 0.3s apart)
+- **Already zoomed check**: Prevents unnecessary zoom when already zoomed (> 1.25x)
+- **Activity level awareness**: Reduces zoom intensity during high-activity periods
+- **Click clustering**: Detects click patterns to avoid over-zooming
+
+#### 🎨 Smart Framing & Composition
+
+**Rule of Thirds Positioning:**
+- **Automatic composition**: Applies rule of thirds for cinematic framing
+- **Configurable strength**: 30% bias toward rule of thirds (adjustable)
+- **Blended positioning**: Combines direct centering with composition rules
+
+**Anticipatory Movement:**
+- **Pre-movement**: Camera starts moving before cursor reaches edge (15% threshold)
+- **Direction prediction**: Anticipates cursor movement direction
+- **Smooth lead**: 60% anticipation strength for natural feel
+- **Reduced lag**: Eliminates jarring camera jumps
+
+**Composition Awareness:**
+- **Focus point tracking**: Maintains focus on important elements
+- **Edge avoidance**: Keeps important content away from edges
+- **Smooth transitions**: Natural movement between focus points
+- **Minimum focus distance**: Prevents micro-adjustments (5% threshold)
+
+#### ⏱️ Dynamic Timing & Pacing
+
+**Context-Aware Hold Durations:**
+- **Fast interactions**: 0.4s minimum hold (keeps pace)
+- **Deliberate actions**: 1.2s maximum hold (emphasizes importance)
+- **Default hold**: 0.7s (balanced)
+- **Activity-based adjustment**: Shorter holds during high activity
+
+**Adaptive Decay:**
+- **Fast decay**: 0.5s for rapid interactions
+- **Slow decay**: 1.2s for important moments
+- **Default decay**: 0.9s (smooth return)
+- **Eased transitions**: Cubic ease-out for natural feel
+
+**Activity Level Tracking:**
+- **Real-time activity monitoring**: Tracks user interaction intensity (0-1 scale)
+- **Click boost**: +0.3 per click
+- **Movement boost**: +0.05 per significant move
+- **Decay rate**: 95% per second (natural fade)
+- **Adaptive behavior**: Adjusts camera behavior based on activity level
+
+#### 🎯 Advanced Camera Modes
+
+1. **IDLE** - Neutral position, gentle return to center
+2. **FOCUSED** - Active zoom and tracking on important actions
+3. **ANTICIPATING** - Pre-moving before cursor reaches edge
+4. **PANNING** - Smooth panning without zoom (suppressed zoom scenarios)
+5. **SETTLING** - Returning to neutral after action
+
+#### 🎬 Professional Features
+
+**Dynamic Spring Physics:**
+- **Adaptive stiffness**: 8.0-18.0 based on movement speed
+- **High damping**: 0.85-0.88 for smooth, no-bounce movement
+- **Velocity tracking**: Maintains momentum for natural motion
+
+**Smart Safe Box:**
+- **35% center area**: Camera doesn't move when cursor is in center
+- **Smooth falloff**: 20% transition zone for gradual movement
+- **Responsive feel**: Tighter than before for more dynamic shots
+
+**Click History Tracking:**
+- **Last 5 clicks**: Maintains context for decision-making
+- **Cluster detection**: Identifies click patterns (2s window)
+- **Distance analysis**: Considers spatial relationships between clicks
+
+**Element-Aware Zoom:**
+- **Target size detection**: Uses elementInfo.rect when available
+- **Importance weighting**: Double clicks get 15% zoom boost
+- **Type awareness**: Different zoom for different click types
+
+### 📊 Camera Modes (Legacy)
 
 1. **IDLE** - Neutral position
 2. **SOFT_FOCUS** - Gentle zoom on cursor dwell
@@ -269,6 +354,8 @@ This document outlines all the advanced features added to transform the recordin
 - **Adaptive speed** based on distance
 - **Velocity-based zoom** adjustments
 - **Smooth state transitions**
+- **Anticipatory movement** for reduced lag
+- **Composition-aware positioning** for cinematic framing
 
 ---
 
