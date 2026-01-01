@@ -269,3 +269,125 @@ export const springCritical = (
     dt: number
 ) => solveSpring(current, target, velocity, k, 1.0, 1.0, dt);
 
+// Cache for exact cursor position calculation
+let exactCachedEvents: (ClickData | MoveData)[] | null = null;
+let exactCachedSortedEvents: (ClickData | MoveData)[] | null = null;
+
+/**
+ * Get exact cursor position using pure linear interpolation
+ * Time-locked to video.currentTime, no easing, no smoothing
+ */
+export const getExactCursorPos = (
+    time: number,
+    events: (ClickData | MoveData)[]
+): { x: number; y: number } | null => {
+    if (!events || events.length === 0) return null;
+
+    let sortedEvents: (ClickData | MoveData)[];
+    if (events === exactCachedEvents && exactCachedSortedEvents) {
+        sortedEvents = exactCachedSortedEvents;
+    } else {
+        sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+        exactCachedEvents = events;
+        exactCachedSortedEvents = sortedEvents;
+    }
+
+    let prevEvent: ClickData | MoveData | null = null;
+    let nextEvent: ClickData | MoveData | null = null;
+
+    let left = 0;
+    let right = sortedEvents.length - 1;
+    let idx = -1;
+
+    while (left <= right) {
+        const mid = Math.floor((left + right) / 2);
+        if (sortedEvents[mid].timestamp <= time) {
+            idx = mid;
+            left = mid + 1;
+        } else {
+            right = mid - 1;
+        }
+    }
+
+    if (idx !== -1) {
+        prevEvent = sortedEvents[idx];
+        nextEvent = sortedEvents[idx + 1] ?? null;
+    } else {
+        nextEvent = sortedEvents[0] ?? null;
+    }
+
+    if (!nextEvent) {
+        return prevEvent ? { x: prevEvent.x, y: prevEvent.y } : null;
+    }
+
+    if (!prevEvent) {
+        return { x: nextEvent.x, y: nextEvent.y };
+    }
+
+    const duration = nextEvent.timestamp - prevEvent.timestamp;
+    if (duration <= 0) {
+        return { x: nextEvent.x, y: nextEvent.y };
+    }
+
+    const progress = clamp((time - prevEvent.timestamp) / duration, 0, 1);
+    const x = lerp(prevEvent.x, nextEvent.x, progress);
+    const y = lerp(prevEvent.y, nextEvent.y, progress);
+
+    return { x, y };
+};
+
+/**
+ * Check if click event should trigger at current playback time
+ * Triggers when abs(event.timestamp - playbackTime) < 1/60
+ */
+export const shouldTriggerClickEffect = (
+    event: ClickData,
+    playbackTime: number
+): boolean => {
+    return Math.abs(event.timestamp - playbackTime) < 1 / 60;
+};
+
+/**
+ * Render cursor overlay using requestAnimationFrame + translate3d
+ * Applies one-frame lookahead (1/60s) to compensate for video decoding latency
+ */
+export const renderCursorOverlay = (
+    video: HTMLVideoElement,
+    events: (ClickData | MoveData)[],
+    cursorElement: HTMLElement,
+    onFrame?: (pos: { x: number; y: number } | null) => void
+): () => void => {
+    let animationFrameId: number | null = null;
+    const FRAME_LOOKAHEAD = 1 / 60;
+
+    const render = () => {
+        const playbackTime = video.currentTime;
+        const lookaheadTime = playbackTime + FRAME_LOOKAHEAD;
+        
+        const pos = getExactCursorPos(lookaheadTime, events);
+        
+        if (pos && cursorElement) {
+            const rect = cursorElement.parentElement?.getBoundingClientRect();
+            if (rect) {
+                const x = pos.x * rect.width;
+                const y = pos.y * rect.height;
+                cursorElement.style.transform = `translate3d(${x}px, ${y}px, 0)`;
+            }
+        }
+        
+        if (onFrame) {
+            onFrame(pos);
+        }
+        
+        animationFrameId = requestAnimationFrame(render);
+    };
+
+    animationFrameId = requestAnimationFrame(render);
+
+    return () => {
+        if (animationFrameId !== null) {
+            cancelAnimationFrame(animationFrameId);
+        }
+    };
+};
+

@@ -60,6 +60,7 @@ import {
   Upload,
   X,
 } from "lucide-react";
+import { TimelineEvent } from "@/lib/editor/types";
 import { useToast } from "@/hooks/use-toast";
 
 const mockUser = {
@@ -67,20 +68,6 @@ const mockUser = {
   email: "alex@company.com",
 };
 
-interface TimelineStep {
-  id: string;
-  type: "click" | "scroll" | "type";
-  duration: number;
-  description: string;
-}
-
-const mockSteps: TimelineStep[] = [
-  { id: "1", type: "click", duration: 1.2, description: "Click on 'Get Started' button" },
-  { id: "2", type: "scroll", duration: 0.8, description: "Scroll down to features section" },
-  { id: "3", type: "click", duration: 1.5, description: "Click on 'Dashboard' tab" },
-  { id: "4", type: "type", duration: 2.0, description: "Type search query" },
-  { id: "5", type: "click", duration: 0.6, description: "Click search icon" },
-];
 
 const voiceOptions = [
   { id: "emma", name: "Emma", description: "Professional, warm female voice" },
@@ -121,7 +108,7 @@ export default function Editor() {
         }
       }));
     }
-  }, [videoUrl, clickData, moveData, capturedEffects]);
+  }, [videoUrl, clickData, moveData, capturedEffects, editorState.video.url, editorState.events.clicks.length]);
 
 
   // --- GOD LEVEL REACTIVE CAMERA ENGINE (Spring-Based) ---
@@ -135,18 +122,17 @@ export default function Editor() {
   const [isGeneratingScript, setIsGeneratingScript] = useState(false);
   const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
 
-  // Local UI state (can eventually move to store)
-  const [effects, setEffects] = useState({
-    zoomOnClick: true,
-    cursorHighlight: true,
-    smoothPan: true,
-  });
+  // Sync effects with store - use store state as source of truth
+  const effects = {
+    zoomOnClick: editorState.effects.clickRipple, // Use clickRipple as proxy for zoom
+    cursorHighlight: editorState.cursor.glow,
+    smoothPan: true, // Always enabled when zoom is on
+  };
 
   // Timeline State
-  const [steps, setSteps] = useState<TimelineStep[]>(mockSteps);
   const [timelineZoom, setTimelineZoom] = useState(1);
-  const [history, setHistory] = useState<TimelineStep[][]>([mockSteps]);
-  const [historyIndex, setHistoryIndex] = useState(0);
+  const [isDraggingTimeline, setIsDraggingTimeline] = useState(false);
+  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
 
   // Editor UI State
   const [showColorGrading, setShowColorGrading] = useState(false);
@@ -154,21 +140,45 @@ export default function Editor() {
 
   // Helpers
   const formatTime = (time: number) => {
+    if (!isFinite(time) || isNaN(time) || time < 0) {
+      return "0:00";
+    }
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
   };
 
   const togglePlay = () => {
-    editorStore.setPlayback({ isPlaying: !editorState.playback.isPlaying });
+    const newIsPlaying = !editorState.playback.isPlaying;
+    editorStore.setPlayback({ isPlaying: newIsPlaying });
+
+    // Ensure video continues playing if it reaches the end
+    if (newIsPlaying && editorState.playback.currentTime >= editorState.video.duration - 0.1) {
+      editorStore.setPlayback({ currentTime: 0 });
+    }
   };
+
+  // Handle video end - loop or stop
+  useEffect(() => {
+    if (!editorState.playback.isPlaying &&
+      editorState.video.duration > 0 &&
+      editorState.playback.currentTime >= editorState.video.duration - 0.1) {
+      // Video ended, reset to start
+      editorStore.setPlayback({ currentTime: 0 });
+    }
+  }, [editorState.playback.isPlaying, editorState.playback.currentTime, editorState.video.duration]);
 
 
 
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = parseFloat(e.target.value);
-    editorStore.setPlayback({ currentTime: time });
+    // Validate time is finite and valid
+    if (isFinite(time) && !isNaN(time) && time >= 0) {
+      const duration = editorState.video.duration || 0;
+      const clampedTime = duration > 0 ? Math.min(time, duration) : time;
+      editorStore.setPlayback({ currentTime: clampedTime });
+    }
   };
 
   const toggleMute = () => {
@@ -211,7 +221,7 @@ export default function Editor() {
       ...editorState.presentation,
       layeredRendering: rawRecording ? true : (editorState.presentation.layeredRendering !== false),
     };
-    
+
     navigate("/render", {
       state: {
         videoUrl,
@@ -260,87 +270,87 @@ export default function Editor() {
     });
   };
 
-  const updateStepDescription = (id: string, description: string) => {
-    const newSteps = steps.map((s) => (s.id === id ? { ...s, description } : s));
-    setSteps(newSteps);
-    addToHistory(newSteps);
-  };
+  // Keyboard shortcuts for timeline navigation
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // Don't trigger if typing in input
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
 
-  const addToHistory = (newSteps: TimelineStep[]) => {
-    const newHistory = history.slice(0, historyIndex + 1);
-    newHistory.push(newSteps);
-    setHistory(newHistory);
-    setHistoryIndex(newHistory.length - 1);
-  };
+      const duration = editorState.video.duration || 0;
+      if (duration <= 0) return; // Don't handle shortcuts if video not loaded
 
-  const handleUndo = () => {
-    if (historyIndex > 0) {
-      setHistoryIndex(historyIndex - 1);
-      setSteps(history[historyIndex - 1]);
-    }
-  };
+      const step = 1; // 1 second step
+      const currentTime = editorState.playback.currentTime;
 
-  const handleRedo = () => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(historyIndex + 1);
-      setSteps(history[historyIndex + 1]);
-    }
-  };
-
-  const handleAddSegment = () => {
-    const newStep: TimelineStep = {
-      id: Date.now().toString(),
-      type: "click",
-      duration: 1.0,
-      description: "New segment",
+      switch (e.key) {
+        case 'ArrowLeft':
+          e.preventDefault();
+          if (e.shiftKey) {
+            // Frame-by-frame backward
+            const frameTime = 1 / 30; // 30fps
+            const prevTime = Math.max(0, currentTime - frameTime);
+            if (isFinite(prevTime) && !isNaN(prevTime)) {
+              editorStore.setPlayback({ currentTime: prevTime });
+            }
+          } else {
+            // 1 second backward
+            const prevTime = Math.max(0, currentTime - step);
+            if (isFinite(prevTime) && !isNaN(prevTime)) {
+              editorStore.setPlayback({ currentTime: prevTime });
+            }
+          }
+          break;
+        case 'ArrowRight':
+          e.preventDefault();
+          if (e.shiftKey) {
+            // Frame-by-frame forward
+            const frameTime = 1 / 30; // 30fps
+            const nextTime = Math.min(duration, currentTime + frameTime);
+            if (isFinite(nextTime) && !isNaN(nextTime)) {
+              editorStore.setPlayback({ currentTime: nextTime });
+            }
+          } else {
+            // 1 second forward
+            const nextTime = Math.min(duration, currentTime + step);
+            if (isFinite(nextTime) && !isNaN(nextTime)) {
+              editorStore.setPlayback({ currentTime: nextTime });
+            }
+          }
+          break;
+        case ' ':
+          e.preventDefault();
+          togglePlay();
+          break;
+        case 'm':
+        case 'M':
+          if (e.ctrlKey || e.metaKey) {
+            e.preventDefault();
+            const newMarker: TimelineEvent = {
+              id: Date.now().toString(),
+              type: 'marker',
+              time: currentTime,
+              label: `Marker at ${formatTime(currentTime)}`,
+            };
+            editorStore.setState({
+              events: {
+                ...editorState.events,
+                markers: [...editorState.events.markers, newMarker],
+              }
+            });
+            toast({
+              title: "Marker added",
+              description: `Added at ${formatTime(currentTime)}`,
+            });
+          }
+          break;
+      }
     };
-    const newSteps = [...steps, newStep];
-    setSteps(newSteps);
-    addToHistory(newSteps);
-  };
 
-  const handleDeleteSegment = (id: string) => {
-    const newSteps = steps.filter((s) => s.id !== id);
-    setSteps(newSteps);
-    addToHistory(newSteps);
-  };
-
-  const handleSplitSegment = (id: string) => {
-    const index = steps.findIndex((s) => s.id === id);
-    if (index !== -1) {
-      const step = steps[index];
-      const newStep1: TimelineStep = {
-        ...step,
-        id: `${step.id}-1`,
-        duration: step.duration / 2,
-      };
-      const newStep2: TimelineStep = {
-        ...step,
-        id: `${step.id}-2`,
-        duration: step.duration / 2,
-      };
-      const newSteps = [
-        ...steps.slice(0, index),
-        newStep1,
-        newStep2,
-        ...steps.slice(index + 1),
-      ];
-      setSteps(newSteps);
-      addToHistory(newSteps);
-    }
-  };
-
-  const handleResetTimeline = () => {
-    setSteps(mockSteps);
-    setHistory([mockSteps]);
-    setHistoryIndex(0);
-  };
-
-  const typeIcons = {
-    click: MousePointer2,
-    scroll: Move,
-    type: Sparkles,
-  };
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, [editorState.playback.currentTime, editorState.video.duration, editorState.events.markers]);
 
 
   return (
@@ -355,12 +365,31 @@ export default function Editor() {
               <h1 className="text-2xl font-bold">
                 {id === "new" ? "New Demo" : "Product Onboarding Demo"}
               </h1>
-              <p className="text-sm text-muted-foreground">Edit your demo video</p>
+              <p className="text-sm text-muted-foreground">
+                Edit your demo video • {editorState.events.clicks.length} clicks • {editorState.events.markers.length} markers
+              </p>
             </div>
-            <Button variant="hero" onClick={handleRender}>
-              <Sparkles className="mr-2 h-4 w-4" />
-              Render Video
-            </Button>
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-muted-foreground hidden lg:flex items-center gap-1">
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Space</span>
+                <span>Play/Pause</span>
+                <span>•</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">←</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">→</span>
+                <span>Seek</span>
+                <span>•</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+←</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+→</span>
+                <span>Frame</span>
+                <span>•</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Ctrl+M</span>
+                <span>Marker</span>
+              </div>
+              <Button variant="hero" onClick={handleRender}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Render Video
+              </Button>
+            </div>
           </div>
 
           {/* Split Layout */}
@@ -387,12 +416,14 @@ export default function Editor() {
                 {/* Video Preview */}
                 <div
                   ref={videoContainerRef}
-                  className="relative bg-black flex items-center justify-center overflow-hidden rounded-lg shadow-2xl border border-border/50"
-                  style={{ 
+                  className="main_video_stream relative bg-black flex items-center justify-center overflow-hidden rounded-lg shadow-2xl border border-border/50"
+                  style={{
                     isolation: 'isolate',
-                    aspectRatio: editorState.video.width > 0 && editorState.video.height > 0 
-                      ? `${editorState.video.width} / ${editorState.video.height}`
-                      : `${editorState.presentation.outputWidth} / ${editorState.presentation.outputHeight}`,
+                    aspectRatio: editorState.presentation.outputWidth > 0 && editorState.presentation.outputHeight > 0
+                      ? `${editorState.presentation.outputWidth} / ${editorState.presentation.outputHeight}`
+                      : (editorState.video.width > 0 && editorState.video.height > 0
+                        ? `${editorState.video.width} / ${editorState.video.height}`
+                        : '16 / 9'),
                   }}
                 >
                   {videoUrl ? (
@@ -484,8 +515,8 @@ export default function Editor() {
                         )}
                       </Button>
 
-                      <span className="text-sm font-medium text-muted-foreground w-20">
-                        {formatTime(editorState.playback.currentTime)} / {formatTime(editorState.video.duration)}
+                      <span className="text-sm font-medium text-muted-foreground w-24">
+                        {formatTime(editorState.playback.currentTime)} / {editorState.video.duration > 0 && isFinite(editorState.video.duration) ? formatTime(editorState.video.duration) : "--:--"}
                       </span>
                     </div>
 
@@ -645,9 +676,14 @@ export default function Editor() {
                       </div>
                       <Switch
                         checked={effects.zoomOnClick}
-                        onCheckedChange={(checked) =>
-                          setEffects({ ...effects, zoomOnClick: checked, smoothPan: checked })
-                        }
+                        onCheckedChange={(checked) => {
+                          editorStore.setState({
+                            effects: {
+                              ...editorState.effects,
+                              clickRipple: checked,
+                            }
+                          });
+                        }}
                       />
                     </div>
 
@@ -665,9 +701,14 @@ export default function Editor() {
                       </div>
                       <Switch
                         checked={effects.cursorHighlight}
-                        onCheckedChange={(checked) =>
-                          setEffects({ ...effects, cursorHighlight: checked })
-                        }
+                        onCheckedChange={(checked) => {
+                          editorStore.setState({
+                            cursor: {
+                              ...editorState.cursor,
+                              glow: checked,
+                            }
+                          });
+                        }}
                       />
                     </div>
 
@@ -687,6 +728,149 @@ export default function Editor() {
                         checked={effects.smoothPan}
                         disabled
                       />
+                    </div>
+
+                    {/* Camera Padding Control */}
+                    <div className="space-y-3 pt-4 border-t border-border">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                          <Frame className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="flex-1">
+                          <Label className="text-base font-medium">Camera Padding</Label>
+                          <p className="text-sm text-muted-foreground">
+                            Deadzone around edges where camera doesn't move (0-50%)
+                          </p>
+                        </div>
+                      </div>
+                      <div className="space-y-2 pl-13">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm">Padding: {(editorState.camera.padding * 100).toFixed(0)}%</Label>
+                          <span className="text-xs text-muted-foreground">
+                            {editorState.camera.padding < 0.15 ? 'Tight' : editorState.camera.padding > 0.35 ? 'Loose' : 'Balanced'}
+                          </span>
+                        </div>
+                        <Slider
+                          min={0}
+                          max={0.5}
+                          step={0.01}
+                          value={[editorState.camera.padding]}
+                          onValueChange={([value]) => {
+                            editorStore.setState({
+                              camera: {
+                                ...editorState.camera,
+                                padding: value,
+                              }
+                            });
+                          }}
+                        />
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 text-xs"
+                            onClick={() => editorStore.setState({
+                              camera: { ...editorState.camera, padding: 0.1 }
+                            })}
+                          >
+                            Tight (10%)
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 text-xs"
+                            onClick={() => editorStore.setState({
+                              camera: { ...editorState.camera, padding: 0.2 }
+                            })}
+                          >
+                            Balanced (20%)
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="flex-1 text-xs"
+                            onClick={() => editorStore.setState({
+                              camera: { ...editorState.camera, padding: 0.35 }
+                            })}
+                          >
+                            Loose (35%)
+                          </Button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Camera Speed Control */}
+                    <div className="space-y-3 pt-4 border-t border-border">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                          <Clock className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="flex-1">
+                          <Label className="text-base font-medium">Camera Speed</Label>
+                          <p className="text-sm text-muted-foreground">
+                            How fast the camera responds to movements (0.1x - 2.0x)
+                          </p>
+                        </div>
+                      </div>
+                      <div className="space-y-2 pl-13">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm">Speed: {editorState.camera.speed.toFixed(1)}x</Label>
+                          <span className="text-xs text-muted-foreground">
+                            {editorState.camera.speed < 0.5 ? 'Slow' : editorState.camera.speed > 1.5 ? 'Fast' : 'Normal'}
+                          </span>
+                        </div>
+                        <Slider
+                          min={0.1}
+                          max={2.0}
+                          step={0.1}
+                          value={[editorState.camera.speed]}
+                          onValueChange={([value]) => {
+                            editorStore.setState({
+                              camera: {
+                                ...editorState.camera,
+                                speed: value,
+                              }
+                            });
+                          }}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Zoom Strength Control */}
+                    <div className="space-y-3 pt-4 border-t border-border">
+                      <div className="flex items-center gap-3">
+                        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10">
+                          <ZoomIn className="h-5 w-5 text-primary" />
+                        </div>
+                        <div className="flex-1">
+                          <Label className="text-base font-medium">Zoom Strength</Label>
+                          <p className="text-sm text-muted-foreground">
+                            Maximum zoom level when clicking (1.0x - 5.0x)
+                          </p>
+                        </div>
+                      </div>
+                      <div className="space-y-2 pl-13">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm">Strength: {editorState.camera.zoomStrength.toFixed(1)}x</Label>
+                          <span className="text-xs text-muted-foreground">
+                            {editorState.camera.zoomStrength < 1.5 ? 'Subtle' : editorState.camera.zoomStrength > 3.0 ? 'Dramatic' : 'Moderate'}
+                          </span>
+                        </div>
+                        <Slider
+                          min={1.0}
+                          max={5.0}
+                          step={0.1}
+                          value={[editorState.camera.zoomStrength]}
+                          onValueChange={([value]) => {
+                            editorStore.setState({
+                              camera: {
+                                ...editorState.camera,
+                                zoomStrength: value,
+                              }
+                            });
+                          }}
+                        />
+                      </div>
                     </div>
                   </div>
                 </TabsContent>
@@ -1166,103 +1350,331 @@ export default function Editor() {
                         </div>
                       )}
 
-                      {(editorState.presentation.backgroundMode === 'image' || 
+                      {(editorState.presentation.backgroundMode === 'image' ||
                         editorState.presentation.backgroundMode === 'gradient' ||
                         editorState.presentation.backgroundMode === 'solid') && (
-                        <div className="space-y-2">
-                          <div className="flex items-center justify-between">
-                            <Label className="text-xs">Blur</Label>
-                            <span className="text-xs text-muted-foreground">{editorState.presentation.backgroundBlur}px</span>
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-xs">Blur</Label>
+                              <span className="text-xs text-muted-foreground">{editorState.presentation.backgroundBlur}px</span>
+                            </div>
+                            <Slider
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={[editorState.presentation.backgroundBlur]}
+                              onValueChange={([value]) => {
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    backgroundBlur: value,
+                                  }
+                                });
+                              }}
+                            />
+                            <Select
+                              value={editorState.presentation.backgroundBlurType}
+                              onValueChange={(value: 'gaussian' | 'stack') => {
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    backgroundBlurType: value,
+                                  }
+                                });
+                              }}
+                            >
+                              <SelectTrigger className="w-full">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="gaussian">Gaussian Blur</SelectItem>
+                                <SelectItem value="stack">Stack Blur</SelectItem>
+                              </SelectContent>
+                            </Select>
                           </div>
-                          <Slider
-                            min={0}
-                            max={100}
-                            step={1}
-                            value={[editorState.presentation.backgroundBlur]}
-                            onValueChange={([value]) => {
-                              editorStore.setState({
-                                presentation: {
-                                  ...editorState.presentation,
-                                  backgroundBlur: value,
-                                }
-                              });
-                            }}
-                          />
-                          <Select
-                            value={editorState.presentation.backgroundBlurType}
-                            onValueChange={(value: 'gaussian' | 'stack') => {
-                              editorStore.setState({
-                                presentation: {
-                                  ...editorState.presentation,
-                                  backgroundBlurType: value,
-                                }
-                              });
-                            }}
-                          >
-                            <SelectTrigger className="w-full">
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              <SelectItem value="gaussian">Gaussian Blur</SelectItem>
-                              <SelectItem value="stack">Stack Blur</SelectItem>
-                            </SelectContent>
-                          </Select>
-                        </div>
-                      )}
+                        )}
                     </div>
 
-                    {/* Browser Frame */}
+                    {/* Video Padding */}
                     <div className="space-y-3">
-                      <Label className="text-base font-medium">Browser Frame</Label>
-                      <Select
-                        value={editorState.presentation.browserFrameMode}
-                        onValueChange={(value: any) => {
-                          editorStore.setState({
-                            presentation: {
-                              ...editorState.presentation,
-                              browserFrameMode: value,
-                            }
-                          });
-                        }}
-                      >
-                        <SelectTrigger>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Default</SelectItem>
-                          <SelectItem value="minimal">Minimal</SelectItem>
-                          <SelectItem value="hidden">Hidden</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      {editorState.presentation.browserFrameMode !== 'hidden' && (
-                        <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <Label className="text-base font-medium">Video Padding</Label>
+                          <p className="text-xs text-muted-foreground mt-0.5">
+                            Add padding around video to show background
+                          </p>
+                        </div>
+                        <Switch
+                          checked={editorState.presentation.videoPadding.enabled}
+                          onCheckedChange={(checked) => {
+                            editorStore.setState({
+                              presentation: {
+                                ...editorState.presentation,
+                                videoPadding: {
+                                  ...editorState.presentation.videoPadding,
+                                  enabled: checked,
+                                }
+                              }
+                            });
+                          }}
+                        />
+                      </div>
+
+                      {editorState.presentation.videoPadding.enabled && (
+                        <div className="space-y-4 pl-2 border-l-2 border-primary/20">
+                          {/* Uniform Toggle */}
                           <div className="flex items-center justify-between">
-                            <Label className="text-sm">Border</Label>
+                            <Label className="text-sm">Uniform Padding</Label>
                             <Switch
-                              checked={editorState.presentation.browserFrameBorder}
+                              checked={editorState.presentation.videoPadding.uniform}
                               onCheckedChange={(checked) => {
+                                // When enabling uniform, sync all values to the top value
+                                const syncValue = editorState.presentation.videoPadding.top;
                                 editorStore.setState({
                                   presentation: {
                                     ...editorState.presentation,
-                                    browserFrameBorder: checked,
+                                    videoPadding: {
+                                      ...editorState.presentation.videoPadding,
+                                      uniform: checked,
+                                      // Sync all values when enabling uniform
+                                      ...(checked ? {
+                                        top: syncValue,
+                                        right: syncValue,
+                                        bottom: syncValue,
+                                        left: syncValue,
+                                      } : {})
+                                    }
                                   }
                                 });
                               }}
                             />
                           </div>
-                          <div className="flex items-center justify-between">
-                            <Label className="text-sm">Shadow</Label>
-                            <Switch
-                              checked={editorState.presentation.browserFrameShadow}
-                              onCheckedChange={(checked) => {
-                                editorStore.setState({
-                                  presentation: {
-                                    ...editorState.presentation,
-                                    browserFrameShadow: checked,
-                                  }
-                                });
-                              }}
-                            />
+
+                          {editorState.presentation.videoPadding.uniform ? (
+                            /* Uniform Padding Control */
+                            <div className="space-y-2">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-sm">Padding: {editorState.presentation.videoPadding.top}px</Label>
+                                <span className="text-xs text-muted-foreground">
+                                  All sides: {editorState.presentation.videoPadding.top}px
+                                </span>
+                              </div>
+                              <Slider
+                                min={0}
+                                max={500}
+                                step={5}
+                                value={[editorState.presentation.videoPadding.top]}
+                                onValueChange={([value]) => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      videoPadding: {
+                                        ...editorState.presentation.videoPadding,
+                                        top: value,
+                                        right: value,
+                                        bottom: value,
+                                        left: value,
+                                        uniform: true, // Ensure uniform stays true
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="flex-1 text-xs"
+                                  onClick={() => {
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        videoPadding: {
+                                          ...editorState.presentation.videoPadding,
+                                          top: 0,
+                                          right: 0,
+                                          bottom: 0,
+                                          left: 0,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                >
+                                  Reset
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="flex-1 text-xs"
+                                  onClick={() => {
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        videoPadding: {
+                                          ...editorState.presentation.videoPadding,
+                                          top: 50,
+                                          right: 50,
+                                          bottom: 50,
+                                          left: 50,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                >
+                                  50px
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  className="flex-1 text-xs"
+                                  onClick={() => {
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        videoPadding: {
+                                          ...editorState.presentation.videoPadding,
+                                          top: 100,
+                                          right: 100,
+                                          bottom: 100,
+                                          left: 100,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                >
+                                  100px
+                                </Button>
+                              </div>
+                            </div>
+                          ) : (
+                            /* Individual Padding Controls */
+                            <div className="space-y-3">
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-sm">Top</Label>
+                                  <span className="text-xs text-muted-foreground">{editorState.presentation.videoPadding.top}px</span>
+                                </div>
+                                <Slider
+                                  min={0}
+                                  max={500}
+                                  step={5}
+                                  value={[editorState.presentation.videoPadding.top]}
+                                  onValueChange={([value]) => {
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        videoPadding: {
+                                          ...editorState.presentation.videoPadding,
+                                          top: value,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-sm">Right</Label>
+                                  <span className="text-xs text-muted-foreground">{editorState.presentation.videoPadding.right}px</span>
+                                </div>
+                                <Slider
+                                  min={0}
+                                  max={500}
+                                  step={5}
+                                  value={[editorState.presentation.videoPadding.right]}
+                                  onValueChange={([value]) => {
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        videoPadding: {
+                                          ...editorState.presentation.videoPadding,
+                                          right: value,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-sm">Bottom</Label>
+                                  <span className="text-xs text-muted-foreground">{editorState.presentation.videoPadding.bottom}px</span>
+                                </div>
+                                <Slider
+                                  min={0}
+                                  max={500}
+                                  step={5}
+                                  value={[editorState.presentation.videoPadding.bottom]}
+                                  onValueChange={([value]) => {
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        videoPadding: {
+                                          ...editorState.presentation.videoPadding,
+                                          bottom: value,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <Label className="text-sm">Left</Label>
+                                  <span className="text-xs text-muted-foreground">{editorState.presentation.videoPadding.left}px</span>
+                                </div>
+                                <Slider
+                                  min={0}
+                                  max={500}
+                                  step={5}
+                                  value={[editorState.presentation.videoPadding.left]}
+                                  onValueChange={([value]) => {
+                                    editorStore.setState({
+                                      presentation: {
+                                        ...editorState.presentation,
+                                        videoPadding: {
+                                          ...editorState.presentation.videoPadding,
+                                          left: value,
+                                        }
+                                      }
+                                    });
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Visual Preview */}
+                          <div className="mt-4 p-3 bg-secondary/30 rounded-lg border border-border">
+                            <div className="text-xs text-muted-foreground mb-2">Preview</div>
+                            <div className="relative w-full h-24 bg-gradient-to-br from-primary/20 to-primary/10 rounded border-2 border-dashed border-primary/30">
+                              {/* Reference size for preview: 200px width */}
+                              {(() => {
+                                const refWidth = 200;
+                                const refHeight = 96; // h-24 = 96px
+                                const paddingTopPct = (editorState.presentation.videoPadding.top / refHeight) * 100;
+                                const paddingBottomPct = (editorState.presentation.videoPadding.bottom / refHeight) * 100;
+                                const paddingLeftPct = (editorState.presentation.videoPadding.left / refWidth) * 100;
+                                const paddingRightPct = (editorState.presentation.videoPadding.right / refWidth) * 100;
+                                return (
+                                  <div
+                                    className="bg-primary/40 rounded border border-primary/50 absolute"
+                                    style={{
+                                      width: `${100 - paddingLeftPct - paddingRightPct}%`,
+                                      height: `${100 - paddingTopPct - paddingBottomPct}%`,
+                                      top: `${paddingTopPct}%`,
+                                      left: `${paddingLeftPct}%`,
+                                    }}
+                                  />
+                                );
+                              })()}
+                            </div>
+                            <p className="text-xs text-muted-foreground mt-2 text-center">
+                              Video area (background visible around edges)
+                            </p>
                           </div>
                         </div>
                       )}
@@ -1389,180 +1801,631 @@ export default function Editor() {
                         </p>
                       </div>
                     </div>
+
+                    {/* Video Crop */}
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-base font-medium">Video Crop</Label>
+                        <Switch
+                          checked={editorState.presentation.videoCrop.enabled}
+                          onCheckedChange={(checked) => {
+                            editorStore.setState({
+                              presentation: {
+                                ...editorState.presentation,
+                                videoCrop: {
+                                  ...editorState.presentation.videoCrop,
+                                  enabled: checked,
+                                }
+                              }
+                            });
+                          }}
+                        />
+                      </div>
+                      {editorState.presentation.videoCrop.enabled && (
+                        <div className="space-y-3 pl-4 border-l-2 border-border">
+                          <div className="grid grid-cols-2 gap-2">
+                            <div>
+                              <Label className="text-xs">Top: {editorState.presentation.videoCrop.top}px</Label>
+                              <Slider
+                                min={0}
+                                max={500}
+                                step={1}
+                                value={[editorState.presentation.videoCrop.top]}
+                                onValueChange={([value]) => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      videoCrop: {
+                                        ...editorState.presentation.videoCrop,
+                                        top: value,
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs">Bottom: {editorState.presentation.videoCrop.bottom}px</Label>
+                              <Slider
+                                min={0}
+                                max={500}
+                                step={1}
+                                value={[editorState.presentation.videoCrop.bottom]}
+                                onValueChange={([value]) => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      videoCrop: {
+                                        ...editorState.presentation.videoCrop,
+                                        bottom: value,
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs">Left: {editorState.presentation.videoCrop.left}px</Label>
+                              <Slider
+                                min={0}
+                                max={500}
+                                step={1}
+                                value={[editorState.presentation.videoCrop.left]}
+                                onValueChange={([value]) => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      videoCrop: {
+                                        ...editorState.presentation.videoCrop,
+                                        left: value,
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                            </div>
+                            <div>
+                              <Label className="text-xs">Right: {editorState.presentation.videoCrop.right}px</Label>
+                              <Slider
+                                min={0}
+                                max={500}
+                                step={1}
+                                value={[editorState.presentation.videoCrop.right]}
+                                onValueChange={([value]) => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      videoCrop: {
+                                        ...editorState.presentation.videoCrop,
+                                        right: value,
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                            </div>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <Label className="text-sm">Rounded Corners</Label>
+                            <Switch
+                              checked={editorState.presentation.videoCrop.roundedCorners}
+                              onCheckedChange={(checked) => {
+                                editorStore.setState({
+                                  presentation: {
+                                    ...editorState.presentation,
+                                    videoCrop: {
+                                      ...editorState.presentation.videoCrop,
+                                      roundedCorners: checked,
+                                    }
+                                  }
+                                });
+                              }}
+                            />
+                          </div>
+                          {editorState.presentation.videoCrop.roundedCorners && (
+                            <div>
+                              <Label className="text-xs">Corner Radius: {editorState.presentation.videoCrop.cornerRadius}px</Label>
+                              <Slider
+                                min={0}
+                                max={50}
+                                step={1}
+                                value={[editorState.presentation.videoCrop.cornerRadius]}
+                                onValueChange={([value]) => {
+                                  editorStore.setState({
+                                    presentation: {
+                                      ...editorState.presentation,
+                                      videoCrop: {
+                                        ...editorState.presentation.videoCrop,
+                                        cornerRadius: value,
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </TabsContent>
               </Tabs>
             </div>
           </div>
 
-          {/* Timeline */}
+          {/* Advanced Timeline */}
           <div className="mt-6 rounded-xl border border-border bg-card">
             {/* Timeline Controls */}
-            <div className="flex items-center gap-2 border-b border-border bg-secondary/30 p-4">
+            <div className="flex items-center gap-2 border-b border-border bg-secondary/30 p-4 flex-wrap">
               <Button
                 variant="outline"
                 size="sm"
-                onClick={handleAddSegment}
+                onClick={() => {
+                  const newMarker: TimelineEvent = {
+                    id: Date.now().toString(),
+                    type: 'marker',
+                    time: editorState.playback.currentTime,
+                    label: `Marker at ${formatTime(editorState.playback.currentTime)}`,
+                  };
+                  editorStore.setState({
+                    events: {
+                      ...editorState.events,
+                      markers: [...editorState.events.markers, newMarker],
+                    }
+                  });
+                  toast({
+                    title: "Marker added",
+                    description: `Added at ${formatTime(editorState.playback.currentTime)}`,
+                  });
+                }}
                 className="gap-2"
               >
                 <Plus className="h-4 w-4" />
-                Add a segment
+                Add Marker
+              </Button>
+
+              {/* Frame Navigation */}
+              <div className="h-6 w-px bg-border" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => {
+                  const duration = editorState.video.duration || 0;
+                  if (duration <= 0) return;
+                  const frameTime = 1 / 30; // Assuming 30fps
+                  const newTime = Math.max(0, editorState.playback.currentTime - frameTime);
+                  if (isFinite(newTime)) {
+                    editorStore.setPlayback({ currentTime: newTime });
+                  }
+                }}
+                title="Previous Frame (←)"
+              >
+                <Minus className="h-4 w-4" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setTimelineZoom(Math.max(0.5, timelineZoom - 0.1))}
+                onClick={() => {
+                  const duration = editorState.video.duration || 0;
+                  if (duration <= 0) return;
+                  const frameTime = 1 / 30; // Assuming 30fps
+                  const newTime = Math.min(duration, editorState.playback.currentTime + frameTime);
+                  if (isFinite(newTime)) {
+                    editorStore.setPlayback({ currentTime: newTime });
+                  }
+                }}
+                title="Next Frame (→)"
+              >
+                <Plus className="h-4 w-4" />
+              </Button>
+
+              {/* Zoom Controls */}
+              <div className="h-6 w-px bg-border" />
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setTimelineZoom(Math.max(0.1, timelineZoom - 0.1))}
+                title="Zoom out"
               >
                 <Search className="h-4 w-4" />
               </Button>
               <Button
                 variant="ghost"
                 size="icon"
-                onClick={() => setTimelineZoom(Math.min(2, timelineZoom + 0.1))}
+                onClick={() => setTimelineZoom(Math.min(5, timelineZoom + 0.1))}
+                title="Zoom in"
               >
                 <ZoomIn className="h-4 w-4" />
               </Button>
+
+              {/* Playback Speed */}
               <div className="h-6 w-px bg-border" />
-              <Button variant="ghost" size="icon" title="Split segment">
-                <Scissors className="h-4 w-4" />
-              </Button>
-              <Button variant="ghost" size="icon" title="Delete segment">
-                <Trash2 className="h-4 w-4" />
-              </Button>
-              <div className="h-6 w-px bg-border" />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleUndo}
-                disabled={historyIndex === 0}
-                title="Undo"
-              >
-                <Undo2 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={handleRedo}
-                disabled={historyIndex === history.length - 1}
-                title="Redo"
-              >
-                <Redo2 className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleResetTimeline}
-                className="gap-2"
-              >
-                <RotateCcw className="h-4 w-4" />
-                Reset timeline
-              </Button>
+              <div className="flex items-center gap-2">
+                <Label className="text-xs text-muted-foreground whitespace-nowrap">Speed:</Label>
+                <Select
+                  value={playbackSpeed.toString()}
+                  onValueChange={(value) => {
+                    const speed = parseFloat(value);
+                    setPlaybackSpeed(speed);
+                    // Note: Actual playback speed would need video element modification
+                    toast({
+                      title: "Playback speed",
+                      description: `Set to ${speed}x (requires video element support)`,
+                    });
+                  }}
+                >
+                  <SelectTrigger className="w-20 h-8">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="0.25">0.25x</SelectItem>
+                    <SelectItem value="0.5">0.5x</SelectItem>
+                    <SelectItem value="0.75">0.75x</SelectItem>
+                    <SelectItem value="1.0">1.0x</SelectItem>
+                    <SelectItem value="1.25">1.25x</SelectItem>
+                    <SelectItem value="1.5">1.5x</SelectItem>
+                    <SelectItem value="2.0">2.0x</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
               <div className="ml-auto flex items-center gap-2">
                 <Minus className="h-4 w-4 text-muted-foreground" />
                 <Slider
                   value={[timelineZoom]}
-                  min={0.5}
-                  max={2}
+                  min={0.1}
+                  max={5}
                   step={0.1}
                   onValueChange={(value) => setTimelineZoom(value[0])}
                   className="w-24"
                 />
                 <Plus className="h-4 w-4 text-muted-foreground" />
+                <span className="text-xs text-muted-foreground ml-2 min-w-[3rem]">
+                  {Math.round(timelineZoom * 100)}%
+                </span>
               </div>
             </div>
 
             {/* Timeline Canvas */}
             <div className="relative p-6">
-              <div className="relative h-32 rounded-lg border border-dashed border-border bg-secondary/20">
-                {/* Trimming handles */}
-                <div className="absolute left-0 top-0 h-full w-1 cursor-ew-resize bg-primary/50 hover:bg-primary">
-                  <div className="absolute -top-1 left-1/2 -translate-x-1/2 rounded bg-primary p-1">
-                    <Scissors className="h-3 w-3 text-primary-foreground" />
-                  </div>
-                </div>
-                <div className="absolute right-0 top-0 h-full w-1 cursor-ew-resize bg-primary/50 hover:bg-primary">
-                  <div className="absolute -top-1 left-1/2 -translate-x-1/2 rounded bg-primary p-1">
-                    <Scissors className="h-3 w-3 text-primary-foreground" />
-                  </div>
-                </div>
+              <div
+                className={`relative h-48 rounded-lg border border-border bg-secondary/20 cursor-pointer overflow-hidden ${isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab'}`}
+                onMouseDown={(e) => {
+                  setIsDraggingTimeline(true);
+                  const duration = editorState.video.duration || 0;
+                  if (duration <= 0 || !isFinite(duration)) return;
 
-                {/* Timeline segments visualization */}
-                {steps.length === 0 ? (
-                  <div className="flex h-full items-center justify-center text-muted-foreground">
-                    <p className="text-sm">No segments yet. Click "Add a segment" to get started.</p>
-                  </div>
-                ) : (
-                  <div className="flex h-full items-center gap-1 p-2">
-                    {steps.map((step, index) => {
-                      const totalDuration = Math.max(
-                        steps.reduce((acc, s) => acc + s.duration, 0),
-                        1
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const width = rect.width;
+                  const clickTime = (x / width) * duration;
+                  const clampedTime = Math.max(0, Math.min(clickTime, duration));
+                  if (isFinite(clampedTime) && !isNaN(clampedTime)) {
+                    editorStore.setPlayback({ currentTime: clampedTime });
+                  }
+                }}
+                onMouseMove={(e) => {
+                  if (isDraggingTimeline) {
+                    const duration = editorState.video.duration || 0;
+                    if (duration <= 0 || !isFinite(duration)) return;
+
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const width = rect.width;
+                    const clickTime = (x / width) * duration;
+                    const clampedTime = Math.max(0, Math.min(clickTime, duration));
+                    if (isFinite(clampedTime) && !isNaN(clampedTime)) {
+                      editorStore.setPlayback({ currentTime: clampedTime });
+                    }
+                  }
+                }}
+                onMouseUp={() => setIsDraggingTimeline(false)}
+                onMouseLeave={() => setIsDraggingTimeline(false)}
+                onClick={(e) => {
+                  if (!isDraggingTimeline) {
+                    const duration = editorState.video.duration || 0;
+                    if (duration <= 0 || !isFinite(duration)) return;
+
+                    const rect = e.currentTarget.getBoundingClientRect();
+                    const x = e.clientX - rect.left;
+                    const width = rect.width;
+                    const clickTime = (x / width) * duration;
+                    const clampedTime = Math.max(0, Math.min(clickTime, duration));
+                    if (isFinite(clampedTime) && !isNaN(clampedTime)) {
+                      editorStore.setPlayback({ currentTime: clampedTime });
+                    }
+                  }
+                }}
+              >
+                {/* Time Ruler - Enhanced */}
+                <div className="absolute top-0 left-0 right-0 h-8 border-b border-border bg-secondary/50 flex items-center px-2">
+                  {(() => {
+                    const duration = editorState.video.duration || 0;
+                    if (duration <= 0 || !isFinite(duration)) {
+                      return (
+                        <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                          No video loaded
+                        </div>
                       );
-                      const width = Math.max((step.duration / totalDuration) * 100, 5);
-                      const Icon = typeIcons[step.type];
+                    }
+
+                    // Dynamic interval based on zoom
+                    const baseInterval = 5;
+                    const interval = baseInterval / timelineZoom;
+                    const maxMarkers = Math.min(Math.ceil(duration / interval) + 1, 200);
+                    const safeLength = Math.max(1, Math.min(maxMarkers, 200));
+
+                    return Array.from({ length: safeLength }).map((_, i) => {
+                      const time = (i * interval);
+                      if (time > duration) return null;
+                      const position = (time / duration) * 100;
+                      const isMajorTick = i % Math.ceil(5 / interval) === 0;
+
                       return (
                         <div
-                          key={step.id}
-                          className="group relative flex h-full min-w-[40px] items-center justify-center rounded border border-border bg-primary/10 hover:bg-primary/20 transition-colors cursor-pointer"
-                          style={{ width: `${width}%` }}
-                          title={`${step.description} (${step.duration}s)`}
+                          key={i}
+                          className="absolute top-0 bottom-0 flex flex-col items-center pointer-events-none"
+                          style={{ left: `${position}%` }}
                         >
-                          <Icon className="h-4 w-4 text-primary" />
-                          <div className="absolute inset-x-0 top-0 h-1 bg-primary/30 rounded-t" />
+                          <div className={`w-px bg-border ${isMajorTick ? 'h-3' : 'h-1.5'}`} />
+                          {isMajorTick && (
+                            <span className="text-[10px] text-muted-foreground mt-0.5 font-medium">
+                              {formatTime(time)}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+
+                {/* Waveform-like Visualization */}
+                {editorState.video.duration > 0 && editorState.events.clicks.length > 0 && (
+                  <div className="absolute top-8 left-0 right-0 h-12 pointer-events-none">
+                    {Array.from({ length: Math.min(100, Math.floor(editorState.video.duration * 2)) }).map((_, i) => {
+                      const time = (i / 2);
+                      if (time > editorState.video.duration) return null;
+                      const position = (time / editorState.video.duration) * 100;
+
+                      // Check if there's a click near this time
+                      const hasClick = editorState.events.clicks.some(
+                        click => Math.abs(click.timestamp - time) < 0.1
+                      );
+
+                      const height = hasClick ? 8 : Math.random() * 3 + 1;
+
+                      return (
+                        <div
+                          key={i}
+                          className="absolute bottom-0 w-px bg-primary/20"
+                          style={{
+                            left: `${position}%`,
+                            height: `${height}px`,
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Playback Position Indicator - Enhanced */}
+                {editorState.video.duration > 0 && (
+                  <>
+                    <div
+                      className="absolute top-8 bottom-0 w-0.5 bg-primary z-30 pointer-events-none shadow-lg"
+                      style={{
+                        left: `${Math.min(100, Math.max(0, (editorState.playback.currentTime / editorState.video.duration) * 100))}%`,
+                      }}
+                    >
+                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-primary border-2 border-background shadow-md" />
+                      <div className="absolute -top-2 left-1/2 -translate-x-1/2 text-[9px] text-primary font-bold bg-background px-1 rounded whitespace-nowrap">
+                        {formatTime(editorState.playback.currentTime)}
+                      </div>
+                    </div>
+                    {/* Time indicator line */}
+                    <div
+                      className="absolute top-8 bottom-0 w-px bg-primary/30 z-25 pointer-events-none"
+                      style={{
+                        left: `${Math.min(100, Math.max(0, (editorState.playback.currentTime / editorState.video.duration) * 100))}%`,
+                      }}
+                    />
+                  </>
+                )}
+
+                {/* Click Events - Enhanced */}
+                {editorState.video.duration > 0 && (
+                  <div className="absolute top-20 left-0 right-0 bottom-0">
+                    {editorState.events.clicks.map((click, index) => {
+                      const position = Math.min(100, Math.max(0, (click.timestamp / editorState.video.duration) * 100));
+                      return (
+                        <div
+                          key={`click-${index}`}
+                          className="absolute top-1/2 -translate-y-1/2 z-10 cursor-pointer group"
+                          style={{ left: `${position}%` }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const timestamp = click.timestamp;
+                            if (isFinite(timestamp) && !isNaN(timestamp) && timestamp >= 0) {
+                              editorStore.setPlayback({ currentTime: timestamp });
+                            }
+                          }}
+                        >
+                          <div className="w-2 h-2 rounded-full bg-blue-500 border-2 border-background hover:scale-150 transition-transform shadow-md" />
+                          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-1.5 py-0.5 bg-blue-500 text-white text-[9px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity">
+                            {formatTime(click.timestamp)}
+                          </div>
                         </div>
                       );
                     })}
                   </div>
                 )}
+
+                {/* Markers - Enhanced */}
+                {editorState.video.duration > 0 && (
+                  <div className="absolute top-20 left-0 right-0 bottom-0">
+                    {editorState.events.markers.map((marker) => {
+                      const position = Math.min(100, Math.max(0, (marker.time / editorState.video.duration) * 100));
+                      return (
+                        <div
+                          key={marker.id}
+                          className="absolute top-0 bottom-0 flex flex-col items-center z-15 group"
+                          style={{ left: `${position}%` }}
+                        >
+                          <div className="w-0.5 h-full bg-yellow-500/50" />
+                          <div className="absolute top-0 -translate-y-1/2 w-3 h-3 rounded-full bg-yellow-500 border-2 border-background cursor-pointer hover:scale-150 transition-transform shadow-md"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              const markerTime = marker.time;
+                              if (isFinite(markerTime) && !isNaN(markerTime) && markerTime >= 0) {
+                                editorStore.setPlayback({ currentTime: markerTime });
+                              }
+                            }}
+                            title={marker.label || `Marker at ${formatTime(marker.time)}`}
+                          />
+                          {marker.label && (
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-1.5 py-0.5 bg-yellow-500 text-white text-[9px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity max-w-[120px] truncate">
+                              {marker.label}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Video Progress Bar - Enhanced */}
+                {editorState.video.duration > 0 && (
+                  <div className="absolute top-20 left-0 right-0 h-3 bg-primary/10 rounded-sm overflow-hidden">
+                    <div
+                      className="h-full bg-gradient-to-r from-primary/60 to-primary/40 transition-all duration-100"
+                      style={{ width: `${Math.min(100, Math.max(0, (editorState.playback.currentTime / editorState.video.duration) * 100))}%` }}
+                    />
+                  </div>
+                )}
+
+                {/* Empty State */}
+                {editorState.events.clicks.length === 0 && editorState.events.markers.length === 0 && (
+                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground pointer-events-none">
+                    <div className="text-center">
+                      <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                      <p className="text-sm">No events yet. Click on timeline to scrub.</p>
+                      <p className="text-xs mt-1">Click events and markers will appear here</p>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              {/* Steps List */}
-              <div className="mt-4 space-y-2">
-                {steps.map((step, index) => {
-                  const Icon = typeIcons[step.type];
-                  return (
-                    <div
-                      key={step.id}
-                      className="group flex items-center gap-4 rounded-lg border border-border bg-secondary/30 p-4 transition-colors hover:bg-secondary/50"
-                    >
-                      <GripVertical className="h-4 w-4 cursor-grab text-muted-foreground opacity-0 group-hover:opacity-100" />
-                      <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-sm font-medium">
-                        {index + 1}
-                      </div>
-                      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-accent/10">
-                        <Icon className="h-4 w-4 text-accent" />
-                      </div>
-                      <input
-                        type="text"
-                        value={step.description}
-                        onChange={(e) => updateStepDescription(step.id, e.target.value)}
-                        className="flex-1 bg-transparent text-sm outline-none"
-                      />
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8"
-                        onClick={() => handleSplitSegment(step.id)}
-                        title="Split segment"
+              {/* Events List */}
+              <div className="mt-4 space-y-2 max-h-64 overflow-y-auto">
+                {/* Clicks */}
+                {editorState.events.clicks.length > 0 && (
+                  <div className="space-y-1">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase">Clicks ({editorState.events.clicks.length})</Label>
+                    {editorState.events.clicks.slice(0, 10).map((click, index) => (
+                      <div
+                        key={`click-list-${index}`}
+                        className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors cursor-pointer group"
+                        onClick={() => editorStore.setPlayback({ currentTime: click.timestamp })}
                       >
-                        <Scissors className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-destructive hover:text-destructive"
-                        onClick={() => handleDeleteSegment(step.id)}
-                        title="Delete segment"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                      <div className="flex items-center gap-1 text-sm text-muted-foreground">
-                        <Clock className="h-3.5 w-3.5" />
-                        {step.duration}s
+                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/20">
+                          <MousePointer2 className="h-3 w-3 text-blue-500" />
+                        </div>
+                        <div className="flex-1 text-sm">
+                          <div className="font-medium">Click #{index + 1}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {formatTime(click.timestamp)} • ({Math.round(click.x * 100)}%, {Math.round(click.y * 100)}%)
+                          </div>
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            const timestamp = click.timestamp;
+                            if (isFinite(timestamp) && !isNaN(timestamp) && timestamp >= 0) {
+                              editorStore.setPlayback({ currentTime: timestamp });
+                            }
+                          }}
+                        >
+                          <Play className="h-3 w-3" />
+                        </Button>
                       </div>
-                    </div>
-                  );
-                })}
+                    ))}
+                    {editorState.events.clicks.length > 10 && (
+                      <p className="text-xs text-muted-foreground text-center py-2">
+                        +{editorState.events.clicks.length - 10} more clicks
+                      </p>
+                    )}
+                  </div>
+                )}
+
+                {/* Markers */}
+                {editorState.events.markers.length > 0 && (
+                  <div className="space-y-1 mt-4">
+                    <Label className="text-xs font-semibold text-muted-foreground uppercase">Markers ({editorState.events.markers.length})</Label>
+                    {editorState.events.markers.map((marker) => (
+                      <div
+                        key={marker.id}
+                        className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors cursor-pointer group"
+                        onClick={() => editorStore.setPlayback({ currentTime: marker.time })}
+                      >
+                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-yellow-500/20">
+                          <Clock className="h-3 w-3 text-yellow-500" />
+                        </div>
+                        <input
+                          type="text"
+                          value={marker.label || ''}
+                          onChange={(e) => {
+                            editorStore.setState({
+                              events: {
+                                ...editorState.events,
+                                markers: editorState.events.markers.map(m =>
+                                  m.id === marker.id ? { ...m, label: e.target.value } : m
+                                ),
+                              }
+                            });
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                          placeholder="Marker label"
+                          className="flex-1 bg-transparent text-sm outline-none"
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          {formatTime(marker.time)}
+                        </div>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            editorStore.setState({
+                              events: {
+                                ...editorState.events,
+                                markers: editorState.events.markers.filter(m => m.id !== marker.id),
+                              }
+                            });
+                            toast({
+                              title: "Marker deleted",
+                              description: "Marker has been removed",
+                            });
+                          }}
+                        >
+                          <Trash2 className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Empty State */}
+                {editorState.events.clicks.length === 0 && editorState.events.markers.length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-8 text-center border border-dashed rounded-lg">
+                    <Clock className="h-8 w-8 text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground">No events recorded</p>
+                    <p className="text-xs text-muted-foreground mt-1">Click "Add Marker" to mark important moments</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>

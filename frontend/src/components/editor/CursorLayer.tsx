@@ -37,9 +37,13 @@ export const CursorLayer: React.FC = () => {
             const state = editorStore.getState();
             const time = state.playback.currentTime;
             const { width, height } = state.video;
+            
+            // Use canvas dimensions for rendering
+            const canvasWidth = canvas.width || width || 1920;
+            const canvasHeight = canvas.height || height || 1080;
 
             // Clear
-            ctx.clearRect(0, 0, width, height);
+            ctx.clearRect(0, 0, canvasWidth, canvasHeight);
 
             // -------------------------------------------------------------
             // 1. Draw Click Animations
@@ -62,8 +66,8 @@ export const CursorLayer: React.FC = () => {
                     // Apply force multiplier
                     const force = state.effects.clickForce;
                     
-                    const cx = click.x * width;
-                    const cy = click.y * height;
+                    const cx = click.x * canvasWidth;
+                    const cy = click.y * canvasHeight;
                     
                     // Get color based on click type
                     const baseColor = click.type === 'rightClick'
@@ -73,19 +77,19 @@ export const CursorLayer: React.FC = () => {
                     // Render based on animation style
                     switch (state.effects.clickAnimationStyle) {
                         case 'ripple':
-                            drawRipple(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            drawRipple(ctx, cx, cy, progress, easedProgress, canvasWidth, canvasHeight, state.effects.clickSize, force, baseColor);
                             break;
                         case 'orb':
-                            drawOrb(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            drawOrb(ctx, cx, cy, progress, easedProgress, canvasWidth, canvasHeight, state.effects.clickSize, force, baseColor);
                             break;
                         case 'pulse':
-                            drawPulse(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            drawPulse(ctx, cx, cy, progress, easedProgress, canvasWidth, canvasHeight, state.effects.clickSize, force, baseColor);
                             break;
                         case 'ring':
-                            drawRing(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            drawRing(ctx, cx, cy, progress, easedProgress, canvasWidth, canvasHeight, state.effects.clickSize, force, baseColor);
                             break;
                         case 'splash':
-                            drawSplash(ctx, cx, cy, progress, easedProgress, width, height, state.effects.clickSize, force, baseColor);
+                            drawSplash(ctx, cx, cy, progress, easedProgress, canvasWidth, canvasHeight, state.effects.clickSize, force, baseColor);
                             break;
                     }
                 });
@@ -97,8 +101,8 @@ export const CursorLayer: React.FC = () => {
             const pos = getCursorPos(time, state.events.moves);
 
             if (pos) {
-                const cx = pos.x * width;
-                const cy = pos.y * height;
+                const cx = pos.x * canvasWidth;
+                const cy = pos.y * canvasHeight;
 
                 // Draw Cursor Trail first
                 if (state.cursor.trail) {
@@ -134,17 +138,22 @@ export const CursorLayer: React.FC = () => {
         return () => {
             if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
         };
-    }, [videoConfig.width, videoConfig.height]); // Re-bind if loop changes size
+    }, [videoConfig.width, videoConfig.height, cursorConfig, effectsConfig]); // Re-bind if config changes
+
+    // Ensure canvas has valid dimensions
+    const canvasWidth = videoConfig.width > 0 ? videoConfig.width : 1920;
+    const canvasHeight = videoConfig.height > 0 ? videoConfig.height : 1080;
 
     return (
         <canvas
             ref={canvasRef}
-            width={videoConfig.width}
-            height={videoConfig.height}
+            width={canvasWidth}
+            height={canvasHeight}
             className="absolute inset-0 pointer-events-none z-10"
             style={{
-                width: videoConfig.width,
-                height: videoConfig.height,
+                width: '100%',
+                height: '100%',
+                objectFit: 'contain',
             }}
         />
     );

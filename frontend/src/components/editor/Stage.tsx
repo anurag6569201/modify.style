@@ -1,9 +1,8 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import { useEditorState, editorStore } from '@/lib/editor/store';
 import { VideoLayer } from './VideoLayer';
 import { CursorLayer } from './CursorLayer';
 import { BackgroundLayer } from './BackgroundLayer';
-import { BrowserFrame } from './BrowserFrame';
 import { updateCameraSystem, getInitialCameraState } from '@/lib/composition/camera';
 import { calculateOutputDimensions, calculateVideoTransform } from '@/lib/composition/aspectRatio';
 
@@ -20,8 +19,8 @@ export const Stage: React.FC = () => {
     // Persistent Camera State (Game Loop State)
     const cameraStateRef = useRef(getInitialCameraState());
 
-    // Show raw video without effects in editor preview
-    const showRawVideo = true; // Always show raw video in editor
+    // Show effects in editor preview - set to false to show all effects
+    const showRawVideo = false; // Show all effects in editor preview
 
     useEffect(() => {
         // Skip camera effects if showing raw video
@@ -102,7 +101,7 @@ export const Stage: React.FC = () => {
 
         requestRef.current = requestAnimationFrame(animate);
         return () => cancelAnimationFrame(requestRef.current!);
-    }, [showRawVideo]);
+    }, [showRawVideo, state.effects.clickRipple, state.camera, state.playback.currentTime]);
 
     // Calculate output dimensions based on aspect ratio preset
     const outputDims = calculateOutputDimensions(
@@ -112,8 +111,15 @@ export const Stage: React.FC = () => {
         state.presentation.customAspectRatio
     );
 
+    // Use calculated output dimensions for transform (ensures consistency)
+    const presentationWithCalculatedDims = {
+        ...state.presentation,
+        outputWidth: outputDims.width,
+        outputHeight: outputDims.height,
+    };
+
     // Calculate video transform for letterboxing
-    const videoTransform = calculateVideoTransform(state.video, state.presentation);
+    const videoTransform = calculateVideoTransform(state.video, presentationWithCalculatedDims);
 
     // Update presentation output dimensions if they changed
     useEffect(() => {
@@ -127,46 +133,145 @@ export const Stage: React.FC = () => {
                 }
             });
         }
-    }, [outputDims.width, outputDims.height, state.presentation.aspectRatio]);
+    }, [outputDims.width, outputDims.height, state.presentation.aspectRatio, state.video.width, state.video.height, state.presentation.customAspectRatio]);
 
+    // Calculate padding if enabled
+    const paddingRaw = state.presentation.videoPadding.enabled ? state.presentation.videoPadding : null;
+    // If uniform is enabled, use top value for all sides to ensure consistency
+    const padding = paddingRaw && paddingRaw.uniform
+        ? { ...paddingRaw, top: paddingRaw.top, right: paddingRaw.top, bottom: paddingRaw.top, left: paddingRaw.top }
+        : paddingRaw;
+    const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
+    
+    // Update container size on resize
+    useEffect(() => {
+        if (!containerRef.current) return;
+        
+        const updateSize = () => {
+            if (containerRef.current) {
+                const rect = containerRef.current.getBoundingClientRect();
+                setContainerSize({ width: rect.width, height: rect.height });
+            }
+        };
+        
+        updateSize();
+        const resizeObserver = new ResizeObserver(updateSize);
+        resizeObserver.observe(containerRef.current);
+        
+        return () => resizeObserver.disconnect();
+    }, []);
+    
     // For raw video preview, use native video dimensions
     // When showing raw video, the stage should fill the container
-    const displayWidth = showRawVideo ? '100%' : videoTransform.width;
-    const displayHeight = showRawVideo ? '100%' : videoTransform.height;
-    const displayX = showRawVideo ? 0 : videoTransform.x;
-    const displayY = showRawVideo ? 0 : videoTransform.y;
+    let displayWidth = showRawVideo ? '100%' : `${videoTransform.width}px`;
+    let displayHeight = showRawVideo ? '100%' : `${videoTransform.height}px`;
+    let displayX = showRawVideo ? 0 : videoTransform.x;
+    let displayY = showRawVideo ? 0 : videoTransform.y;
+    
+    // Apply padding if enabled and not showing raw video
+    if (!showRawVideo && padding && containerSize.width > 0 && containerSize.height > 0) {
+      const containerWidth = containerSize.width;
+      const containerHeight = containerSize.height;
+      
+      // Padding values are already in pixels
+      const paddingLeftPx = padding.left;
+      const paddingRightPx = padding.right;
+      const paddingTopPx = padding.top;
+      const paddingBottomPx = padding.bottom;
+      
+      // Calculate available space after padding
+      const availableWidth = containerWidth - paddingLeftPx - paddingRightPx;
+      const availableHeight = containerHeight - paddingTopPx - paddingBottomPx;
+      
+      // Scale video to fit available space while maintaining aspect ratio
+      const videoAspect = videoTransform.width / videoTransform.height;
+      const availableAspect = availableWidth / availableHeight;
+      
+      let scaledWidth = availableWidth;
+      let scaledHeight = availableHeight;
+      
+      if (videoAspect > availableAspect) {
+        // Video is wider - fit to width
+        scaledHeight = availableWidth / videoAspect;
+      } else {
+        // Video is taller - fit to height
+        scaledWidth = availableHeight * videoAspect;
+      }
+      
+      // Center video in available space
+      const centerX = paddingLeftPx + (availableWidth - scaledWidth) / 2;
+      const centerY = paddingTopPx + (availableHeight - scaledHeight) / 2;
+      
+      displayWidth = `${scaledWidth}px`;
+      displayHeight = `${scaledHeight}px`;
+      displayX = centerX;
+      displayY = centerY;
+    } else if (!showRawVideo && !padding && containerSize.width > 0 && containerSize.height > 0) {
+      // No padding, use video transform but scale to container
+      const containerWidth = containerSize.width;
+      const containerHeight = containerSize.height;
+      const containerAspect = containerWidth / containerHeight;
+      const videoAspect = videoTransform.width / videoTransform.height;
+      
+      let scaledWidth = containerWidth;
+      let scaledHeight = containerHeight;
+      
+      if (videoAspect > containerAspect) {
+        scaledHeight = containerWidth / videoAspect;
+      } else {
+        scaledWidth = containerHeight * videoAspect;
+      }
+      
+      displayWidth = `${scaledWidth}px`;
+      displayHeight = `${scaledHeight}px`;
+      displayX = (containerWidth - scaledWidth) / 2;
+      displayY = (containerHeight - scaledHeight) / 2;
+    }
 
     return (
         <div
             ref={containerRef}
             className="relative w-full h-full overflow-hidden bg-black flex items-center justify-center"
             style={{
-                width: showRawVideo ? '100%' : state.presentation.outputWidth,
-                height: showRawVideo ? '100%' : state.presentation.outputHeight,
+                width: '100%',
+                height: '100%',
+                background:'transparent',
+                aspectRatio: showRawVideo 
+                    ? (state.video.width > 0 && state.video.height > 0 
+                        ? `${state.video.width} / ${state.video.height}`
+                        : '16 / 9')
+                    : (outputDims.width > 0 && outputDims.height > 0
+                        ? `${outputDims.width} / ${outputDims.height}`
+                        : '16 / 9'),
             }}
         >
-            {/* Background Layer - only show if not raw video */}
-            {!showRawVideo && <BackgroundLayer />}
+            {/* Background Layer - always show when effects enabled */}
+            {!showRawVideo && (
+                <div className="absolute inset-0 w-full h-full">
+                    <BackgroundLayer />
+                </div>
+            )}
 
             {/* The Stage moves effectively 'moving the camera' */}
             <div
                 ref={stageRef}
                 className="absolute origin-center will-change-transform backface-hidden"
                 style={{
-                    left: displayX,
-                    top: displayY,
+                    left: typeof displayX === 'number' ? `${displayX}px` : displayX,
+                    top: typeof displayY === 'number' ? `${displayY}px` : displayY,
                     width: displayWidth,
                     height: displayHeight,
-                    // Shadow to separate from background
-                    boxShadow: showRawVideo ? 'none' : '0 0 100px rgba(0,0,0,0.5)'
+                    boxShadow: showRawVideo ? 'none' : '0 0 100px rgba(0,0,0,0.7)',
+                    zIndex: 10,
+                    background:'transparent !important',
+                    borderRadius: '12px',
+                    overflow: 'hidden',
                 }}
             >
                 <VideoLayer />
-                {!showRawVideo && <CursorLayer />}
+                {/* Always show cursor layer in editor for preview */}
+                <CursorLayer />
             </div>
-
-            {/* Browser Frame Overlay - only show if not raw video */}
-            {!showRawVideo && <BrowserFrame />}
         </div>
     );
 };

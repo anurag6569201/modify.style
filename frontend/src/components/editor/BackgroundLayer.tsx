@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect, useRef, useCallback } from 'react';
 import { useEditorState } from '@/lib/editor/store';
 import { PresentationConfig } from '@/lib/editor/types';
 
@@ -6,33 +6,39 @@ export const BackgroundLayer: React.FC = () => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const { presentation } = useEditorState();
 
-    useEffect(() => {
+    const renderBackground = useCallback(() => {
         const canvas = canvasRef.current;
         if (!canvas) return;
 
         const ctx = canvas.getContext('2d');
         if (!ctx) return;
 
-        const { outputWidth, outputHeight } = presentation;
+        // Get actual container dimensions
+        const container = canvas.parentElement;
+        if (!container) return;
+        
+        const rect = container.getBoundingClientRect();
+        const containerWidth = rect.width || presentation.outputWidth;
+        const containerHeight = rect.height || presentation.outputHeight;
 
-        // Set canvas size
-        canvas.width = outputWidth;
-        canvas.height = outputHeight;
+        // Set canvas size to match container
+        canvas.width = containerWidth;
+        canvas.height = containerHeight;
 
         // Clear canvas
-        ctx.clearRect(0, 0, outputWidth, outputHeight);
+        ctx.clearRect(0, 0, containerWidth, containerHeight);
 
         // Render background based on mode
         if (presentation.backgroundMode === 'hidden') {
             // Transparent/black background
             ctx.fillStyle = '#000000';
-            ctx.fillRect(0, 0, outputWidth, outputHeight);
+            ctx.fillRect(0, 0, containerWidth, containerHeight);
             return;
         }
 
         if (presentation.backgroundMode === 'solid') {
             ctx.fillStyle = presentation.backgroundColor;
-            ctx.fillRect(0, 0, outputWidth, outputHeight);
+            ctx.fillRect(0, 0, containerWidth, containerHeight);
         } else if (presentation.backgroundMode === 'gradient') {
             const { type, angle = 135, stops } = presentation.backgroundGradient;
             
@@ -41,17 +47,17 @@ export const BackgroundLayer: React.FC = () => {
             if (type === 'linear') {
                 // Convert angle to radians and calculate gradient line
                 const rad = (angle * Math.PI) / 180;
-                const x1 = outputWidth / 2 - (outputWidth / 2) * Math.cos(rad);
-                const y1 = outputHeight / 2 - (outputHeight / 2) * Math.sin(rad);
-                const x2 = outputWidth / 2 + (outputWidth / 2) * Math.cos(rad);
-                const y2 = outputHeight / 2 + (outputHeight / 2) * Math.sin(rad);
+                const x1 = containerWidth / 2 - (containerWidth / 2) * Math.cos(rad);
+                const y1 = containerHeight / 2 - (containerHeight / 2) * Math.sin(rad);
+                const x2 = containerWidth / 2 + (containerWidth / 2) * Math.cos(rad);
+                const y2 = containerHeight / 2 + (containerHeight / 2) * Math.sin(rad);
                 
                 gradient = ctx.createLinearGradient(x1, y1, x2, y2);
             } else {
                 // Radial gradient from center
-                const centerX = outputWidth / 2;
-                const centerY = outputHeight / 2;
-                const radius = Math.max(outputWidth, outputHeight) / 2;
+                const centerX = containerWidth / 2;
+                const centerY = containerHeight / 2;
+                const radius = Math.max(containerWidth, containerHeight) / 2;
                 gradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, radius);
             }
 
@@ -60,7 +66,7 @@ export const BackgroundLayer: React.FC = () => {
             });
 
             ctx.fillStyle = gradient;
-            ctx.fillRect(0, 0, outputWidth, outputHeight);
+            ctx.fillRect(0, 0, containerWidth, containerHeight);
         } else if (presentation.backgroundMode === 'image' && presentation.backgroundImage) {
             const img = new Image();
             img.crossOrigin = 'anonymous';
@@ -69,21 +75,21 @@ export const BackgroundLayer: React.FC = () => {
                 
                 // Draw image to fill canvas (cover mode)
                 const imgAspect = img.width / img.height;
-                const canvasAspect = outputWidth / outputHeight;
+                const canvasAspect = containerWidth / containerHeight;
                 
-                let drawWidth = outputWidth;
-                let drawHeight = outputHeight;
+                let drawWidth = containerWidth;
+                let drawHeight = containerHeight;
                 let drawX = 0;
                 let drawY = 0;
                 
                 if (imgAspect > canvasAspect) {
                     // Image is wider - fit to height
-                    drawWidth = outputHeight * imgAspect;
-                    drawX = (outputWidth - drawWidth) / 2;
+                    drawWidth = containerHeight * imgAspect;
+                    drawX = (containerWidth - drawWidth) / 2;
                 } else {
                     // Image is taller - fit to width
-                    drawHeight = outputWidth / imgAspect;
-                    drawY = (outputHeight - drawHeight) / 2;
+                    drawHeight = containerWidth / imgAspect;
+                    drawY = (containerHeight - drawHeight) / 2;
                 }
                 
                 ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
@@ -103,13 +109,44 @@ export const BackgroundLayer: React.FC = () => {
         }
     }, [presentation]);
 
+    useEffect(() => {
+        renderBackground();
+        
+        // Add resize observer to update on container resize
+        const canvas = canvasRef.current;
+        if (!canvas) return;
+        
+        const container = canvas.parentElement;
+        if (!container) return;
+        
+        const resizeObserver = new ResizeObserver(() => {
+            renderBackground();
+        });
+        
+        resizeObserver.observe(container);
+        
+        return () => {
+            resizeObserver.disconnect();
+        };
+    }, [
+        renderBackground,
+        presentation.backgroundMode,
+        presentation.backgroundColor,
+        presentation.backgroundGradient,
+        presentation.backgroundImage,
+        presentation.backgroundBlur,
+        presentation.backgroundBlurType,
+        presentation.outputWidth,
+        presentation.outputHeight,
+    ]);
+
     return (
         <canvas
             ref={canvasRef}
-            className="absolute inset-0 pointer-events-none z-0"
+            className="absolute inset-0 pointer-events-none z-0 w-full h-full"
             style={{
-                width: presentation.outputWidth,
-                height: presentation.outputHeight,
+                width: '100%',
+                height: '100%',
             }}
         />
     );

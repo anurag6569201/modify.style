@@ -1,0 +1,13 @@
+{
+  "name": "demoforge-extension",
+  "version": "1.0.0",
+  "description": "Chrome extension for pixel-perfect cursor recording",
+  "main": "ws-server.js",
+  "scripts": {
+    "start": "node ws-server.js"
+  },
+  "dependencies": {
+    "ws": "^8.14.2"
+  }
+}
+

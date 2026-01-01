@@ -42,7 +42,7 @@ export interface PresentationConfig {
     customAspectRatio?: { width: number; height: number }; // For custom preset
     outputWidth: number;
     outputHeight: number;
-    
+
     // Background settings
     backgroundMode: 'hidden' | 'solid' | 'gradient' | 'image';
     backgroundColor: string; // Hex color for solid
@@ -54,16 +54,31 @@ export interface PresentationConfig {
     backgroundImage?: string; // URL or data URL
     backgroundBlur: number; // 0-100 - blur radius in pixels
     backgroundBlurType: 'gaussian' | 'stack'; // Blur algorithm
-    
-    // Browser frame settings
-    browserFrameMode: 'default' | 'minimal' | 'hidden';
-    browserFrameBorder: boolean;
-    browserFrameShadow: boolean;
-    browserFrameColor: string; // Frame/chrome color
-    
+
+    // Video cropping
+    videoCrop: {
+        enabled: boolean;
+        top: number; // Pixels to crop from top (browser chrome)
+        bottom: number; // Pixels to crop from bottom
+        left: number; // Pixels to crop from left
+        right: number; // Pixels to crop from right
+        roundedCorners: boolean; // Add rounded corners (minimal mode)
+        cornerRadius: number; // Corner radius in pixels
+    };
+
     // Render quality
     screenDPR: number; // Device pixel ratio multiplier (1.0 = native, 2.0 = 2x, etc.)
-    
+
+    // Video padding (inside container, makes background visible)
+    videoPadding: {
+        enabled: boolean;
+        top: number; // Pixels
+        right: number; // Pixels
+        bottom: number; // Pixels
+        left: number; // Pixels
+        uniform: boolean; // If true, all sides use the same value
+    };
+
     // Layered rendering settings
     layeredRendering?: boolean; // Enable layered rendering with stable outer container
     stabilization?: {
@@ -175,11 +190,24 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         },
         backgroundBlur: 0,
         backgroundBlurType: 'gaussian',
-        browserFrameMode: 'default',
-        browserFrameBorder: true,
-        browserFrameShadow: true,
-        browserFrameColor: '#ffffff',
+        videoCrop: {
+            enabled: false,
+            top: 100, // Default browser chrome height
+            bottom: 0,
+            left: 0,
+            right: 0,
+            roundedCorners: false,
+            cornerRadius: 12,
+        },
         screenDPR: 1.0,
+        videoPadding: {
+            enabled: false,
+            top: 50,
+            right: 50,
+            bottom: 50,
+            left: 50,
+            uniform: true,
+        },
     },
     colorGrading: {
         brightness: 0,
