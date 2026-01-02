@@ -34,16 +34,16 @@ function renderBackground(
     ctx.fillRect(0, 0, width, height);
   } else if (presentation.backgroundMode === 'gradient') {
     const { type, angle = 135, stops } = presentation.backgroundGradient;
-    
+
     let gradient: CanvasGradient;
-    
+
     if (type === 'linear') {
       const rad = (angle * Math.PI) / 180;
       const x1 = width / 2 - (width / 2) * Math.cos(rad);
       const y1 = height / 2 - (height / 2) * Math.sin(rad);
       const x2 = width / 2 + (width / 2) * Math.cos(rad);
       const y2 = height / 2 + (height / 2) * Math.sin(rad);
-      
+
       gradient = ctx.createLinearGradient(x1, y1, x2, y2);
     } else {
       const centerX = width / 2;
@@ -64,12 +64,12 @@ function renderBackground(
     if (img && img.complete && img.naturalWidth > 0) {
       const imgAspect = img.width / img.height;
       const canvasAspect = width / height;
-      
+
       let drawWidth = width;
       let drawHeight = height;
       let drawX = 0;
       let drawY = 0;
-      
+
       if (imgAspect > canvasAspect) {
         drawWidth = height * imgAspect;
         drawX = (width - drawWidth) / 2;
@@ -77,7 +77,7 @@ function renderBackground(
         drawHeight = width / imgAspect;
         drawY = (height - drawHeight) / 2;
       }
-      
+
       ctx.drawImage(img, drawX, drawY, drawWidth, drawHeight);
     } else {
       // Fallback to black if image not loaded
@@ -111,14 +111,14 @@ function applyBlur(
   if (blurType === 'stack') {
     const passes = Math.ceil(blur / 10);
     const blurRadius = blur / passes;
-    
+
     ctx.clearRect(0, 0, width, height);
-    
+
     for (let i = 0; i < passes; i++) {
       ctx.filter = `blur(${blurRadius}px)`;
       ctx.drawImage(tempCanvas, 0, 0);
       ctx.filter = 'none';
-      
+
       if (i < passes - 1) {
         tempCtx.clearRect(0, 0, width, height);
         tempCtx.drawImage(ctx.canvas, 0, 0);
@@ -318,7 +318,7 @@ function drawClickAnimation(
   const CLICK_DELAY = 0.08;
   const ANIMATION_DURATION = 0.6;
   const timeSinceClick = time - click.timestamp;
-  
+
   if (timeSinceClick < CLICK_DELAY || timeSinceClick >= CLICK_DELAY + ANIMATION_DURATION) {
     return;
   }
@@ -392,12 +392,12 @@ function drawCursor(
     ctx.fillStyle = cursorConfig.color;
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = 1.5;
-    
+
     if (cursorConfig.glow) {
       ctx.shadowColor = cursorConfig.color;
       ctx.shadowBlur = 15;
     }
-    
+
     ctx.beginPath();
     ctx.moveTo(cx, cy);
     ctx.lineTo(cx + size * 0.4, cy + size * 0.6);
@@ -405,7 +405,7 @@ function drawCursor(
     ctx.lineTo(cx + size * 0.3, cy + size * 0.8);
     ctx.lineTo(cx + size * 0.1, cy + size * 0.7);
     ctx.closePath();
-    
+
     ctx.fill();
     ctx.stroke();
     ctx.shadowBlur = 0;
@@ -476,12 +476,12 @@ export default function Render() {
     if (video.readyState < 2) {
       await new Promise(r => { video.onloadedmetadata = r; });
     }
-    
+
     await new Promise(resolve => setTimeout(resolve, 100));
 
     let videoWidth = video.videoWidth;
     let videoHeight = video.videoHeight;
-    
+
     if (!videoWidth || !videoHeight || videoWidth === 0 || videoHeight === 0) {
       await new Promise(resolve => {
         const checkDimensions = () => {
@@ -550,13 +550,13 @@ export default function Render() {
     // Calculate padding
     const padding = presentationConfig.videoPadding?.enabled
       ? (presentationConfig.videoPadding.uniform
-          ? {
-              top: presentationConfig.videoPadding.top,
-              right: presentationConfig.videoPadding.top,
-              bottom: presentationConfig.videoPadding.top,
-              left: presentationConfig.videoPadding.top,
-            }
-          : presentationConfig.videoPadding)
+        ? {
+          top: presentationConfig.videoPadding.top,
+          right: presentationConfig.videoPadding.top,
+          bottom: presentationConfig.videoPadding.top,
+          left: presentationConfig.videoPadding.top,
+        }
+        : presentationConfig.videoPadding)
       : null;
 
     // Adjust video position/size if padding is enabled
@@ -705,7 +705,7 @@ export default function Render() {
   ) {
     // Border radius for video frame (always 12px)
     const videoBorderRadius = 12;
-    
+
     // 1. Render background
     renderBackground(ctx, width, height, presentation, backgroundImage);
 
@@ -728,14 +728,14 @@ export default function Render() {
     const crop = presentation.videoCrop;
     const videoWidth = video.videoWidth || videoConfig.width;
     const videoHeight = video.videoHeight || videoConfig.height;
-    
+
     // Scale video to fit output dimensions maintaining aspect ratio
     const videoAspectRatio = videoWidth / videoHeight;
     const outputAspectRatio = finalVideoWidth / finalVideoHeight;
-    
+
     let scaledVideoWidth = finalVideoWidth;
     let scaledVideoHeight = finalVideoHeight;
-    
+
     if (videoAspectRatio > outputAspectRatio) {
       // Video is wider - fit to width, center vertically
       scaledVideoHeight = finalVideoWidth / videoAspectRatio;
@@ -743,24 +743,24 @@ export default function Render() {
       // Video is taller - fit to height, center horizontally
       scaledVideoWidth = finalVideoHeight * videoAspectRatio;
     }
-    
+
     // Always center the video in the output canvas
     // Calculate center position relative to output canvas (width x height)
     const centerX = width / 2;
     const centerY = height / 2;
     const scaledVideoX = centerX - scaledVideoWidth / 2;
     const scaledVideoY = centerY - scaledVideoHeight / 2;
-    
+
     // Crop dimensions (crop values are relative to scaled video dimensions)
     let drawWidth = scaledVideoWidth;
     let drawHeight = scaledVideoHeight;
-    
+
     if (crop?.enabled) {
       // Crop is applied as a clipping mask - video stays centered
       drawWidth = scaledVideoWidth - crop.left - crop.right;
       drawHeight = scaledVideoHeight - crop.top - crop.bottom;
     }
-    
+
     // Source video coordinates (no crop applied to source - we crop after scaling)
     const sourceX = 0;
     const sourceY = 0;
@@ -774,7 +774,7 @@ export default function Render() {
     if (!rawRecording && cameraStateRef.current) {
       const { scale, translateX, translateY, rotation = 0, vignette } = cameraStateRef.current.transform;
       const blur = cameraStateRef.current.blur || 0;
-      
+
       // Camera transform centered around the video center (which is canvas center)
       const videoCenterX = width / 2;
       const videoCenterY = height / 2;
@@ -782,17 +782,17 @@ export default function Render() {
       ctx.scale(scale, scale);
       ctx.translate(translateX, translateY);
       ctx.rotate((rotation * Math.PI) / 180);
-      
+
       // Apply camera blur (matching Stage.tsx)
       if (blur > 0) {
         ctx.filter = `blur(${blur}px)`;
       }
-      
+
       ctx.translate(-scaledVideoWidth / 2, -scaledVideoHeight / 2);
     } else {
       ctx.translate(scaledVideoX, scaledVideoY);
     }
-    
+
     // Apply crop clipping (after camera transform, before drawing)
     // Crop coordinates are relative to the scaled video area
     if (crop?.enabled) {
@@ -879,7 +879,7 @@ export default function Render() {
           sourceX, sourceY, sourceWidth, sourceHeight,
           0, 0, tempCanvas.width, tempCanvas.height
         );
-        
+
         // Apply filters using FilterEngine
         const filterCanvas = document.createElement('canvas');
         filterCanvas.width = Math.round(scaledVideoWidth);
@@ -915,7 +915,7 @@ export default function Render() {
 
     // Reset filter after drawing video
     ctx.filter = 'none';
-    
+
     // Apply camera vignette overlay (matching Stage.tsx)
     if (!rawRecording && cameraStateRef.current) {
       const vignette = cameraStateRef.current.transform.vignette || 0;
@@ -934,14 +934,14 @@ export default function Render() {
     }
 
     ctx.restore();
-    
+
     // Apply box shadow effect (matching Stage.tsx style: '0 0 100px rgba(0,0,0,0.7)')
     // Note: Canvas doesn't support box-shadow directly, so we'll draw a shadow manually
     // For now, we'll skip this as it's complex and the video layer shadow is more subtle
 
     // 5. Render cursor and click effects (on video layer coordinates)
     ctx.save();
-    
+
     // Apply same transform as video layer (centered in canvas)
     if (!rawRecording && cameraStateRef.current) {
       const { scale, translateX, translateY, rotation = 0 } = cameraStateRef.current.transform;
@@ -956,7 +956,7 @@ export default function Render() {
     } else {
       ctx.translate(scaledVideoX, scaledVideoY);
     }
-    
+
     // Apply crop clipping for cursor/effects too
     if (crop?.enabled) {
       const cropX = crop.left;
@@ -964,7 +964,7 @@ export default function Render() {
       ctx.beginPath();
       ctx.rect(cropX, cropY, drawWidth, drawHeight);
       ctx.clip();
-      
+
       // Apply border radius to cursor/effects layer
       const radius = crop.roundedCorners && crop.cornerRadius > 0 ? crop.cornerRadius : videoBorderRadius;
       ctx.beginPath();

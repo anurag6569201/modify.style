@@ -1,155 +1,291 @@
-let socket = null;
-let eventBuffer = [];
-let bufferFlushInterval = null;
-const BUFFER_FLUSH_MS = 50;
-const WS_URL = 'ws://localhost:8081';
+/**
+ * DemoForge Background Script (Service Worker)
+ * 
+ * SINGLE SOURCE OF TRUTH for recording state.
+ * 
+ * Responsibilities:
+ * 1. Manage recording state in chrome.storage
+ * 2. Relay mouse events from content scripts to frontend via WebSocket
+ * 3. Handle commands from frontend via WebSocket
+ * 4. Handle desktop capture requests
+ */
 
-// Initialize storage on installation/startup
+// ═══════════════════════════════════════════════════════════════════════
+// CONSTANTS
+// ═══════════════════════════════════════════════════════════════════════
+
+const WS_URL = 'ws://localhost:8081';
+const BUFFER_FLUSH_INTERVAL_MS = 50;
+const BUFFER_MAX_SIZE = 50;
+const WS_RECONNECT_DELAY_MS = 3000;
+const WS_HEALTH_CHECK_INTERVAL_MS = 10000; // Less aggressive health check
+
+// ═══════════════════════════════════════════════════════════════════════
+// STATE
+// ═══════════════════════════════════════════════════════════════════════
+
+let ws = null;
+let wsReconnectTimer = null;
+let eventBuffer = [];
+let bufferFlushTimer = null;
+let isConnecting = false;
+let lastConnectAttempt = 0;
+const MIN_RECONNECT_INTERVAL = 2000; // Don't reconnect faster than this
+
+console.log('[BG] 🚀 Background service worker started');
+
+// ═══════════════════════════════════════════════════════════════════════
+// INITIALIZATION
+// ═══════════════════════════════════════════════════════════════════════
+
+// Initialize storage on install
 chrome.runtime.onInstalled.addListener(() => {
-  chrome.storage.local.get(['isRecording'], (result) => {
-    if (result.isRecording === undefined) {
-      chrome.storage.local.set({ isRecording: false });
-      console.log('[Extension] Initialized isRecording to false');
-    }
-  });
+  chrome.storage.local.set({ isRecording: false, recordingStartTime: null });
+  console.log('[BG] Initialized storage');
 });
 
-function connectWebSocket() {
-  if (socket && socket.readyState === WebSocket.OPEN) {
-    return;
+// Connect WebSocket on startup
+connectWebSocket();
+
+// Start buffer flush interval
+bufferFlushTimer = setInterval(flushEventBuffer, BUFFER_FLUSH_INTERVAL_MS);
+
+// Periodic WebSocket health check (less aggressive)
+setInterval(() => {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    connectWebSocket(); // Don't log - connectWebSocket already logs
   }
+}, WS_HEALTH_CHECK_INTERVAL_MS);
 
-  socket = new WebSocket(WS_URL);
+// ═══════════════════════════════════════════════════════════════════════
+// WEBSOCKET CONNECTION
+// ═══════════════════════════════════════════════════════════════════════
 
-  socket.onopen = () => {
-    console.log('[Extension] ✅ WebSocket connected to bridge server');
-    console.log('[Extension] 📊 Buffer status:', {
-      eventsInBuffer: eventBuffer.length,
-      socketReady: socket.readyState === WebSocket.OPEN
-    });
-    flushBuffer();
-  };
-
-  socket.onmessage = (e) => {
-    try {
-      const message = JSON.parse(e.data.toString());
-      console.log('[Extension] 📨 Received WebSocket message:', message.type);
-      
-      if (message.type === 'recordingStarted') {
-        // Frontend signals recording has started (after countdown)
-        console.log('[Extension] 🎬 Processing recordingStarted signal');
-        
-        const startTime = Date.now();
-        
-        // Set storage flag - ALL content scripts will pick this up automatically
-        chrome.storage.local.set({
-          isRecording: true,
-          recordingStartTime: startTime
-        }, () => {
-          console.log('[Extension] ✅✅✅ Set isRecording=true in storage at:', new Date(startTime).toISOString());
-          console.log('[Extension] Storage set complete, verifying...');
-          
-          // Verify it was set
-          chrome.storage.local.get(['isRecording'], (result) => {
-            console.log('[Extension] 🔍 Storage verification:', result);
-          });
-          
-          // Also broadcast message to all tabs for immediate response
-          chrome.tabs.query({}, (allTabs) => {
-            console.log('[Extension] 📢 Broadcasting startRecording to', allTabs.length, 'tabs');
-            allTabs.forEach((tab) => {
-              if (tab.id && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
-                chrome.tabs.sendMessage(tab.id, { action: 'startRecording' }).catch(() => {
-                  // Ignore errors - storage change will handle it
-                });
-              }
-            });
-          });
-        });
-      } else if (message.type === 'recordingStopped') {
-        // Frontend signals recording has stopped
-        console.log('[Extension] ⏹️ Processing recordingStopped signal');
-        
-        // Set storage flag - ALL content scripts will pick this up automatically
-        chrome.storage.local.set({ isRecording: false }, () => {
-          console.log('[Extension] ✅ Set isRecording=false in storage - all content scripts will stop recording');
-        });
-      }
-    } catch (error) {
-      console.error('[Extension] Failed to parse message from server:', error);
-    }
-  };
-
-  socket.onerror = (error) => {
-    console.error('[Extension] WebSocket error:', error);
-  };
-
-  socket.onclose = () => {
-    console.log('[Extension] WebSocket closed, reconnecting...');
-    socket = null;
-    setTimeout(connectWebSocket, 1000);
-  };
-}
-
-function flushBuffer() {
-  if (eventBuffer.length === 0) {
+function connectWebSocket() {
+  // Prevent rapid reconnection attempts
+  const now = Date.now();
+  if (now - lastConnectAttempt < MIN_RECONNECT_INTERVAL) {
     return;
   }
   
-  if (!socket || socket.readyState !== WebSocket.OPEN) {
-    console.warn('[Extension] ⚠️ Cannot flush buffer - WebSocket not open. State:', socket?.readyState);
-    return;
+  if (isConnecting) return;
+  if (ws && ws.readyState === WebSocket.OPEN) return;
+  
+  // Clean up existing connection
+  if (ws) {
+    try { ws.close(); } catch (e) {}
+    ws = null;
+  }
+  
+  if (wsReconnectTimer) {
+    clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = null;
   }
 
-  const batch = [...eventBuffer];
-  eventBuffer = [];
+  isConnecting = true;
+  lastConnectAttempt = now;
+  console.log('[BG] 🔌 Connecting to WebSocket...');
 
   try {
-    const message = {
+    ws = new WebSocket(WS_URL);
+
+    ws.onopen = () => {
+      isConnecting = false;
+      console.log('[BG] ✅ WebSocket connected');
+      flushEventBuffer();
+    };
+
+    ws.onmessage = (e) => {
+      try {
+        const message = JSON.parse(e.data);
+        handleWebSocketMessage(message);
+      } catch (error) {
+        console.error('[BG] Failed to parse WebSocket message:', error);
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('[BG] ❌ WebSocket error');
+      isConnecting = false;
+    };
+
+    ws.onclose = (event) => {
+      // Only log if it wasn't a clean close
+      if (event.code !== 1000) {
+        console.log('[BG] WebSocket disconnected (code:', event.code, ')');
+      }
+      ws = null;
+      isConnecting = false;
+      scheduleReconnect();
+    };
+
+  } catch (error) {
+    console.error('[BG] Failed to create WebSocket:', error);
+    isConnecting = false;
+    scheduleReconnect();
+  }
+}
+
+function scheduleReconnect() {
+  if (wsReconnectTimer) return;
+  wsReconnectTimer = setTimeout(() => {
+    wsReconnectTimer = null;
+    connectWebSocket();
+  }, WS_RECONNECT_DELAY_MS);
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// WEBSOCKET MESSAGE HANDLING (Commands from Frontend)
+// ═══════════════════════════════════════════════════════════════════════
+
+function handleWebSocketMessage(message) {
+  console.log('[BG] 📨 Received:', message.type);
+
+  switch (message.type) {
+    case 'recordingStarted':
+      handleStartRecording(message.startTime || Date.now());
+      break;
+      
+    case 'recordingStopped':
+      handleStopRecording();
+      break;
+      
+    default:
+      console.log('[BG] Unknown message type:', message.type);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// RECORDING STATE MANAGEMENT
+// ═══════════════════════════════════════════════════════════════════════
+
+function handleStartRecording(startTime) {
+  console.log('[BG] 🎬 Starting recording at:', new Date(startTime).toISOString());
+  
+  // Set storage - this broadcasts to ALL content scripts automatically
+  chrome.storage.local.set({
+    isRecording: true,
+    recordingStartTime: startTime
+  }, () => {
+    console.log('[BG] ✅ Recording state saved to storage');
+    
+    // Log active tabs for debugging
+    chrome.tabs.query({}, (tabs) => {
+      const validTabs = tabs.filter(t => 
+        t.url && !t.url.startsWith('chrome://') && !t.url.startsWith('chrome-extension://')
+      );
+      console.log(`[BG] 📊 ${validTabs.length} tabs will receive recording state`);
+    });
+  });
+}
+
+function handleStopRecording() {
+  console.log('[BG] ⏹️ Stopping recording');
+  
+  chrome.storage.local.set({
+    isRecording: false,
+    recordingStartTime: null
+  }, () => {
+    console.log('[BG] ✅ Recording stopped, state saved');
+  });
+}
+
+// ═══════════════════════════════════════════════════════════════════════
+// EVENT BUFFERING & RELAY
+// ═══════════════════════════════════════════════════════════════════════
+
+function flushEventBuffer() {
+  if (eventBuffer.length === 0) return;
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+
+  const batch = eventBuffer.splice(0, eventBuffer.length);
+  
+  try {
+    ws.send(JSON.stringify({
       type: 'batch',
       events: batch
-    };
-    socket.send(JSON.stringify(message));
-    console.log('[Extension] ✅ Sent batch of', batch.length, 'events to WebSocket');
+    }));
+    
+    // Only log occasionally to reduce noise
+    if (batch.length > 0) {
+      console.log(`[BG] 📤 Sent ${batch.length} events`);
+    }
   } catch (error) {
-    console.error('[Extension] ❌ Failed to send batch:', error);
+    console.error('[BG] Failed to send batch:', error);
+    // Put events back at the front of the buffer
     eventBuffer.unshift(...batch);
   }
 }
 
-// Handle messages from content script
+// ═══════════════════════════════════════════════════════════════════════
+// MESSAGE HANDLING (From Content Scripts)
+// ═══════════════════════════════════════════════════════════════════════
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (msg.type === "mouse") {
+  
+  // Mouse event from content script
+  if (msg.type === 'mouse') {
     eventBuffer.push(msg);
     
-    // Log first few events for debugging
-    if (eventBuffer.length <= 5) {
-      console.log('[Extension] 📦 Buffered mouse event:', msg.eventType, 'Total in buffer:', eventBuffer.length);
+    // Flush immediately if buffer is getting large
+    if (eventBuffer.length >= BUFFER_MAX_SIZE) {
+      flushEventBuffer();
     }
-
-    if (eventBuffer.length >= 100) {
-      console.log('[Extension] 📤 Flushing buffer (100 events)');
-      flushBuffer();
-    }
-  } else if (msg.type === "requestScreenSelection") {
-    // Forward screen selection request to frontend via WebSocket
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify({
-        type: "requestScreenSelection"
-      }));
-      console.log('[Extension] ✅ Forwarded screen selection request to frontend');
-    } else {
-      console.warn('[Extension] ⚠️ Cannot forward screen selection - WebSocket not connected');
-    }
+    
+    sendResponse({ success: true });
+    return false; // Synchronous
   }
-
-  sendResponse({ success: true });
-  return true;
+  
+  // Recording control from DemoForge content script (fallback path)
+  if (msg.action === 'startRecording') {
+    handleStartRecording(msg.recordingStartTime || Date.now());
+    sendResponse({ success: true });
+    return false;
+  }
+  
+  if (msg.action === 'stopRecording') {
+    handleStopRecording();
+    sendResponse({ success: true });
+    return false;
+  }
+  
+  // Desktop capture request
+  if (msg.type === 'getStreamId') {
+    console.log('[BG] 🎥 Desktop capture requested');
+    
+    chrome.desktopCapture.chooseDesktopMedia(
+      ['screen', 'audio'],
+      sender.tab,
+      (streamId) => {
+        if (!streamId) {
+          console.log('[BG] ❌ Desktop capture cancelled');
+          sendResponse({ success: false, error: 'Cancelled' });
+          return;
+        }
+        console.log('[BG] ✅ Desktop capture stream ID obtained');
+        sendResponse({ success: true, streamId });
+      }
+    );
+    return true; // Async response
+  }
+  
+  // Unknown message
+  sendResponse({ success: false, error: 'Unknown message' });
+  return false;
 });
 
-if (!bufferFlushInterval) {
-  bufferFlushInterval = setInterval(flushBuffer, BUFFER_FLUSH_MS);
-}
+// ═══════════════════════════════════════════════════════════════════════
+// TAB LIFECYCLE (Ensure new tabs get recording state)
+// ═══════════════════════════════════════════════════════════════════════
 
-connectWebSocket();
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  // When a tab finishes loading, it will read storage automatically
+  // via the content script's syncStateFromStorage()
+  // No need to send messages - storage.onChanged handles it
+});
 
+// Service worker wake-up
+chrome.runtime.onStartup.addListener(() => {
+  console.log('[BG] Service worker started via onStartup');
+  connectWebSocket();
+});

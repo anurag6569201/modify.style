@@ -36,6 +36,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/component
 import { Label } from "@/components/ui/label";
 import { ParticleSystem } from "@/lib/effects/particles";
 import { extensionEventToMoveData, extensionEventToClickData } from "@/lib/extension/coordinate-mapper";
+import { extensionWS } from "@/lib/extension/websocket";
 
 // Extension mouse event type (moved here to avoid WebSocket dependency)
 export interface ExtensionMouseEvent {
@@ -122,10 +123,10 @@ const CAMERA_CONFIG = {
   CLICK_CLUSTER_MS: 3000, // Click cluster duration (3 seconds for 2+ clicks)
   CURSOR_LEAVE_FOCUS_MS: 400, // Cursor leave focus threshold
   CURSOR_LEAVE_DISTANCE: 0.45, // 45% viewport distance
-  
+
   // Safe box for camera (center 40% - camera only moves when cursor leaves this area)
   SAFE_BOX_SIZE: 0.4, // 40% of viewport (center area)
-  
+
   // Minimum clicks required for zoom
   MIN_CLICKS_FOR_ZOOM: 2,
 
@@ -220,7 +221,7 @@ export default function Recorder() {
   const cameraOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const neutralCameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
   const isScrollingRef = useRef<boolean>(false);
-  
+
   // Click cluster tracking for zoom detection (2+ clicks within 3 seconds)
   const clickClusterRef = useRef<Array<{ x: number; y: number; timestamp: number }>>([]);
   const lastZoomTimeRef = useRef<number>(0);
@@ -242,6 +243,9 @@ export default function Recorder() {
   // Cursor indicator smoothing refs (for cursor to lead camera)
   const cursorIndicatorSmoothPosRef = useRef<{ x: number; y: number } | null>(null);
   const cursorIndicatorVelocityRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Deduplication: Track last processed event to prevent duplicate processing
+  const lastProcessedEventRef = useRef<{ timestamp: number; clientX: number; clientY: number; eventType: string } | null>(null);
 
   // Helper function: linear interpolation
   const lerp = (a: number, b: number, t: number): number => {
@@ -304,6 +308,8 @@ export default function Recorder() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasStreamRef = useRef<MediaStream | null>(null);
   const canvasAnimationFrameRef = useRef<number | null>(null);
+  const canvasIntervalRef = useRef<number | null>(null); // For background tab drawing (when rAF is throttled)
+  const visibilityHandlerRef = useRef<(() => void) | null>(null); // Track visibility change handler for cleanup
 
   // Refs for canvas drawing to access current values
   const zoomLevelRef = useRef(zoomLevel);
@@ -345,6 +351,15 @@ export default function Recorder() {
   useEffect(() => {
     zoomStateRef.current = zoomState;
   }, [zoomState]);
+
+  // Connect WebSocket for extension communication
+  useEffect(() => {
+    extensionWS.connect();
+
+    return () => {
+      extensionWS.disconnect();
+    };
+  }, []);
 
   useEffect(() => {
     const fetchProfile = async () => {
@@ -502,30 +517,171 @@ export default function Recorder() {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`;
   };
 
-  // Listen for screen selection request from extension
+  // Listen for messages from extension content script
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === 'DEMOFORGE_REQUEST_SCREEN_SELECTION') {
+      if (!event.data?.type) return;
+      
+      if (event.data.type === 'DEMOFORGE_REQUEST_SCREEN_SELECTION') {
         console.log('[Frontend] Extension requested screen selection via window message');
         handleSelectScreen();
+      }
+      else if (event.data.type === 'DEMOFORGE_EXTENSION_INVALID') {
+        // Extension was reloaded, page needs refresh
+        toast({
+          title: "Extension needs refresh",
+          description: "The extension was reloaded. Please refresh this page.",
+          variant: "destructive",
+          duration: 10000
+        });
       }
     };
 
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
-  }, []);
+  }, [toast]);
+
+  const getStreamIdFromExtension = (): Promise<string | null | 'cancelled'> => {
+    return new Promise((resolve) => {
+      // Check if extension is available first
+      // @ts-expect-error - chrome is a global from Chrome extension API
+      if (!chrome?.runtime?.id) {
+        console.log('Extension not available, skipping extension path');
+        resolve(null); // null = extension not available, can fall back
+        return;
+      }
+
+      const timeoutId = setTimeout(() => {
+        console.warn('Timeout waiting for stream ID from extension');
+        window.removeEventListener('message', handleMessage);
+        resolve(null); // null = timeout, can fall back
+      }, 5000); // 5 second timeout for user to select
+
+      const handleMessage = (event: MessageEvent) => {
+        if (event.data && event.data.type === 'DEMOFORGE_STREAM_ID_SUCCESS') {
+          console.log('Got stream ID from extension:', event.data.streamId);
+          clearTimeout(timeoutId);
+          window.removeEventListener('message', handleMessage);
+          resolve(event.data.streamId);
+        } else if (event.data && event.data.type === 'DEMOFORGE_STREAM_ID_ERROR') {
+          const error = event.data.error || 'Unknown error';
+          console.warn('Error getting stream ID from extension:', error);
+          clearTimeout(timeoutId);
+          window.removeEventListener('message', handleMessage);
+          // If user cancelled, don't fall back to getDisplayMedia
+          if (error.includes('cancelled') || error.includes('Permission denied')) {
+            resolve('cancelled'); // 'cancelled' = user cancelled, don't fall back
+          } else {
+            resolve(null); // null = other error, can fall back
+          }
+        }
+      };
+
+      window.addEventListener('message', handleMessage);
+      window.postMessage({ type: 'DEMOFORGE_GET_STREAM_ID' }, '*');
+    });
+  };
 
   const handleSelectScreen = async () => {
     try {
-      // Request screen share with audio based on settings
-      const displayStream = await navigator.mediaDevices.getDisplayMedia({
-        video: {
-          width: { ideal: recordingQuality === "high" ? 1920 : recordingQuality === "medium" ? 1280 : 854 },
-          height: { ideal: recordingQuality === "high" ? 1080 : recordingQuality === "medium" ? 720 : 480 },
-          frameRate: { ideal: recordingQuality === "high" ? 30 : recordingQuality === "medium" ? 24 : 15 },
-        },
-        audio: audioSource === "system" || audioSource === "both"
-      });
+      let displayStream: MediaStream;
+
+      // Try to get stream ID from extension first (for better "extension power" recording)
+      const streamIdResult = await getStreamIdFromExtension();
+
+      // If user cancelled extension dialog, don't proceed
+      if (streamIdResult === 'cancelled') {
+        console.log('User cancelled extension screen selection');
+        return; // Stop here, don't show second prompt
+      }
+
+      if (streamIdResult) {
+        console.log('Using extension stream ID for recording:', streamIdResult);
+        // Use the stream ID from extension
+        // @ts-ignore - chromeMediaSourceId and mandatory are Chrome-specific API extensions
+        displayStream = await navigator.mediaDevices.getUserMedia({
+          audio: audioSource === "system" || audioSource === "both" ? {
+            // @ts-ignore - Chrome-specific mandatory constraints
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: streamIdResult
+            }
+          } : false,
+          video: {
+            // @ts-ignore - Chrome-specific mandatory constraints
+            mandatory: {
+              chromeMediaSource: 'desktop',
+              chromeMediaSourceId: streamIdResult,
+              // Don't limit width/height for entire screen capture - let it use native resolution
+              // maxWidth and maxHeight can cause cropping or limiting of screen capture
+              maxFrameRate: recordingQuality === "high" ? 60 : 30 // Higher max for desktop capture
+            }
+          }
+        } as any);
+
+        // Log actual video track settings to verify what's being captured
+        const videoTrack = displayStream.getVideoTracks()[0];
+        if (videoTrack) {
+          const settings = videoTrack.getSettings();
+          const capabilities = videoTrack.getCapabilities();
+          console.log('📹 Video track settings:', {
+            width: settings.width,
+            height: settings.height,
+            frameRate: settings.frameRate,
+            deviceId: settings.deviceId,
+            displaySurface: settings.displaySurface, // Should be 'monitor' for entire screen
+            capabilities: capabilities
+          });
+
+          // Warn if displaySurface is not 'monitor' (entire screen)
+          if (settings.displaySurface && settings.displaySurface !== 'monitor') {
+            console.warn('⚠️ Warning: Not capturing entire screen! displaySurface:', settings.displaySurface);
+            toast({
+              title: "Screen capture warning",
+              description: `Capturing ${settings.displaySurface} instead of entire screen. Please select "Entire Screen" in the dialog.`,
+              variant: "default",
+              duration: 5000
+            });
+          }
+        }
+      } else {
+        // Only fall back if extension is not available or timed out (not if user cancelled)
+        console.log('Extension not available or timed out, using standard getDisplayMedia');
+        // Fallback to standard getDisplayMedia
+        displayStream = await navigator.mediaDevices.getDisplayMedia({
+          video: {
+            // Request entire screen capture explicitly
+            displaySurface: 'monitor', // Prefer entire screen
+            width: { ideal: recordingQuality === "high" ? 1920 : recordingQuality === "medium" ? 1280 : 854 },
+            height: { ideal: recordingQuality === "high" ? 1080 : recordingQuality === "medium" ? 720 : 480 },
+            frameRate: { ideal: recordingQuality === "high" ? 30 : recordingQuality === "medium" ? 24 : 15 },
+          },
+          audio: audioSource === "system" || audioSource === "both"
+        });
+
+        // Log actual video track settings to verify what's being captured
+        const videoTrack = displayStream.getVideoTracks()[0];
+        if (videoTrack) {
+          const settings = videoTrack.getSettings();
+          console.log('📹 Video track settings (getDisplayMedia):', {
+            width: settings.width,
+            height: settings.height,
+            frameRate: settings.frameRate,
+            displaySurface: settings.displaySurface, // Should be 'monitor' for entire screen
+          });
+
+          // Warn if displaySurface is not 'monitor' (entire screen)
+          if (settings.displaySurface && settings.displaySurface !== 'monitor') {
+            console.warn('⚠️ Warning: Not capturing entire screen! displaySurface:', settings.displaySurface);
+            toast({
+              title: "Screen capture warning",
+              description: `Capturing ${settings.displaySurface} instead of entire screen. Please select "Entire Screen" in the dialog.`,
+              variant: "default",
+              duration: 5000
+            });
+          }
+        }
+      }
 
       mediaStreamRef.current = displayStream;
 
@@ -619,14 +775,23 @@ export default function Recorder() {
 
     // Start capturing the preview container to canvas (OPTIMIZED)
     const drawFrame = (timestamp: number) => {
-      // Check if we should continue drawing (recording state will be set before MediaRecorder starts)
-      // Use a ref to track if we should continue drawing
-      if (!ctx || !video || !container) {
-        // Stop the loop if essential elements are missing
+      // Helper to stop the drawing loop completely
+      const stopDrawLoop = () => {
         if (canvasAnimationFrameRef.current) {
           cancelAnimationFrame(canvasAnimationFrameRef.current);
           canvasAnimationFrameRef.current = null;
         }
+        if (canvasIntervalRef.current) {
+          clearInterval(canvasIntervalRef.current);
+          canvasIntervalRef.current = null;
+        }
+      };
+
+      // Check if we should continue drawing (recording state will be set before MediaRecorder starts)
+      // Use a ref to track if we should continue drawing
+      if (!ctx || !video || !container) {
+        // Stop the loop if essential elements are missing
+        stopDrawLoop();
         return;
       }
 
@@ -635,17 +800,16 @@ export default function Recorder() {
       const shouldDraw = recordingState === "recording" || recordingState === "countdown" || recordingState === "ready";
       if (!shouldDraw) {
         // Stop the loop if not in a recording-related state
-        if (canvasAnimationFrameRef.current) {
-          cancelAnimationFrame(canvasAnimationFrameRef.current);
-          canvasAnimationFrameRef.current = null;
-        }
+        stopDrawLoop();
         return;
       }
 
       // Throttle canvas updates for better performance (target 30fps for canvas)
+      // Skip throttling when using setInterval (background mode) - it's already at 30fps
       const deltaTime = timestamp - canvasFrameTimeRef.current;
       const targetFrameTime = 1000 / 30; // 30fps for canvas recording
-      if (deltaTime < targetFrameTime) {
+      if (deltaTime < targetFrameTime && !document.hidden) {
+        // Only use rAF throttling when visible (setInterval already handles timing in background)
         canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
         return;
       }
@@ -920,7 +1084,7 @@ export default function Recorder() {
         lastCursorPosForParticlesRef.current = { x: cursorX, y: cursorY };
       }
 
-      canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
+      scheduleNextFrame();
     };
 
     // Get stream from canvas FIRST (before starting draw loop)
@@ -936,10 +1100,63 @@ export default function Recorder() {
       return null;
     }
 
+    // Helper to clear both animation frame and interval
+    const clearDrawLoop = () => {
+      if (canvasAnimationFrameRef.current) {
+        cancelAnimationFrame(canvasAnimationFrameRef.current);
+        canvasAnimationFrameRef.current = null;
+      }
+      if (canvasIntervalRef.current) {
+        clearInterval(canvasIntervalRef.current);
+        canvasIntervalRef.current = null;
+      }
+    };
+
+    // Helper to schedule the next frame - uses setInterval when tab is hidden (rAF is throttled)
+    function scheduleNextFrame() {
+      // If document is hidden, rAF will be throttled to 1fps or paused
+      // Use setInterval instead for consistent frame rate in background
+      if (document.hidden) {
+        // Don't double-schedule if interval is already running
+        if (!canvasIntervalRef.current) {
+          // Clear any pending rAF
+          if (canvasAnimationFrameRef.current) {
+            cancelAnimationFrame(canvasAnimationFrameRef.current);
+            canvasAnimationFrameRef.current = null;
+          }
+          // Use interval for background - 30fps target
+          canvasIntervalRef.current = window.setInterval(() => {
+            drawFrame(performance.now());
+          }, 1000 / 30);
+          console.log('[Canvas] Switched to setInterval for background tab recording');
+        }
+      } else {
+        // Tab is visible - use rAF for smooth, efficient rendering
+        // Clear interval if it was running
+        if (canvasIntervalRef.current) {
+          clearInterval(canvasIntervalRef.current);
+          canvasIntervalRef.current = null;
+          console.log('[Canvas] Switched to requestAnimationFrame for visible tab');
+        }
+        canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
+      }
+    }
+
+    // Handle visibility changes - switch between rAF and setInterval
+    const handleVisibilityChange = () => {
+      console.log('[Canvas] Visibility changed:', document.hidden ? 'hidden (using setInterval)' : 'visible (using rAF)');
+      // Clear current scheduling and reschedule with appropriate method
+      clearDrawLoop();
+      scheduleNextFrame();
+    };
+
+    // Store handler reference for cleanup
+    visibilityHandlerRef.current = handleVisibilityChange;
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     // Start drawing loop AFTER stream is created
     // This ensures frames are immediately available to the stream
-    // Use requestAnimationFrame to start the loop
-    canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
+    scheduleNextFrame();
 
     console.log("Canvas recording setup complete:", {
       canvasSize: `${canvas.width}x${canvas.height}`,
@@ -1011,21 +1228,21 @@ export default function Recorder() {
   const detectClickCluster = useCallback((newClick: { x: number; y: number; timestamp: number }) => {
     const now = Date.now();
     const CLUSTER_WINDOW_MS = CAMERA_CONFIG.CLICK_CLUSTER_MS;
-    
+
     // Add new click to cluster
     clickClusterRef.current.push(newClick);
-    
+
     // Remove clicks older than cluster window
     clickClusterRef.current = clickClusterRef.current.filter(
       click => (now - click.timestamp) <= CLUSTER_WINDOW_MS
     );
-    
+
     // Check if we have enough clicks for zoom
     if (clickClusterRef.current.length >= CAMERA_CONFIG.MIN_CLICKS_FOR_ZOOM) {
       // Calculate cluster center (average position)
       const centerX = clickClusterRef.current.reduce((sum, c) => sum + c.x, 0) / clickClusterRef.current.length;
       const centerY = clickClusterRef.current.reduce((sum, c) => sum + c.y, 0) / clickClusterRef.current.length;
-      
+
       // Calculate cluster radius (max distance from center)
       let maxDistance = 0;
       for (const click of clickClusterRef.current) {
@@ -1034,7 +1251,7 @@ export default function Recorder() {
         const distance = Math.sqrt(dx * dx + dy * dy);
         maxDistance = Math.max(maxDistance, distance);
       }
-      
+
       return {
         shouldZoom: true,
         center: { x: centerX, y: centerY },
@@ -1042,7 +1259,7 @@ export default function Recorder() {
         clickCount: clickClusterRef.current.length
       };
     }
-    
+
     return {
       shouldZoom: false,
       center: null,
@@ -1151,7 +1368,7 @@ export default function Recorder() {
         // Prevent sudden zoom in/out with debouncing
         const timeSinceLastZoom = now - lastZoomTimeRef.current;
         const MIN_ZOOM_INTERVAL_MS = 500; // Prevent rapid zoom toggling
-        
+
         if (timeSinceLastZoom < MIN_ZOOM_INTERVAL_MS && zoomState === "FOCUSED") {
           // Too soon after last zoom - ignore
           return;
@@ -1222,16 +1439,40 @@ export default function Recorder() {
     }
   }, [recordingState, followCursor, zoomState]);
 
+  // Helper to notify extension of recording state
+  // Uses window.postMessage (handled by content script) - no WebSocket needed
+  const sendExtensionRecordingState = (isRecording: boolean) => {
+    // Window postMessage is already sent in startRecordingActual/handleStopRecording
+    // This function is kept for compatibility but window.postMessage is the primary method
+    console.log(`[Frontend] 📢 Recording state: ${isRecording ? 'STARTED' : 'STOPPED'} (handled via window.postMessage)`);
+  };
+
   // Extension event handler - processes mouse events from Chrome extension (direct messaging)
   const handleExtensionMouseEvent = useCallback((event: ExtensionMouseEvent) => {
-    console.log('[Frontend] 🔵🔵🔵 HANDLER CALLED - Received extension event:', {
-      type: event.eventType,
+    // Deduplication: Skip if this exact event was already processed
+    const eventKey = `${event.t}-${event.clientX}-${event.clientY}-${event.eventType}`;
+    const lastEvent = lastProcessedEventRef.current;
+    if (lastEvent &&
+      Math.abs(lastEvent.timestamp - event.t) < 0.1 && // Same timestamp (within 0.1ms)
+      lastEvent.clientX === event.clientX &&
+      lastEvent.clientY === event.clientY &&
+      lastEvent.eventType === event.eventType) {
+      // Duplicate event - skip processing
+      return;
+    }
+
+    // Mark as processed
+    lastProcessedEventRef.current = {
+      timestamp: event.t,
       clientX: event.clientX,
       clientY: event.clientY,
-      recordingState,
-      hasVideoElement: !!videoPreviewRef.current,
-      timestamp: event.t
-    });
+      eventType: event.eventType
+    };
+
+    // Throttled logging - only log clicks or periodically for moves
+    if (event.eventType !== 'move') {
+      console.log(`[Frontend] 🖱️ ${event.eventType.toUpperCase()} at ${event.clientX},${event.clientY}`);
+    }
 
     if (recordingState !== "recording") {
       console.log('[Frontend] ⚠️ Ignoring extension event - not recording:', recordingState);
@@ -1241,7 +1482,7 @@ export default function Recorder() {
     // Use video element if available, otherwise use window dimensions as fallback
     let videoRect: DOMRect;
     const videoElement = videoPreviewRef.current;
-    
+
     if (videoElement) {
       videoRect = videoElement.getBoundingClientRect();
       if (videoRect.width === 0 || videoRect.height === 0) {
@@ -1282,9 +1523,8 @@ export default function Recorder() {
         if (movesRef.current.length === 1 || movesRef.current.length % 50 === 0) {
           console.log('[Frontend] ✅ Recorded', movesRef.current.length, 'move events');
         }
-      } else {
-        console.log('[Frontend] Skipped move (jitter filter)');
       }
+      // Jitter filter: small movements are ignored (no log needed)
 
       // Update current cursor position for preview following
       setCurrentCursorPos({ x: normalizedX, y: normalizedY });
@@ -1368,7 +1608,7 @@ export default function Recorder() {
         if (clusterInfo.shouldZoom && clusterInfo.center) {
           const timeSinceLastZoom = now - lastZoomTimeRef.current;
           const MIN_ZOOM_INTERVAL_MS = 500;
-          
+
           if (timeSinceLastZoom < MIN_ZOOM_INTERVAL_MS && zoomState === "FOCUSED") {
             return;
           }
@@ -1409,54 +1649,49 @@ export default function Recorder() {
     }
   }, [recordingState, followCursor, zoomState, zoomLevel, detectClickCluster]);
 
-  // Set up extension event receiver via window messages (NEW APPROACH - no WebSocket)
+  // Store handler in ref to avoid effect re-running on every render
+  const handleExtensionMouseEventRef = useRef(handleExtensionMouseEvent);
+  useEffect(() => {
+    handleExtensionMouseEventRef.current = handleExtensionMouseEvent;
+  }, [handleExtensionMouseEvent]);
+
+  // Set up extension event receiver via window messages AND WebSocket (for cross-tab events)
+  // Only runs when recordingState changes to "recording" or stops
   useEffect(() => {
     if (recordingState !== "recording") {
       return;
     }
 
-    console.log('[Frontend] 🎬 Setting up window message listener for extension events');
+    console.log('[Frontend] 🎬 Setting up extension event receivers');
 
-    // Listen for custom events from injected script
+    // Listen for custom events from injected script (same-tab events)
     const handleWindowMessage = (event: MessageEvent) => {
-      if (event.data && event.data.type === 'DEMOFORGE_MOUSE_EVENT') {
-        const mouseEvent = event.data.event as ExtensionMouseEvent;
-        console.log('[Frontend] 📨 Received mouse event via window message:', mouseEvent.eventType);
-        handleExtensionMouseEvent(mouseEvent);
+      if (event.data?.type === 'DEMOFORGE_MOUSE_EVENT') {
+        handleExtensionMouseEventRef.current(event.data.event as ExtensionMouseEvent);
       }
     };
 
-    // Listen for custom DOM events from injected script
+    // Listen for custom DOM events from injected script (same-tab events)
     const handleCustomEvent = (event: CustomEvent) => {
-      const mouseEvent = event.detail as ExtensionMouseEvent;
-      console.log('[Frontend] 📨 Received mouse event via custom event:', mouseEvent.eventType);
-      handleExtensionMouseEvent(mouseEvent);
+      handleExtensionMouseEventRef.current(event.detail as ExtensionMouseEvent);
     };
 
     window.addEventListener('message', handleWindowMessage);
     window.addEventListener('demoforge-mouse-event', handleCustomEvent as EventListener);
 
-    // Signal extension to start recording via storage
-    chrome?.storage?.local?.set({
-      isRecording: true,
-      recordingStartTime: Date.now()
-    }).catch(() => {
-      // Chrome API not available, use postMessage fallback
-      window.postMessage({ type: 'DEMOFORGE_START_RECORDING' }, '*');
+    // ✅ Listen to WebSocket for cross-tab events (events from YouTube, other tabs, etc.)
+    const unsubscribeWS = extensionWS.onEvent((mouseEvent: ExtensionMouseEvent) => {
+      handleExtensionMouseEventRef.current(mouseEvent);
     });
 
-    console.log('[Frontend] ✅ Event listeners registered, signaled extension to start');
+    console.log('[Frontend] ✅ Event listeners registered');
 
     return () => {
       window.removeEventListener('message', handleWindowMessage);
       window.removeEventListener('demoforge-mouse-event', handleCustomEvent as EventListener);
-      
-      // Signal extension to stop
-      chrome?.storage?.local?.set({ isRecording: false }).catch(() => {
-        window.postMessage({ type: 'DEMOFORGE_STOP_RECORDING' }, '*');
-      });
+      unsubscribeWS();
     };
-  }, [recordingState, handleExtensionMouseEvent]);
+  }, [recordingState]); // Only depends on recordingState now
 
   // Set up scroll/wheel tracking (still needed for zoom-out on scroll)
   useEffect(() => {
@@ -1899,7 +2134,7 @@ export default function Recorder() {
         // When not zoomed, follow cursor with safe box logic
         let targetX = cursorX;
         let targetY = cursorY;
-        
+
         // If zoomed in and we have a focus point (cluster center), use that instead
         if (currentZoomState === "FOCUSED" && focusPointRef.current) {
           targetX = focusPointRef.current.x;
@@ -1911,10 +2146,10 @@ export default function Recorder() {
         const SAFE_BOX_SIZE = CAMERA_CONFIG.SAFE_BOX_SIZE; // 40% of viewport
         const safeBoxMin = (1 - SAFE_BOX_SIZE) / 2; // 0.3 (30% from edge)
         const safeBoxMax = 1 - safeBoxMin; // 0.7 (70% from edge)
-        
+
         // Check if target (cursor or cluster center) is in safe box
         const isInSafeBox = targetX >= safeBoxMin && targetX <= safeBoxMax &&
-                           targetY >= safeBoxMin && targetY <= safeBoxMax;
+          targetY >= safeBoxMin && targetY <= safeBoxMax;
 
         // Get current camera position
         const currentCameraX = Number.isFinite(transformCacheRef.current.x) ? transformCacheRef.current.x : 0;
@@ -2267,6 +2502,14 @@ export default function Recorder() {
         cancelAnimationFrame(canvasAnimationFrameRef.current);
         canvasAnimationFrameRef.current = null;
       }
+      if (canvasIntervalRef.current) {
+        clearInterval(canvasIntervalRef.current);
+        canvasIntervalRef.current = null;
+      }
+      if (visibilityHandlerRef.current) {
+        document.removeEventListener('visibilitychange', visibilityHandlerRef.current);
+        visibilityHandlerRef.current = null;
+      }
       if (canvasStreamRef.current) {
         canvasStreamRef.current.getTracks().forEach(track => track.stop());
         canvasStreamRef.current = null;
@@ -2329,17 +2572,26 @@ export default function Recorder() {
     movesRef.current = [];
     setMarkers([]); // Reset markers
     recordingStartTimeRef.current = Date.now();
-    
+
     console.log('[Frontend] 🎬🎬🎬 Recording started at:', new Date(recordingStartTimeRef.current).toISOString());
     console.log('[Frontend] Video element exists:', !!videoPreviewRef.current);
-    
-    // Signal extension via window message (no WebSocket needed)
-    window.postMessage({ type: 'DEMOFORGE_START_RECORDING' }, '*');
+
+    // Signal extension via BOTH window message AND WebSocket for reliable cross-tab sync
+    // 1. Window message → content script on DemoForge tab → broadcasts to all tabs
+    window.postMessage({
+      type: 'DEMOFORGE_START_RECORDING',
+      recordingStartTime: recordingStartTimeRef.current
+    }, '*');
     console.log('[Frontend] 📤 Signaled extension to start recording via window message');
+    
+    // 2. WebSocket → background script → sets storage + broadcasts to all tabs
+    // This is the PRIMARY path for cross-tab recording
+    extensionWS.startRecording(recordingStartTimeRef.current);
+    console.log('[Frontend] 📤 Signaled extension to start recording via WebSocket. Screen: ${window.screen.width}x${window.screen.height}, DPR: ${window.devicePixelRatio}');
 
     // Setup recording stream based on mode
     let canvasStream: MediaStream | null = null;
-    
+
     // If raw recording is enabled, use screen stream directly (no effects)
     // Otherwise, use canvas stream with effects
     if (!rawRecording) {
@@ -2470,6 +2722,14 @@ export default function Recorder() {
         cancelAnimationFrame(canvasAnimationFrameRef.current);
         canvasAnimationFrameRef.current = null;
       }
+      if (canvasIntervalRef.current) {
+        clearInterval(canvasIntervalRef.current);
+        canvasIntervalRef.current = null;
+      }
+      if (visibilityHandlerRef.current) {
+        document.removeEventListener('visibilitychange', visibilityHandlerRef.current);
+        visibilityHandlerRef.current = null;
+      }
       if (canvasStreamRef.current) {
         canvasStreamRef.current.getTracks().forEach(track => track.stop());
         canvasStreamRef.current = null;
@@ -2515,7 +2775,7 @@ export default function Recorder() {
           }
         }
       };
-      
+
       const dataStr = JSON.stringify(cursorData, null, 2);
       const dataBlob = new Blob([dataStr], { type: 'application/json' });
       const dataUrl = URL.createObjectURL(dataBlob);
@@ -2526,7 +2786,7 @@ export default function Recorder() {
       link.click();
       document.body.removeChild(link);
       URL.revokeObjectURL(dataUrl);
-      
+
       console.log('[Frontend] Downloaded cursor data:', {
         clicks: clicksRef.current.length,
         moves: movesRef.current.length,
@@ -2582,9 +2842,15 @@ export default function Recorder() {
   };
 
   const handleStopRecording = () => {
-    // Signal extension to stop recording
+    // Signal extension to stop recording via BOTH window message AND WebSocket
+    // 1. Window message → content script on DemoForge tab
     window.postMessage({ type: 'DEMOFORGE_STOP_RECORDING' }, '*');
-    console.log('[Frontend] 📤 Signaled extension to stop recording');
+    console.log('[Frontend] 📤 Signaled extension to stop recording via window message');
+    
+    // 2. WebSocket → background script → broadcasts to all tabs
+    extensionWS.stopRecording();
+    console.log('[Frontend] 📤 Signaled extension to stop recording via WebSocket');
+
     // 🎬 End-of-video settle: Settle camera before stopping
     // Immediately settle to neutral zoom and center camera for final frames
     if (followCursor) {
@@ -2613,6 +2879,14 @@ export default function Recorder() {
       if (canvasAnimationFrameRef.current) {
         cancelAnimationFrame(canvasAnimationFrameRef.current);
         canvasAnimationFrameRef.current = null;
+      }
+      if (canvasIntervalRef.current) {
+        clearInterval(canvasIntervalRef.current);
+        canvasIntervalRef.current = null;
+      }
+      if (visibilityHandlerRef.current) {
+        document.removeEventListener('visibilitychange', visibilityHandlerRef.current);
+        visibilityHandlerRef.current = null;
       }
       if (canvasStreamRef.current) {
         canvasStreamRef.current.getTracks().forEach(track => track.stop());
@@ -3280,7 +3554,7 @@ export default function Recorder() {
                     />
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {rawRecording 
+                    {rawRecording
                       ? "Recording raw screen (no effects). Effects will be applied during rendering for better quality."
                       : "Recording with effects applied. Use raw mode for advanced post-processing."}
                   </p>

@@ -1,5 +1,14 @@
+/**
+ * DemoForge Extension WebSocket Client
+ * 
+ * Connects to the WebSocket bridge server to:
+ * 1. Send recording commands to extension
+ * 2. Receive mouse events from extension (cross-tab)
+ */
+
 export interface ExtensionMouseEvent {
-  type: "mouse";
+  type: 'mouse';
+  eventType: 'move' | 'down' | 'up';
   t: number;
   clientX: number;
   clientY: number;
@@ -15,118 +24,191 @@ export interface ExtensionMouseEvent {
   vw: number;
   vh: number;
   dpr: number;
-  eventType: "move" | "down" | "up";
+  source?: string; // hostname of the source tab
 }
 
-export class ExtensionWebSocketReceiver {
+type EventListener = (event: ExtensionMouseEvent) => void;
+
+class ExtensionWebSocketClient {
   private ws: WebSocket | null = null;
-  private reconnectTimeout: NodeJS.Timeout | null = null;
-  private listeners: Set<(event: ExtensionMouseEvent) => void> = new Set();
+  private listeners = new Set<EventListener>();
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private isConnecting = false;
+  
   private readonly WS_URL = 'ws://localhost:8081';
-  public onScreenSelectionRequest?: () => void;
+  private readonly RECONNECT_DELAY = 2000;
+  
+  // Stats for debugging
+  private eventsReceived = 0;
+  private lastLogTime = 0;
 
-  connect() {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      console.log('[Frontend] WebSocket already connected');
-      return;
-    }
+  /**
+   * Connect to the WebSocket bridge server
+   */
+  connect(): void {
+    if (this.isConnecting) return;
+    if (this.ws?.readyState === WebSocket.OPEN) return;
 
-    // Close existing connection if any
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
+    this.cleanup();
+    this.isConnecting = true;
+
+    console.log('[WS Client] Connecting to:', this.WS_URL);
 
     try {
-      console.log('[Frontend] Connecting to WebSocket:', this.WS_URL);
       this.ws = new WebSocket(this.WS_URL);
 
       this.ws.onopen = () => {
-        console.log('[Frontend] ✅ WebSocket connected to extension bridge');
-        if (this.reconnectTimeout) {
-          clearTimeout(this.reconnectTimeout);
-          this.reconnectTimeout = null;
-        }
+        this.isConnecting = false;
+        console.log('[WS Client] ✅ Connected to bridge server');
       };
 
       this.ws.onmessage = (e) => {
-        try {
-          const data = JSON.parse(e.data.toString());
-          console.log('[Frontend] 📨 Received WebSocket message:', data.type, {
-            hasListeners: this.listeners.size,
-            listenerCount: this.listeners.size
-          });
-          
-          if (data.type === 'mouse') {
-            const event = data as ExtensionMouseEvent;
-            console.log('[Frontend] 🖱️ Received mouse event:', {
-              eventType: event.eventType,
-              clientX: event.clientX,
-              clientY: event.clientY,
-              listeners: this.listeners.size
-            });
-            console.log('[Frontend] 🖱️ Dispatching to', this.listeners.size, 'listener(s)');
-            this.listeners.forEach((listener, index) => {
-              try {
-                console.log(`[Frontend] Calling listener ${index}`);
-                listener(event);
-              } catch (err) {
-                console.error(`[Frontend] ❌ Error in listener ${index}:`, err);
-              }
-            });
-          } else if (data.type === 'requestScreenSelection') {
-            // Extension requesting screen selection
-            console.log('[Frontend] Extension requested screen selection');
-            this.onScreenSelectionRequest?.();
-          }
-        } catch (error) {
-          console.error('[Frontend] Failed to parse WebSocket message:', error, e.data);
-        }
+        this.handleMessage(e);
       };
 
-      this.ws.onerror = (error) => {
-        console.error('[Frontend] WebSocket error:', error);
+      this.ws.onerror = () => {
+        console.error('[WS Client] ❌ Connection error');
+        this.isConnecting = false;
       };
 
       this.ws.onclose = () => {
-        console.log('[Frontend] WebSocket closed, reconnecting...');
+        console.log('[WS Client] Disconnected');
         this.ws = null;
-        this.reconnectTimeout = setTimeout(() => this.connect(), 1000);
+        this.isConnecting = false;
+        this.scheduleReconnect();
       };
+
     } catch (error) {
-      console.error('[Frontend] Failed to create WebSocket:', error);
-      this.reconnectTimeout = setTimeout(() => this.connect(), 1000);
+      console.error('[WS Client] Failed to connect:', error);
+      this.isConnecting = false;
+      this.scheduleReconnect();
     }
   }
 
-  disconnect() {
-    if (this.reconnectTimeout) {
-      clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = null;
+  /**
+   * Disconnect from the bridge server
+   */
+  disconnect(): void {
+    this.cleanup();
+    console.log('[WS Client] Disconnected (manual)');
+  }
+
+  /**
+   * Send a message to the extension via bridge
+   */
+  send(message: { type: string; [key: string]: unknown }): boolean {
+    if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
+      console.warn('[WS Client] Cannot send - not connected');
+      return false;
     }
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
+
+    try {
+      this.ws.send(JSON.stringify(message));
+      console.log('[WS Client] 📤 Sent:', message.type);
+      return true;
+    } catch (error) {
+      console.error('[WS Client] Send failed:', error);
+      return false;
     }
   }
 
-  get wsSocket() {
-    return this.ws;
+  /**
+   * Signal recording start to extension
+   */
+  startRecording(startTime: number): boolean {
+    return this.send({
+      type: 'recordingStarted',
+      startTime
+    });
   }
 
-  onEvent(listener: (event: ExtensionMouseEvent) => void) {
+  /**
+   * Signal recording stop to extension
+   */
+  stopRecording(): boolean {
+    return this.send({
+      type: 'recordingStopped'
+    });
+  }
+
+  /**
+   * Subscribe to mouse events from extension
+   */
+  onEvent(listener: EventListener): () => void {
     this.listeners.add(listener);
     return () => {
       this.listeners.delete(listener);
     };
   }
 
-  sendMessage(message: any) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
+  /**
+   * Get connection status
+   */
+  get isConnected(): boolean {
+    return this.ws?.readyState === WebSocket.OPEN;
+  }
+
+  // ─────────────────────────────────────────────────────────────────────
+  // Private methods
+  // ─────────────────────────────────────────────────────────────────────
+
+  private handleMessage(e: MessageEvent): void {
+    try {
+      const data = JSON.parse(e.data);
+
+      // Mouse event from extension
+      if (data.type === 'mouse') {
+        this.eventsReceived++;
+        
+        // Throttled logging
+        const now = Date.now();
+        if (now - this.lastLogTime > 2000) {
+          console.log(`[WS Client] 📥 Received ${this.eventsReceived} events (latest: ${data.eventType} from ${data.source || 'unknown'})`);
+          this.lastLogTime = now;
+        }
+
+        // Dispatch to listeners
+        const event = data as ExtensionMouseEvent;
+        this.listeners.forEach(listener => {
+          try {
+            listener(event);
+          } catch (err) {
+            console.error('[WS Client] Listener error:', err);
+          }
+        });
+      }
+
+    } catch (error) {
+      console.error('[WS Client] Failed to parse message:', error);
     }
+  }
+
+  private cleanup(): void {
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
+    if (this.ws) {
+      try { this.ws.close(); } catch (e) {}
+      this.ws = null;
+    }
+  }
+
+  private scheduleReconnect(): void {
+    if (this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      this.connect();
+    }, this.RECONNECT_DELAY);
   }
 }
 
-export const extensionWS = new ExtensionWebSocketReceiver();
+// Singleton instance
+export const extensionWS = new ExtensionWebSocketClient();
 
+// Legacy alias for backwards compatibility
+export class ExtensionWebSocketReceiver extends ExtensionWebSocketClient {
+  sendMessage(message: { type: string; [key: string]: unknown }): void {
+    this.send(message);
+  }
+}

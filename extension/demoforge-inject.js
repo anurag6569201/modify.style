@@ -1,34 +1,32 @@
-// This script is injected into the DemoForge page (localhost:8080)
-// It receives events from the extension and forwards them to the React app
-
+/**
+ * DemoForge Inject Script
+ * 
+ * Injected into the DemoForge page (localhost:8080) to:
+ * 1. Forward mouse events from extension to React app
+ * 2. Expose a receiver function for direct event passing
+ * 
+ * This enables same-tab events to bypass WebSocket for lower latency.
+ */
 (function() {
   'use strict';
-  
-  console.log('[DemoForge Inject] Script loaded');
-  
-  // Listen for messages from extension content script
+
+  console.log('[DemoForge] Inject script loaded');
+
+  // Forward events from content script to React app
   window.addEventListener('message', (event) => {
-    // Only accept messages from our extension
-    if (event.data && event.data.type === 'DEMOFORGE_MOUSE_EVENT') {
-      const mouseEvent = event.data.event;
-      
-      // Forward to React app via custom event
+    if (event.data?.type === 'DEMOFORGE_MOUSE_EVENT') {
       window.dispatchEvent(new CustomEvent('demoforge-mouse-event', {
-        detail: mouseEvent
+        detail: event.data.event
       }));
-      
-      console.log('[DemoForge Inject] Forwarded mouse event:', mouseEvent.eventType);
     }
   });
-  
-  // Expose function for extension to call directly
+
+  // Direct receiver for content script (bypasses postMessage for speed)
   window.__demoforgeExtensionReceiver = function(event) {
     window.dispatchEvent(new CustomEvent('demoforge-mouse-event', {
       detail: event
     }));
-    console.log('[DemoForge Inject] Received event via function call:', event.eventType);
   };
-  
-  console.log('[DemoForge Inject] Ready to receive events');
-})();
 
+  console.log('[DemoForge] Ready to receive events');
+})();
