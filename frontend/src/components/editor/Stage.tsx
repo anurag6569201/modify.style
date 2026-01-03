@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useState } from 'react';
 import { useEditorState, editorStore } from '@/lib/editor/store';
 import { VideoLayer } from './VideoLayer';
 import { BackgroundLayer } from './BackgroundLayer';
+import { TextLayer } from './TextLayer';
 import { updateCameraSystem, getInitialCameraState } from '@/lib/composition/camera';
 import { calculateOutputDimensions, calculateVideoTransform } from '@/lib/composition/aspectRatio';
 
@@ -56,7 +57,12 @@ export const Stage: React.FC = () => {
                     currentState.events.moves,
                     currentState.events.effects || [],
                     { width, height },
-                    currentState.video.duration || 0
+                    currentState.video.duration || 0,
+                    {
+                        zoomStrength: currentState.camera.zoomStrength,
+                        speed: currentState.camera.speed,
+                        padding: currentState.camera.padding
+                    }
                 );
 
                 cameraStateRef.current = newCameraState;
@@ -67,7 +73,11 @@ export const Stage: React.FC = () => {
                     // Apply to Stage Content
                     // Add rotation (banking)
                     const rot = rotation || 0;
-                    stageRef.current.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale}) rotate(${rot}deg)`;
+                    // Add Design Rotation
+                    const designRotation = currentState.presentation.videoStyle?.rotation || 0;
+                    const totalRotation = rot + designRotation;
+
+                    stageRef.current.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale}) rotate(${totalRotation}deg)`;
 
                     // Apply Vignette (using mask or box-shadow on overlay? Stage has blur.)
                     // Actually, Stage doesn't have a vignette overlay yet.
@@ -122,7 +132,7 @@ export const Stage: React.FC = () => {
 
     // Update presentation output dimensions if they changed
     useEffect(() => {
-        if (state.presentation.outputWidth !== outputDims.width || 
+        if (state.presentation.outputWidth !== outputDims.width ||
             state.presentation.outputHeight !== outputDims.height) {
             editorStore.setState({
                 presentation: {
@@ -141,90 +151,90 @@ export const Stage: React.FC = () => {
         ? { ...paddingRaw, top: paddingRaw.top, right: paddingRaw.top, bottom: paddingRaw.top, left: paddingRaw.top }
         : paddingRaw;
     const [containerSize, setContainerSize] = useState({ width: 0, height: 0 });
-    
+
     // Update container size on resize
     useEffect(() => {
         if (!containerRef.current) return;
-        
+
         const updateSize = () => {
             if (containerRef.current) {
                 const rect = containerRef.current.getBoundingClientRect();
                 setContainerSize({ width: rect.width, height: rect.height });
             }
         };
-        
+
         updateSize();
         const resizeObserver = new ResizeObserver(updateSize);
         resizeObserver.observe(containerRef.current);
-        
+
         return () => resizeObserver.disconnect();
     }, []);
-    
+
     // For raw video preview, use native video dimensions
     // When showing raw video, the stage should fill the container
     let displayWidth = showRawVideo ? '100%' : `${videoTransform.width}px`;
     let displayHeight = showRawVideo ? '100%' : `${videoTransform.height}px`;
     let displayX = showRawVideo ? 0 : videoTransform.x;
     let displayY = showRawVideo ? 0 : videoTransform.y;
-    
+
     // Apply padding if enabled and not showing raw video
     if (!showRawVideo && padding && containerSize.width > 0 && containerSize.height > 0) {
-      const containerWidth = containerSize.width;
-      const containerHeight = containerSize.height;
-      
-      // Padding values are already in pixels
-      const paddingLeftPx = padding.left;
-      const paddingRightPx = padding.right;
-      const paddingTopPx = padding.top;
-      const paddingBottomPx = padding.bottom;
-      
-      // Calculate available space after padding
-      const availableWidth = containerWidth - paddingLeftPx - paddingRightPx;
-      const availableHeight = containerHeight - paddingTopPx - paddingBottomPx;
-      
-      // Scale video to fit available space while maintaining aspect ratio
-      const videoAspect = videoTransform.width / videoTransform.height;
-      const availableAspect = availableWidth / availableHeight;
-      
-      let scaledWidth = availableWidth;
-      let scaledHeight = availableHeight;
-      
-      if (videoAspect > availableAspect) {
-        // Video is wider - fit to width
-        scaledHeight = availableWidth / videoAspect;
-      } else {
-        // Video is taller - fit to height
-        scaledWidth = availableHeight * videoAspect;
-      }
-      
-      // Center video in available space
-      const centerX = paddingLeftPx + (availableWidth - scaledWidth) / 2;
-      const centerY = paddingTopPx + (availableHeight - scaledHeight) / 2;
-      
-      displayWidth = `${scaledWidth}px`;
-      displayHeight = `${scaledHeight}px`;
-      displayX = centerX;
-      displayY = centerY;
+        const containerWidth = containerSize.width;
+        const containerHeight = containerSize.height;
+
+        // Padding values are already in pixels
+        const paddingLeftPx = padding.left;
+        const paddingRightPx = padding.right;
+        const paddingTopPx = padding.top;
+        const paddingBottomPx = padding.bottom;
+
+        // Calculate available space after padding
+        const availableWidth = containerWidth - paddingLeftPx - paddingRightPx;
+        const availableHeight = containerHeight - paddingTopPx - paddingBottomPx;
+
+        // Scale video to fit available space while maintaining aspect ratio
+        const videoAspect = videoTransform.width / videoTransform.height;
+        const availableAspect = availableWidth / availableHeight;
+
+        let scaledWidth = availableWidth;
+        let scaledHeight = availableHeight;
+
+        if (videoAspect > availableAspect) {
+            // Video is wider - fit to width
+            scaledHeight = availableWidth / videoAspect;
+        } else {
+            // Video is taller - fit to height
+            scaledWidth = availableHeight * videoAspect;
+        }
+
+        // Center video in available space
+        const centerX = paddingLeftPx + (availableWidth - scaledWidth) / 2;
+        const centerY = paddingTopPx + (availableHeight - scaledHeight) / 2;
+
+        displayWidth = `${scaledWidth}px`;
+        displayHeight = `${scaledHeight}px`;
+        displayX = centerX;
+        displayY = centerY;
     } else if (!showRawVideo && !padding && containerSize.width > 0 && containerSize.height > 0) {
-      // No padding, use video transform but scale to container
-      const containerWidth = containerSize.width;
-      const containerHeight = containerSize.height;
-      const containerAspect = containerWidth / containerHeight;
-      const videoAspect = videoTransform.width / videoTransform.height;
-      
-      let scaledWidth = containerWidth;
-      let scaledHeight = containerHeight;
-      
-      if (videoAspect > containerAspect) {
-        scaledHeight = containerWidth / videoAspect;
-      } else {
-        scaledWidth = containerHeight * videoAspect;
-      }
-      
-      displayWidth = `${scaledWidth}px`;
-      displayHeight = `${scaledHeight}px`;
-      displayX = (containerWidth - scaledWidth) / 2;
-      displayY = (containerHeight - scaledHeight) / 2;
+        // No padding, use video transform but scale to container
+        const containerWidth = containerSize.width;
+        const containerHeight = containerSize.height;
+        const containerAspect = containerWidth / containerHeight;
+        const videoAspect = videoTransform.width / videoTransform.height;
+
+        let scaledWidth = containerWidth;
+        let scaledHeight = containerHeight;
+
+        if (videoAspect > containerAspect) {
+            scaledHeight = containerWidth / videoAspect;
+        } else {
+            scaledWidth = containerHeight * videoAspect;
+        }
+
+        displayWidth = `${scaledWidth}px`;
+        displayHeight = `${scaledHeight}px`;
+        displayX = (containerWidth - scaledWidth) / 2;
+        displayY = (containerHeight - scaledHeight) / 2;
     }
 
     return (
@@ -234,9 +244,9 @@ export const Stage: React.FC = () => {
             style={{
                 width: '100%',
                 height: '100%',
-                background:'transparent',
-                aspectRatio: showRawVideo 
-                    ? (state.video.width > 0 && state.video.height > 0 
+                background: 'transparent',
+                aspectRatio: showRawVideo
+                    ? (state.video.width > 0 && state.video.height > 0
                         ? `${state.video.width} / ${state.video.height}`
                         : '16 / 9')
                     : (outputDims.width > 0 && outputDims.height > 0
@@ -260,14 +270,33 @@ export const Stage: React.FC = () => {
                     top: typeof displayY === 'number' ? `${displayY}px` : displayY,
                     width: displayWidth,
                     height: displayHeight,
-                    boxShadow: showRawVideo ? 'none' : '0 0 100px rgba(0,0,0,0.7)',
-                    zIndex: 10,
-                    background:'transparent !important',
-                    borderRadius: '12px',
                     overflow: 'hidden',
+                    zIndex: 10,
+
+                    // 2. Border
+                    border: state.presentation.videoStyle?.borderEnabled
+                        ? `${state.presentation.videoStyle.borderWidth}px solid ${state.presentation.videoStyle.borderColor}`
+                        : 'none',
+
+                    // 3. Rounding
+                    borderRadius: state.presentation.videoCrop.roundedCorners
+                        ? `${state.presentation.videoCrop.cornerRadius}px`
+                        : undefined,
+
+                    // 4. Shadow
+                    boxShadow: state.presentation.videoStyle?.shadowEnabled
+                        ? `${state.presentation.videoStyle.shadowOffsetX}px ${state.presentation.videoStyle.shadowOffsetY}px ${state.presentation.videoStyle.shadowBlur}px ${state.presentation.videoStyle.shadowColor}`
+                        : (showRawVideo ? 'none' : '0 20px 50px rgba(0,0,0,0.5)'), // Default shadow or custom
+
+                    // 5. Rotation (Applied via ref in animation loop usually, but we can compose here if static)
+                    // Note: stageRef transform is overwritten in the animation loop (Stage.tsx:75).
+                    // We need to update that loop to include this rotation.
+                    // For now, let's leave transform control to the loop and update the loop logic next.
+                    background: 'transparent !important',
                 }}
             >
                 <VideoLayer />
+                <TextLayer />
             </div>
         </div>
     );

@@ -191,6 +191,7 @@ const calculateEdgeAvoidance = (
  * - Edge avoidance to keep cursor away from viewport boundaries
  * - Smoother transitions with adaptive spring physics
  */
+// 🎬 ENHANCED SPOTLIGHT CAMERA SYSTEM
 export const updateCameraSystem = (
     state: CameraSystemState,
     time: number,
@@ -199,9 +200,20 @@ export const updateCameraSystem = (
     moves: MoveData[],
     effects: EffectEvent[] = [],
     viewport: Viewport,
-    duration: number = 0
+    duration: number = 0,
+    config?: { // Optional for backward compatibility, but Stage should pass it
+        zoomStrength: number;
+        speed: number;
+        padding: number;
+    }
 ): CameraSystemState => {
     const safeDt = Math.min(dt, 0.1);
+
+    // Use config or defaults
+    const ZOOM_STRENGTH = config ? config.zoomStrength : CAMERA_CONFIG.ZOOM_SPOTLIGHT; // 1.0 - 5.0
+    // Speed multiplier affects stiffness (responsiveness)
+    const SPEED_MULTIPLIER = config ? config.speed : 1.0;
+    const EDGE_PADDING = config ? config.padding : CAMERA_CONFIG.EDGE_PADDING;
 
     // Get raw cursor position
     const rawCursorPos = getCursorPos(time, moves);
@@ -264,7 +276,10 @@ export const updateCameraSystem = (
 
         // Smooth zoom transition
         const zoomProgress = easeOutCubic(transitionProgress);
-        targetScale = CAMERA_CONFIG.ZOOM_IDLE + (CAMERA_CONFIG.ZOOM_SPOTLIGHT - CAMERA_CONFIG.ZOOM_IDLE) * zoomProgress;
+        // Map zoomStrength (1-5) to actual scale. 
+        // If config.zoomStrength is e.g. 2.5, that's the target zoom.
+        // We blend from IDLE (1.0) to target.
+        targetScale = CAMERA_CONFIG.ZOOM_IDLE + (ZOOM_STRENGTH - CAMERA_CONFIG.ZOOM_IDLE) * zoomProgress;
 
         const centerX = viewport.width / 2;
         const centerY = viewport.height / 2;
@@ -278,8 +293,19 @@ export const updateCameraSystem = (
         const lookaheadX = lookaheadActive ? smoothedVelocity.x * CAMERA_CONFIG.LOOKAHEAD_FACTOR * viewport.width : 0;
         const lookaheadY = lookaheadActive ? smoothedVelocity.y * CAMERA_CONFIG.LOOKAHEAD_FACTOR * viewport.height : 0;
 
-        // Calculate edge avoidance
-        const edgeAvoidance = calculateEdgeAvoidance(smoothedCursor, viewport);
+        // Calculate edge avoidance using dynamic padding
+        const padding = EDGE_PADDING;
+        const strength = CAMERA_CONFIG.EDGE_PUSH_STRENGTH;
+        let pushX = 0;
+        let pushY = 0;
+
+        if (smoothedCursor.x < padding) pushX = (padding - smoothedCursor.x) * strength * viewport.width;
+        else if (smoothedCursor.x > 1 - padding) pushX = -((smoothedCursor.x - (1 - padding)) * strength * viewport.width);
+
+        if (smoothedCursor.y < padding) pushY = (padding - smoothedCursor.y) * strength * viewport.height;
+        else if (smoothedCursor.y > 1 - padding) pushY = -((smoothedCursor.y - (1 - padding)) * strength * viewport.height);
+
+        const edgeAvoidance = { x: pushX, y: pushY };
 
         const focusX = cursorX + lookaheadX;
         const focusY = cursorY + lookaheadY;
@@ -314,7 +340,6 @@ export const updateCameraSystem = (
     const maxTranslateY = (viewport.height * targetScale - viewport.height) / 2;
 
     // Strict clamping
-    // We use Math.max(0, ...) to ensure we don't invert if scale < 1 (though logic prevents scale < 1 usually)
     const limitX = Math.max(0, maxTranslateX);
     const limitY = Math.max(0, maxTranslateY);
 
@@ -323,9 +348,14 @@ export const updateCameraSystem = (
 
     // --- ADAPTIVE SPRING PHYSICS ---
 
-    // Adjust stiffness based on mode for optimal feel
-    const scaleStiffness = mode === CameraMode.SETTLING ? CAMERA_CONFIG.SETTLING_STIFFNESS : CAMERA_CONFIG.ZOOM_STIFFNESS;
-    const translateStiffness = mode === CameraMode.SETTLING ? CAMERA_CONFIG.SETTLING_STIFFNESS : CAMERA_CONFIG.CAMERA_STIFFNESS;
+    // Adjust stiffness based on mode and Speed Multiplier
+    // Higher speed = Stiffer spring (faster response)
+    const baseScaleStiffness = mode === CameraMode.SETTLING ? CAMERA_CONFIG.SETTLING_STIFFNESS : CAMERA_CONFIG.ZOOM_STIFFNESS;
+    const baseTranslateStiffness = mode === CameraMode.SETTLING ? CAMERA_CONFIG.SETTLING_STIFFNESS : CAMERA_CONFIG.CAMERA_STIFFNESS;
+
+    // Apply speed multiplier
+    const scaleStiffness = baseScaleStiffness * SPEED_MULTIPLIER;
+    const translateStiffness = baseTranslateStiffness * SPEED_MULTIPLIER;
 
     const scaleSpring = solveSpring(
         state.transform.scale,
@@ -361,7 +391,7 @@ export const updateCameraSystem = (
         state.transform.rotation || 0,
         targetRotation,
         state.velocity.rotation,
-        CAMERA_CONFIG.CAMERA_STIFFNESS,
+        CAMERA_CONFIG.CAMERA_STIFFNESS * SPEED_MULTIPLIER,
         CAMERA_CONFIG.ROTATION_DAMPING,
         1.0,
         safeDt

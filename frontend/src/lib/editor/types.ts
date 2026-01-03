@@ -96,6 +96,18 @@ export interface PresentationConfig {
         zoomContainer?: boolean; // Apply zoom in its own container
         effectsContainer?: boolean; // Apply other effects in their container
     };
+    // Video style
+    videoStyle: {
+        borderEnabled: boolean;
+        borderColor: string;
+        borderWidth: number;
+        shadowEnabled: boolean;
+        shadowColor: string;
+        shadowBlur: number;
+        shadowOffsetX: number;
+        shadowOffsetY: number;
+        rotation: number;
+    };
 }
 
 export interface TimelineEvent {
@@ -130,13 +142,36 @@ export interface EditorState {
     textOverlays: Array<{
         id: string;
         text: string;
+        // Position & Transform
         x: number;
         y: number;
+        rotation: number;
+        scale: number;
+        opacity: number;
+        // Typography
         fontSize: number;
+        fontFamily: string;
+        fontWeight: string;
+        fontStyle: 'normal' | 'italic';
+        textAlign: 'left' | 'center' | 'right';
+        lineHeight: number;
+        letterSpacing: number;
         color: string;
+        // Box Styling
+        backgroundColor: string;
+        padding: number;
+        borderRadius: number;
+        borderWidth: number;
+        borderColor: string;
+        // Shadow
+        shadowColor: string;
+        shadowBlur: number;
+        shadowOffsetX: number;
+        shadowOffsetY: number;
+        // Timing & Animation
         startTime: number;
         endTime: number;
-        animation: 'fade' | 'slide' | 'typewriter';
+        animation: 'none' | 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'typewriter' | 'scale' | 'pop';
     }>;
 
     events: {
@@ -200,7 +235,7 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         backgroundBlurType: 'gaussian',
         videoCrop: {
             enabled: false,
-            top: 100, // Default browser chrome height
+            top: 0,
             bottom: 0,
             left: 0,
             right: 0,
@@ -215,6 +250,17 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
             bottom: 50,
             left: 50,
             uniform: true,
+        },
+        videoStyle: {
+            borderEnabled: false,
+            borderColor: '#ffffff',
+            borderWidth: 0,
+            shadowEnabled: false,
+            shadowColor: 'rgba(0,0,0,0.5)',
+            shadowBlur: 20,
+            shadowOffsetX: 0,
+            shadowOffsetY: 10,
+            rotation: 0,
         },
     },
     colorGrading: {

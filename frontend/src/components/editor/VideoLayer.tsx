@@ -164,112 +164,35 @@ export const VideoLayer: React.FC = () => {
             }
 
             // Apply crop if enabled
-            const crop = presentation.videoCrop;
+            // Note: Actual cropping is now handled by the Stage container logic (CSS overflow/clip-path)
+            // But we keep the config access if needed for other things, but simplified.
+            const style = presentation.videoStyle || {
+                borderEnabled: false,
+                borderColor: '#ffffff',
+                borderWidth: 0,
+                shadowEnabled: false,
+                shadowColor: 'rgba(0,0,0,0.5)',
+                shadowBlur: 20,
+                shadowOffsetX: 0,
+                shadowOffsetY: 10,
+                rotation: 0
+            };
+
             const videoWidth = video.videoWidth || width;
             const videoHeight = video.videoHeight || height;
 
             // Clear canvas
             ctx.clearRect(0, 0, width, height);
 
-            // Apply rounded corners if enabled
-            if (crop.enabled && crop.roundedCorners && crop.cornerRadius > 0) {
-                ctx.save();
-                ctx.beginPath();
-                const radius = crop.cornerRadius;
-                ctx.moveTo(radius, 0);
-                ctx.lineTo(width - radius, 0);
-                ctx.quadraticCurveTo(width, 0, width, radius);
-                ctx.lineTo(width, height - radius);
-                ctx.quadraticCurveTo(width, height, width - radius, height);
-                ctx.lineTo(radius, height);
-                ctx.quadraticCurveTo(0, height, 0, height - radius);
-                ctx.lineTo(0, radius);
-                ctx.quadraticCurveTo(0, 0, radius, 0);
-                ctx.closePath();
-                ctx.clip();
-            }
+            // 1. Apply Rotation (Canvas level) - only if we want rotation to affect the canvas source draw
+            // However, we are rotating the CONTAINER in Stage.tsx now. 
+            // So we should probably disable this canvas rotation to avoid double rotation?
+            // User put rotation logic back in CSS in Stage.tsx (implied).
+            // Let's remove this canvas operations block to be safe.
 
-            // Calculate crop parameters
-            let sourceX = 0;
-            let sourceY = 0;
-            let sourceWidth = videoWidth;
-            let sourceHeight = videoHeight;
-
-            if (crop.enabled) {
-                // Calculate crop in source video coordinates
-                const scaleX = videoWidth / width;
-                const scaleY = videoHeight / height;
-
-                sourceX = crop.left * scaleX;
-                sourceY = crop.top * scaleY;
-                sourceWidth = videoWidth - (crop.left + crop.right) * scaleX;
-                sourceHeight = videoHeight - (crop.top + crop.bottom) * scaleY;
-            }
-
-            if (hasFilters && filterEngine) {
-                // Create a temporary canvas for cropped video if needed
-                if (crop.enabled) {
-                    const tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = width;
-                    tempCanvas.height = height;
-                    const tempCtx = tempCanvas.getContext('2d');
-
-                    if (tempCtx) {
-                        // Draw cropped video to temp canvas
-                        tempCtx.drawImage(
-                            video,
-                            sourceX, sourceY, sourceWidth, sourceHeight,
-                            0, 0, width, height
-                        );
-
-                        // Apply filters to temp canvas
-                        const tempFilterEngine = new FilterEngine(tempCtx, width, height);
-                        tempFilterEngine.applyFilters(tempCanvas, {
-                            brightness: colorGrading.brightness,
-                            contrast: colorGrading.contrast,
-                            saturation: colorGrading.saturation,
-                            hue: colorGrading.hue,
-                            vignette: colorGrading.vignette,
-                            colorize: colorGrading.temperature !== 0 ? {
-                                r: colorGrading.temperature > 0 ? 255 : 0,
-                                g: colorGrading.temperature > 0 ? 200 : 100,
-                                b: colorGrading.temperature < 0 ? 255 : 0,
-                                amount: Math.abs(colorGrading.temperature) * 0.3,
-                            } : undefined,
-                        });
-
-                        // Draw filtered temp canvas to main canvas
-                        ctx.drawImage(tempCanvas, 0, 0);
-                    }
-                } else {
-                    // No crop, apply filters normally
-                    filterEngine.applyFilters(video, {
-                        brightness: colorGrading.brightness,
-                        contrast: colorGrading.contrast,
-                        saturation: colorGrading.saturation,
-                        hue: colorGrading.hue,
-                        vignette: colorGrading.vignette,
-                        colorize: colorGrading.temperature !== 0 ? {
-                            r: colorGrading.temperature > 0 ? 255 : 0,
-                            g: colorGrading.temperature > 0 ? 200 : 100,
-                            b: colorGrading.temperature < 0 ? 255 : 0,
-                            amount: Math.abs(colorGrading.temperature) * 0.3,
-                        } : undefined,
-                    });
-                }
-            } else {
-                // No filters, draw video with crop
-                ctx.drawImage(
-                    video,
-                    sourceX, sourceY, sourceWidth, sourceHeight,
-                    0, 0, width, height
-                );
-            }
-
-            // Restore clipping if rounded corners were applied
-            if (crop.enabled && crop.roundedCorners && crop.cornerRadius > 0) {
-                ctx.restore();
-            }
+            // Standard Draw
+            // Filters removed as per request
+            ctx.drawImage(video, 0, 0, width, height);
 
             // Always continue rendering to keep canvas in sync with video
             animationFrameRef.current = requestAnimationFrame(renderFrame);
@@ -291,8 +214,6 @@ export const VideoLayer: React.FC = () => {
             style={{
                 width: '100%',
                 height: '100%',
-                borderRadius: '12px',
-                overflow: 'hidden',
                 background: 'transparent',
             }}
         >
@@ -321,9 +242,6 @@ export const VideoLayer: React.FC = () => {
                                 height: '100%',
                                 objectFit: 'contain',
                                 boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-                                borderRadius: presentation.videoCrop.enabled && presentation.videoCrop.roundedCorners
-                                    ? `${presentation.videoCrop.cornerRadius}px`
-                                    : '0',
                             }}
                         />
                         <CursorLayer />
