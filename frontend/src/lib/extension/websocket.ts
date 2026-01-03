@@ -34,10 +34,10 @@ class ExtensionWebSocketClient {
   private listeners = new Set<EventListener>();
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private isConnecting = false;
-  
+
   private readonly WS_URL = 'ws://localhost:8081';
   private readonly RECONNECT_DELAY = 2000;
-  
+
   // Stats for debugging
   private eventsReceived = 0;
   private lastLogTime = 0;
@@ -96,7 +96,7 @@ class ExtensionWebSocketClient {
   /**
    * Send a message to the extension via bridge
    */
-  send(message: { type: string; [key: string]: unknown }): boolean {
+  send(message: { type: string;[key: string]: unknown }): boolean {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) {
       console.warn('[WS Client] Cannot send - not connected');
       return false;
@@ -159,7 +159,7 @@ class ExtensionWebSocketClient {
       // Mouse event from extension
       if (data.type === 'mouse') {
         this.eventsReceived++;
-        
+
         // Throttled logging
         const now = Date.now();
         if (now - this.lastLogTime > 2000) {
@@ -189,7 +189,7 @@ class ExtensionWebSocketClient {
       this.reconnectTimer = null;
     }
     if (this.ws) {
-      try { this.ws.close(); } catch (e) {}
+      try { this.ws.close(); } catch (e) { }
       this.ws = null;
     }
   }
@@ -208,7 +208,7 @@ export const extensionWS = new ExtensionWebSocketClient();
 
 // Legacy alias for backwards compatibility
 export class ExtensionWebSocketReceiver extends ExtensionWebSocketClient {
-  sendMessage(message: { type: string; [key: string]: unknown }): void {
+  sendMessage(message: { type: string;[key: string]: unknown }): void {
     this.send(message);
   }
 }

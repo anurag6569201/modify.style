@@ -37,6 +37,7 @@ import { Label } from "@/components/ui/label";
 import { ParticleSystem } from "@/lib/effects/particles";
 import { extensionEventToMoveData, extensionEventToClickData } from "@/lib/extension/coordinate-mapper";
 import { extensionWS } from "@/lib/extension/websocket";
+import { SimpleViewportManager } from "@/lib/recorder/viewport-manager";
 
 // Extension mouse event type (moved here to avoid WebSocket dependency)
 export interface ExtensionMouseEvent {
@@ -62,6 +63,649 @@ export interface ExtensionMouseEvent {
 type RecordingState = "idle" | "selecting" | "ready" | "countdown" | "recording" | "paused" | "stopped";
 type AudioSource = "system" | "microphone" | "both" | "none";
 type RecordingQuality = "high" | "medium" | "low";
+type ZoomState = "NEUTRAL" | "FOCUSED" | "HOLD" | "DECAY";
+
+// 🎯 Content-Aware Zoom Intelligence
+const CAMERA_PRESETS = {
+  cinematic: {
+    name: 'Cinematic',
+    stiffness: 0.1,
+    damping: 0.9,
+    description: 'Smooth, stabilized camera movement for professional blocking',
+    anticipation: 0.2
+  },
+  fast: {
+    name: 'Fast',
+    stiffness: 0.4,
+    damping: 0.7,
+    description: 'Responsive, quick movement for high-paced content',
+    anticipation: 0.1
+  },
+  manual: {
+    name: 'Manual',
+    stiffness: 0.8,
+    damping: 0.5,
+    description: 'Gentle, manual control for precise positioning',
+    anticipation: 0
+  }
+};
+
+// 🎯 Adaptive Camera Learning System
+class AdaptiveCameraLearner {
+  private userPreferences = {
+    preferredZoomRange: { min: 1.0, max: 2.0 },
+    responsivenessLevel: 0.5, // 0 = very smooth, 1 = very responsive
+    anticipationStrength: 0.3,
+    dampingPreference: 0.8,
+    zoomFrequency: 0, // How often user triggers zoom
+    gestureUsage: 0, // How often user uses gestures
+    avgSessionDuration: 0,
+    learningRate: 0.1
+  };
+
+  private sessionStats = {
+    zoomsTriggered: 0,
+    gesturesUsed: 0,
+    avgZoomLevel: 1.0,
+    movementSmoothness: 0.5,
+    startTime: Date.now(),
+    lastUpdateTime: Date.now()
+  };
+
+  // Update learning based on user actions
+  recordZoomAction(zoomLevel: number, triggerReason: string): void {
+    this.sessionStats.zoomsTriggered++;
+    this.sessionStats.avgZoomLevel = (this.sessionStats.avgZoomLevel + zoomLevel) / 2;
+
+    // Learn from zoom patterns
+    if (triggerReason === 'reading') {
+      this.userPreferences.preferredZoomRange.max = Math.max(
+        this.userPreferences.preferredZoomRange.max,
+        zoomLevel * 1.1
+      );
+    } else if (triggerReason === 'targeting') {
+      this.userPreferences.responsivenessLevel = Math.min(
+        this.userPreferences.responsivenessLevel + 0.1, 1.0
+      );
+    }
+  }
+
+  recordGestureUsage(gestureType: string): void {
+    this.sessionStats.gesturesUsed++;
+
+    // Learn gesture preferences
+    if (gestureType === 'circle' || gestureType === 'swipe') {
+      this.userPreferences.gestureUsage = Math.min(this.userPreferences.gestureUsage + 0.2, 1.0);
+    }
+  }
+
+  recordMovementPattern(smoothness: number, avgVelocity: number): void {
+    this.sessionStats.movementSmoothness = smoothness;
+
+    // Adapt to user movement style
+    if (smoothness > 0.7) {
+      // Precise user - increase anticipation and damping
+      this.userPreferences.anticipationStrength = Math.min(
+        this.userPreferences.anticipationStrength + 0.05, 0.5
+      );
+      this.userPreferences.dampingPreference = Math.min(
+        this.userPreferences.dampingPreference + 0.05, 0.95
+      );
+    } else if (smoothness < 0.3) {
+      // Erratic user - decrease anticipation, increase responsiveness
+      this.userPreferences.anticipationStrength = Math.max(
+        this.userPreferences.anticipationStrength - 0.05, 0.1
+      );
+      this.userPreferences.responsivenessLevel = Math.min(
+        this.userPreferences.responsivenessLevel + 0.1, 1.0
+      );
+    }
+  }
+
+  // Get adaptive camera parameters
+  getAdaptiveParameters(): {
+    stiffnessMultiplier: number;
+    dampingMultiplier: number;
+    anticipationMultiplier: number;
+    zoomBias: number;
+  } {
+    return {
+      stiffnessMultiplier: 0.5 + this.userPreferences.responsivenessLevel * 0.5,
+      dampingMultiplier: 0.5 + this.userPreferences.dampingPreference * 0.5,
+      anticipationMultiplier: this.userPreferences.anticipationStrength,
+      zoomBias: (this.sessionStats.avgZoomLevel - 1.0) * 0.2 // Slight bias toward user's preferred zoom range
+    };
+  }
+
+  // Get session insights
+  getSessionInsights(): {
+    userType: string;
+    recommendations: string[];
+    confidence: number;
+  } {
+    const insights = {
+      userType: 'balanced',
+      recommendations: [] as string[],
+      confidence: 0.5
+    };
+
+    if (this.userPreferences.responsivenessLevel > 0.7) {
+      insights.userType = 'fast_interactor';
+      insights.recommendations.push('Consider fast camera mode for quicker responses');
+    } else if (this.userPreferences.dampingPreference > 0.8) {
+      insights.userType = 'methodical_user';
+      insights.recommendations.push('Cinematic mode works well for your style');
+    }
+
+    if (this.userPreferences.gestureUsage > 0.5) {
+      insights.recommendations.push('You use gestures frequently - gesture controls are optimized for you');
+    }
+
+    if (this.sessionStats.zoomsTriggered > 10) {
+      insights.recommendations.push('You zoom frequently - zoom sensitivity has been increased');
+    }
+
+    return insights;
+  }
+
+  // Save/load preferences (could be extended to localStorage)
+  savePreferences(): void {
+    try {
+      localStorage.setItem('cameraLearnings', JSON.stringify(this.userPreferences));
+    } catch (e) {
+      console.warn('Could not save camera preferences');
+    }
+  }
+
+  loadPreferences(): void {
+    try {
+      const saved = localStorage.getItem('cameraLearnings');
+      if (saved) {
+        this.userPreferences = { ...this.userPreferences, ...JSON.parse(saved) };
+      }
+    } catch (e) {
+      console.warn('Could not load camera preferences');
+    }
+  }
+}
+
+// 🎯 AI-Powered Intent Detection System
+class CursorIntentAnalyzer {
+  private movementHistory: Array<{
+    x: number;
+    y: number;
+    timestamp: number;
+    velocity: { x: number; y: number };
+    acceleration: { x: number; y: number };
+  }> = [];
+
+  private intentPatterns = {
+    reading: { velocityThreshold: 0.1, accelerationThreshold: 0.05, dwellTime: 2000 },
+    scanning: { velocityThreshold: 0.3, accelerationThreshold: 0.2, dwellTime: 500 },
+    targeting: { velocityThreshold: 0.5, accelerationThreshold: 1.0, dwellTime: 100 },
+    gesturing: { velocityThreshold: 0.8, accelerationThreshold: 2.0, dwellTime: 50 }
+  };
+
+  private gestureBuffer: Array<{ x: number; y: number; timestamp: number }> = [];
+  private lastIntent = 'neutral';
+  private confidence = 0;
+
+  // Add cursor movement data for analysis
+  addMovement(x: number, y: number, timestamp: number): void {
+    // Calculate velocity and acceleration
+    const prev = this.movementHistory[this.movementHistory.length - 1];
+    const velocity = prev ? {
+      x: (x - prev.x) / (timestamp - prev.timestamp) * 1000,
+      y: (y - prev.y) / (timestamp - prev.timestamp) * 1000
+    } : { x: 0, y: 0 };
+
+    const acceleration = prev && prev.velocity ? {
+      x: (velocity.x - prev.velocity.x) / (timestamp - prev.timestamp) * 1000,
+      y: (velocity.y - prev.velocity.y) / (timestamp - prev.timestamp) * 1000
+    } : { x: 0, y: 0 };
+
+    this.movementHistory.push({ x, y, timestamp, velocity, acceleration });
+
+    // Maintain history window
+    const cutoff = timestamp - CAMERA_CONFIG.INTENT_ANALYSIS_WINDOW_MS;
+    this.movementHistory = this.movementHistory.filter(m => m.timestamp > cutoff);
+
+    // Add to gesture buffer
+    this.gestureBuffer.push({ x, y, timestamp });
+    const gestureCutoff = timestamp - CAMERA_CONFIG.GESTURE_RECOGNITION_TIME_MS;
+    this.gestureBuffer = this.gestureBuffer.filter(g => g.timestamp > gestureCutoff);
+  }
+
+  // Get recommended camera preset based on current intent
+  getRecommendedPreset(): keyof typeof CAMERA_PRESETS {
+    const intent = this.analyzeIntent();
+
+    // Map intents to camera presets
+    switch (intent.intent) {
+      case 'reading':
+        return 'cinematic'; // Smooth, stable for reading
+      case 'targeting':
+        return 'fast'; // Quick and responsive for targeting
+      case 'gesturing':
+        return 'manual'; // Precise control for gestures
+      case 'scanning':
+        return 'cinematic'; // Balanced for scanning
+      default:
+        // Adaptive based on movement statistics
+        const stats = this.getMovementStats();
+        if (stats.movementSmoothness > 0.7 && stats.avgVelocity < 0.2) {
+          return 'cinematic'; // Smooth, slow movements
+        } else if (stats.avgVelocity > 0.4) {
+          return 'fast'; // Fast movements
+        } else {
+          return 'cinematic'; // Default to cinematic
+        }
+    }
+  }
+
+  // Analyze current intent based on movement patterns
+  analyzeIntent(): {
+    intent: string;
+    confidence: number;
+    predictedPosition?: { x: number; y: number };
+    zoomSuggestion?: number;
+    cameraMode?: 'cinematic' | 'fast' | 'manual';
+  } {
+    if (this.movementHistory.length < 3) {
+      return { intent: 'neutral', confidence: 0 };
+    }
+
+    const recent = this.movementHistory.slice(-10);
+    const avgVelocity = {
+      x: recent.reduce((sum, m) => sum + Math.abs(m.velocity.x), 0) / recent.length,
+      y: recent.reduce((sum, m) => sum + Math.abs(m.velocity.y), 0) / recent.length
+    };
+
+    const avgAcceleration = {
+      x: recent.reduce((sum, m) => sum + Math.abs(m.acceleration.x), 0) / recent.length,
+      y: recent.reduce((sum, m) => sum + Math.abs(m.acceleration.y), 0) / recent.length
+    };
+
+    const totalVelocity = Math.sqrt(avgVelocity.x ** 2 + avgVelocity.y ** 2);
+    const totalAcceleration = Math.sqrt(avgAcceleration.x ** 2 + avgAcceleration.y ** 2);
+
+    // Determine intent based on velocity and acceleration patterns
+    let intent = 'neutral';
+    let confidence = 0;
+    let zoomSuggestion = 1.0;
+    let cameraMode: 'cinematic' | 'fast' | 'manual' = 'cinematic';
+
+    if (totalVelocity < this.intentPatterns.reading.velocityThreshold) {
+      // Reading/Examining - slow, deliberate movement
+      intent = 'reading';
+      confidence = Math.min(1, 1 - totalVelocity / this.intentPatterns.reading.velocityThreshold);
+      zoomSuggestion = 1.4 + (confidence * 0.3); // 1.4x to 1.7x zoom
+      cameraMode = 'cinematic';
+    } else if (totalVelocity < this.intentPatterns.scanning.velocityThreshold) {
+      // Scanning/Navigation - moderate movement
+      intent = 'scanning';
+      confidence = Math.min(1, totalVelocity / this.intentPatterns.scanning.velocityThreshold);
+      zoomSuggestion = 1.2 + (confidence * 0.2); // 1.2x to 1.4x zoom
+      cameraMode = 'cinematic';
+    } else if (totalAcceleration > this.intentPatterns.targeting.accelerationThreshold) {
+      // Targeting/Clicking - high acceleration toward target
+      intent = 'targeting';
+      confidence = Math.min(1, totalAcceleration / this.intentPatterns.targeting.accelerationThreshold);
+      zoomSuggestion = 1.6 + (confidence * 0.4); // 1.6x to 2.0x zoom
+      cameraMode = 'fast';
+    } else if (totalVelocity > this.intentPatterns.gesturing.velocityThreshold) {
+      // Gesturing - complex movement patterns
+      intent = 'gesturing';
+      confidence = Math.min(1, totalVelocity / this.intentPatterns.gesturing.velocityThreshold);
+      zoomSuggestion = 1.1; // Slight zoom out for gesture overview
+      cameraMode = 'manual';
+
+      // Analyze gesture pattern
+      if (this.gestureBuffer.length > 5) {
+        const gesture = this.analyzeGesture();
+        if (gesture.type === 'circle') {
+          intent = 'circular_gesture';
+          zoomSuggestion = 1.3;
+        } else if (gesture.type === 'zigzag') {
+          intent = 'selection_gesture';
+          zoomSuggestion = 1.5;
+        }
+      }
+    }
+
+    // Predict next position based on velocity and acceleration
+    const latest = this.movementHistory[this.movementHistory.length - 1];
+    const predictedPosition = this.predictPosition(CAMERA_CONFIG.PREDICTION_HORIZON_MS);
+
+    // Smooth confidence transitions
+    this.confidence = this.confidence * 0.9 + confidence * 0.1;
+    this.lastIntent = intent;
+
+    return {
+      intent,
+      confidence: this.confidence,
+      predictedPosition,
+      zoomSuggestion: Math.min(CAMERA_CONFIG.ZOOM_MAX, Math.max(CAMERA_CONFIG.ZOOM_MIN, zoomSuggestion)),
+      cameraMode
+    };
+  }
+
+  // Predict where cursor will be in the future
+  private predictPosition(horizonMs: number): { x: number; y: number } {
+    if (this.movementHistory.length < 2) return { x: 0, y: 0 };
+
+    const latest = this.movementHistory[this.movementHistory.length - 1];
+    const prev = this.movementHistory[this.movementHistory.length - 2];
+
+    const dt = (latest.timestamp - prev.timestamp) / 1000;
+    if (dt === 0) return latest;
+
+    // Use velocity and acceleration for prediction
+    const velocity = latest.velocity;
+    const acceleration = latest.acceleration;
+
+    const predictionTime = horizonMs / 1000;
+    const predictedX = latest.x + velocity.x * predictionTime + 0.5 * acceleration.x * predictionTime ** 2;
+    const predictedY = latest.y + velocity.y * predictionTime + 0.5 * acceleration.y * predictionTime ** 2;
+
+    // Clamp to valid range
+    return {
+      x: Math.max(0, Math.min(1, predictedX)),
+      y: Math.max(0, Math.min(1, predictedY))
+    };
+  }
+
+  // Analyze gesture patterns with camera control commands
+  analyzeGesture(): { type: string; confidence: number; command?: string } {
+    if (this.gestureBuffer.length < 5) return { type: 'unknown', confidence: 0 };
+
+    // 🎯 Camera Control Gestures
+
+    // 1. Circle gesture (clockwise = zoom in, counter-clockwise = zoom out)
+    const circleResult = this.detectCircleGesture();
+    if (circleResult.confidence > 0.7) {
+      return {
+        type: 'circle',
+        confidence: circleResult.confidence,
+        command: circleResult.clockwise ? 'zoom_in' : 'zoom_out'
+      };
+    }
+
+    // 2. Figure-8 gesture (switch camera modes)
+    const figure8Result = this.detectFigure8Gesture();
+    if (figure8Result.confidence > 0.6) {
+      return {
+        type: 'figure8',
+        confidence: figure8Result.confidence,
+        command: 'switch_mode'
+      };
+    }
+
+    // 3. Swipe gestures (pan camera)
+    const swipeResult = this.detectSwipeGesture();
+    if (swipeResult.confidence > 0.7) {
+      return {
+        type: 'swipe',
+        confidence: swipeResult.confidence,
+        command: `pan_${swipeResult.direction}`
+      };
+    }
+
+    // 4. Double tap gesture (reset camera)
+    const tapResult = this.detectDoubleTapGesture();
+    if (tapResult.confidence > 0.8) {
+      return {
+        type: 'double_tap',
+        confidence: tapResult.confidence,
+        command: 'reset_camera'
+      };
+    }
+
+    // 5. Zigzag gesture (selection/emphasis)
+    const zigzagResult = this.detectZigzagGesture();
+    if (zigzagResult.confidence > 0.6) {
+      return {
+        type: 'zigzag',
+        confidence: zigzagResult.confidence,
+        command: 'emphasize_selection'
+      };
+    }
+
+    return { type: 'unknown', confidence: 0 };
+  }
+
+  private detectCircleGesture(): { confidence: number; clockwise: boolean } {
+    if (this.gestureBuffer.length < 8) return { confidence: 0, clockwise: false };
+
+    const center = {
+      x: this.gestureBuffer.reduce((sum, p) => sum + p.x, 0) / this.gestureBuffer.length,
+      y: this.gestureBuffer.reduce((sum, p) => sum + p.y, 0) / this.gestureBuffer.length
+    };
+
+    const avgRadius = this.gestureBuffer.reduce((sum, p) => {
+      const dx = p.x - center.x;
+      const dy = p.y - center.y;
+      return sum + Math.sqrt(dx * dx + dy * dy);
+    }, 0) / this.gestureBuffer.length;
+
+    // Check circularity
+    const circularity = this.gestureBuffer.reduce((score, p) => {
+      const dx = p.x - center.x;
+      const dy = p.y - center.y;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+      return score + Math.abs(distance - avgRadius) / avgRadius;
+    }, 0) / this.gestureBuffer.length;
+
+    if (circularity > 0.4) return { confidence: 0, clockwise: false };
+
+    // Determine direction (clockwise vs counter-clockwise)
+    let totalAngle = 0;
+    for (let i = 1; i < this.gestureBuffer.length; i++) {
+      const prev = this.gestureBuffer[i - 1];
+      const curr = this.gestureBuffer[i];
+
+      const angle1 = Math.atan2(prev.y - center.y, prev.x - center.x);
+      const angle2 = Math.atan2(curr.y - center.y, curr.x - center.x);
+
+      let deltaAngle = angle2 - angle1;
+      // Normalize to [-π, π]
+      while (deltaAngle > Math.PI) deltaAngle -= 2 * Math.PI;
+      while (deltaAngle < -Math.PI) deltaAngle += 2 * Math.PI;
+
+      totalAngle += deltaAngle;
+    }
+
+    const clockwise = totalAngle > 0;
+    return { confidence: Math.max(0, 1 - circularity), clockwise };
+  }
+
+  private detectFigure8Gesture(): { confidence: number } {
+    // Simplified figure-8 detection - two loops crossing each other
+    if (this.gestureBuffer.length < 12) return { confidence: 0 };
+
+    // Check for crossing pattern
+    const mid = Math.floor(this.gestureBuffer.length / 2);
+    const firstHalf = this.gestureBuffer.slice(0, mid);
+    const secondHalf = this.gestureBuffer.slice(mid);
+
+    const firstCenter = {
+      x: firstHalf.reduce((sum, p) => sum + p.x, 0) / firstHalf.length,
+      y: firstHalf.reduce((sum, p) => sum + p.y, 0) / firstHalf.length
+    };
+
+    const secondCenter = {
+      x: secondHalf.reduce((sum, p) => sum + p.x, 0) / secondHalf.length,
+      y: secondHalf.reduce((sum, p) => sum + p.y, 0) / secondHalf.length
+    };
+
+    // Check if centers are close (crossing pattern)
+    const dx = secondCenter.x - firstCenter.x;
+    const dy = secondCenter.y - firstCenter.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    return { confidence: Math.max(0, 1 - distance * 2) }; // Closer centers = higher confidence
+  }
+
+  private detectSwipeGesture(): { confidence: number; direction: string } {
+    if (this.gestureBuffer.length < 6) return { confidence: 0, direction: 'none' };
+
+    const start = this.gestureBuffer[0];
+    const end = this.gestureBuffer[this.gestureBuffer.length - 1];
+
+    const dx = end.x - start.x;
+    const dy = end.y - start.y;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+
+    if (distance < 0.2) return { confidence: 0, direction: 'none' };
+
+    // Determine direction
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+    let direction = 'none';
+
+    if (Math.abs(dx) > Math.abs(dy)) {
+      direction = dx > 0 ? 'right' : 'left';
+    } else {
+      direction = dy > 0 ? 'down' : 'up';
+    }
+
+    // Check if path is reasonably straight
+    const straightness = this.gestureBuffer.reduce((score, point, index) => {
+      if (index === 0 || index === this.gestureBuffer.length - 1) return score;
+
+      const expectedX = start.x + (dx * index) / (this.gestureBuffer.length - 1);
+      const expectedY = start.y + (dy * index) / (this.gestureBuffer.length - 1);
+
+      const actualDx = point.x - expectedX;
+      const actualDy = point.y - expectedY;
+      const deviation = Math.sqrt(actualDx * actualDx + actualDy * actualDy);
+
+      return score + deviation;
+    }, 0) / this.gestureBuffer.length;
+
+    const straightnessScore = Math.max(0, 1 - straightness * 3);
+
+    return {
+      confidence: Math.min(straightnessScore, distance / 0.5),
+      direction
+    };
+  }
+
+  private detectDoubleTapGesture(): { confidence: number } {
+    // Look for two quick taps in sequence
+    if (this.gestureBuffer.length < 8) return { confidence: 0 };
+
+    // Find stationary periods (taps)
+    const stationaryThreshold = 0.02;
+    const minTapDuration = 100; // ms
+    const taps: { start: number; end: number }[] = [];
+
+    let currentTapStart = -1;
+    for (let i = 1; i < this.gestureBuffer.length; i++) {
+      const prev = this.gestureBuffer[i - 1];
+      const curr = this.gestureBuffer[i];
+
+      const dx = curr.x - prev.x;
+      const dy = curr.y - prev.y;
+      const movement = Math.sqrt(dx * dx + dy * dy);
+
+      if (movement < stationaryThreshold) {
+        if (currentTapStart === -1) {
+          currentTapStart = i - 1;
+        }
+      } else {
+        if (currentTapStart !== -1) {
+          const tapDuration = (curr.timestamp - this.gestureBuffer[currentTapStart].timestamp);
+          if (tapDuration >= minTapDuration) {
+            taps.push({ start: currentTapStart, end: i - 1 });
+          }
+          currentTapStart = -1;
+        }
+      }
+    }
+
+    // Check for two taps close together
+    if (taps.length >= 2) {
+      const firstTap = taps[taps.length - 2];
+      const secondTap = taps[taps.length - 1];
+
+      const timeBetweenTaps = this.gestureBuffer[secondTap.start].timestamp -
+        this.gestureBuffer[firstTap.end].timestamp;
+
+      if (timeBetweenTaps < 500) { // Less than 500ms between taps
+        return { confidence: Math.min(1, 1 - timeBetweenTaps / 500) };
+      }
+    }
+
+    return { confidence: 0 };
+  }
+
+  private detectZigzagGesture(): { confidence: number } {
+    if (this.gestureBuffer.length < 6) return { confidence: 0 };
+
+    // Count direction changes
+    let directionChanges = 0;
+    let lastDirection = 0;
+
+    for (let i = 2; i < this.gestureBuffer.length; i++) {
+      const prev = this.gestureBuffer[i - 2];
+      const mid = this.gestureBuffer[i - 1];
+      const curr = this.gestureBuffer[i];
+
+      const dir1 = Math.atan2(mid.y - prev.y, mid.x - prev.x);
+      const dir2 = Math.atan2(curr.y - mid.y, curr.x - mid.x);
+      const angleDiff = Math.abs(dir2 - dir1);
+
+      if (angleDiff > Math.PI / 2) { // 90 degree change
+        directionChanges++;
+      }
+    }
+
+    return { confidence: Math.min(1, directionChanges / 3) };
+  }
+
+  // Get movement statistics for adaptive behavior
+  getMovementStats(): {
+    avgVelocity: number;
+    avgAcceleration: number;
+    movementSmoothness: number;
+    predictability: number;
+  } {
+    if (this.movementHistory.length < 5) {
+      return { avgVelocity: 0, avgAcceleration: 0, movementSmoothness: 0, predictability: 0 };
+    }
+
+    const recent = this.movementHistory.slice(-20);
+    const avgVelocity = recent.reduce((sum, m) =>
+      sum + Math.sqrt(m.velocity.x ** 2 + m.velocity.y ** 2), 0) / recent.length;
+
+    const avgAcceleration = recent.reduce((sum, m) =>
+      sum + Math.sqrt(m.acceleration.x ** 2 + m.acceleration.y ** 2), 0) / recent.length;
+
+    // Calculate movement smoothness (lower variance = smoother)
+    const velocities = recent.map(m => Math.sqrt(m.velocity.x ** 2 + m.velocity.y ** 2));
+    const velocityVariance = velocities.reduce((sum, v) => sum + (v - avgVelocity) ** 2, 0) / velocities.length;
+    const movementSmoothness = Math.max(0, 1 - velocityVariance / (avgVelocity ** 2 || 1));
+
+    // Calculate predictability (how consistent direction changes are)
+    let directionChanges = 0;
+    for (let i = 1; i < recent.length - 1; i++) {
+      const prev = recent[i - 1];
+      const curr = recent[i];
+      const next = recent[i + 1];
+
+      const dir1 = Math.atan2(curr.y - prev.y, curr.x - prev.x);
+      const dir2 = Math.atan2(next.y - curr.y, next.x - curr.x);
+      const angleDiff = Math.abs(dir2 - dir1);
+
+      if (angleDiff > Math.PI / 6) { // 30 degree change
+        directionChanges++;
+      }
+    }
+    const predictability = Math.max(0, 1 - directionChanges / (recent.length - 2));
+
+    return { avgVelocity, avgAcceleration, movementSmoothness, predictability };
+  }
+}
 
 export interface ClickData {
   x: number;
@@ -104,62 +748,55 @@ interface RecordingMarker {
 }
 
 // 🎯 PRODUCTION CONSTANTS - Centralized configuration for maintainability
+// 🎥 Redesigned Camera System - Clean, Simple, Effective
 const CAMERA_CONFIG = {
-  // Zoom thresholds
-  ZOOM_TARGET_CLICK: 1.3, // Base zoom (conservative) - can boost to 1.4 for small targets/slow cursor
-  ZOOM_MAX: 2.0, // Cap at 2.0 for UI demos (ScreenStudio rarely exceeds ~1.8-2.0)
+  // Zoom levels
   ZOOM_MIN: 1.0,
-  ZOOM_SUPPRESS_THRESHOLD: 1.25, // Don't zoom if already above this
-  ZOOM_WELL_CENTERED_THRESHOLD: 1.1, // Don't zoom if below this and well-centered
-  ZOOM_RAPID_CLICK_THRESHOLD: 1.15, // Suppress zoom for rapid clicks if above this
+  ZOOM_MAX: 3.0,
+  ZOOM_DEFAULT: 1.0,
 
-  // Zoom suppression distances (normalized 0-1)
-  CENTER_DISTANCE_THRESHOLD: 0.3, // Within 30% of center = well-centered
-  RAPID_CLICK_INTERVAL_MS: 300, // Rapid clicks within this time
+  // Smooth zoom presets
+  ZOOM_LEVELS: {
+    DEFAULT: 1.0,
+    SUBTLE: 1.3,    // Subtle zoom for reading
+    MEDIUM: 1.6,    // Medium zoom for interactions
+    FOCUS: 2.0,     // Strong zoom for detailed work
+    MAX: 3.0,       // Maximum zoom
+  },
 
-  // Zoom state timing (ms)
-  HOLD_DURATION_MS: 600, // Hold before zoom-out (ScreenStudio-style)
-  INTENT_IDLE_MS: 1500, // Intent idle threshold
-  CLICK_CLUSTER_MS: 3000, // Click cluster duration (3 seconds for 2+ clicks)
-  CURSOR_LEAVE_FOCUS_MS: 400, // Cursor leave focus threshold
-  CURSOR_LEAVE_DISTANCE: 0.45, // 45% viewport distance
+  // Animation timing
+  ZOOM_TRANSITION_MS: 300,      // Smooth zoom transitions
+  PAN_TRANSITION_MS: 200,       // Quick pan movements
+  EASE_FUNCTION: 'cubic-bezier(0.4, 0, 0.2, 1)', // Smooth ease
 
-  // Safe box for camera (center 40% - camera only moves when cursor leaves this area)
-  SAFE_BOX_SIZE: 0.4, // 40% of viewport (center area)
+  // Auto-zoom behavior
+  AUTO_ZOOM: {
+    ENABLED: true,
+    CLICK_DELAY_MS: 150,        // Delay before zoom on click
+    HOVER_DELAY_MS: 800,        // Delay before zoom on hover
+    IDLE_TIMEOUT_MS: 3000,      // Return to normal after idle
+    MIN_MOVEMENT_PX: 50,        // Minimum movement to break idle
+  },
 
-  // Minimum clicks required for zoom
-  MIN_CLICKS_FOR_ZOOM: 2,
+  // Smart detection
+  ACTIVITY_ZONES: {
+    CENTER: { radius: 0.3, zoom: 1.0 },      // Center zone - no zoom
+    MIDDLE: { radius: 0.6, zoom: 1.3 },      // Middle zone - slight zoom
+    EDGE: { radius: 1.0, zoom: 1.6 },        // Edge zone - more zoom
+  },
 
-  // Spring-damper physics
-  ZOOM_STIFFNESS: 0.08, // Reduced for smoother zoom transitions
-  ZOOM_DAMPING: 0.88, // Increased damping for calmer zoom
-  CAMERA_STIFFNESS_MIN: 0.08, // Reduced for smoother camera movement
-  CAMERA_STIFFNESS_MAX: 0.15, // Reduced for smoother camera movement
-  CAMERA_DAMPING: 0.82, // Increased for calmer, less twitchy camera
-  CURSOR_STIFFNESS: 0.35, // Higher = cursor leads camera
-  CURSOR_DAMPING: 0.8,
-  DISTANCE_STIFFNESS_THRESHOLD: 300, // px - reduced from 400 for snappier diagonal/top-to-bottom moves
+  // Viewport behavior
+  VIEWPORT: {
+    CURSOR_LEAD: 0.15,          // How much cursor leads viewport (0-1)
+    EDGE_MARGIN: 0.1,           // Margin from edges (10%)
+    SMOOTH_FACTOR: 0.85,        // Smoothing for movements
+  },
 
-  // Camera re-centering
-  DECAY_BLEND_FACTOR: 0.1, // Re-center only 90% during zoom-out (less mechanical, more organic)
-
-  // Edge behavior
-  EDGE_PADDING: 50, // px - inner boundary for falloff
-
-  // Probabilistic zoom suppression (ScreenStudio-style restraint)
-  PROBABILISTIC_ZOOM_SUPPRESS_CHANCE: 0.25, // 25% chance to suppress zoom even if eligible
-
-  // Animation
-  TARGET_FPS: 60,
-  FRAME_TIME_MS: 1000 / 60,
-  DIMENSIONS_CACHE_MS: 500, // Cache dimensions for this duration
-
-  // Position update thresholds
-  ZOOM_UPDATE_THRESHOLD: 0.01,
-  CAMERA_UPDATE_THRESHOLD: 0.5, // px
-  CURSOR_UPDATE_THRESHOLD: 0.001, // normalized
-  SPRING_SETTLE_THRESHOLD: 0.001,
+  // Performance
+  UPDATE_INTERVAL_MS: 16,       // ~60fps
+  POSITION_THRESHOLD: 2,        // Minimum pixels to trigger update
 } as const;
+
 
 export default function Recorder() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
@@ -194,47 +831,43 @@ export default function Recorder() {
   const [cursorGlow, setCursorGlow] = useState(true);
   const [cursorTrail, setCursorTrail] = useState(false);
   const [showClickIndicator, setShowClickIndicator] = useState(true);
+  const [completePathCapture, setCompletePathCapture] = useState(false);
 
-  // Zoom and cursor following settings
-  const [zoomLevel, setZoomLevel] = useState(1);
+  // Simplified viewport and cursor following settings
+  const [viewportZoom, setViewportZoom] = useState(1);
+  const zoomLevel = viewportZoom; // Alias for compatibility
+  const [viewportPan, setViewportPan] = useState({ x: 0, y: 0 });
   const [followCursor, setFollowCursor] = useState(() => {
     const saved = localStorage.getItem("recorder_followCursor");
     return saved !== null ? saved === "true" : true; // Default to true
   });
   const [currentCursorPos, setCurrentCursorPos] = useState<{ x: number; y: number } | null>(null);
-  const [cursorIndicatorPos, setCursorIndicatorPos] = useState<{ x: number; y: number } | null>(null);
   const previewContainerRef = useRef<HTMLDivElement>(null);
-
-  // Zoom state machine: FOCUSED -> HOLD -> DECAY -> NEUTRAL
-  type ZoomState = "FOCUSED" | "HOLD" | "DECAY" | "NEUTRAL";
+  const viewportManagerRef = useRef<SimpleViewportManager | null>(null);
+  const [autoZoomEnabled, setAutoZoomEnabled] = useState(true);
   const [zoomState, setZoomState] = useState<ZoomState>("NEUTRAL");
+  const [cursorIndicatorPos, setCursorIndicatorPos] = useState<{ x: number, y: number } | null>(null);
 
-  // Intent tracking refs
-  const lastIntentTimeRef = useRef<number>(0);
-  const lastClickClusterTimeRef = useRef<number>(0);
-  const lastScrollTimeRef = useRef<number>(0);
-  const focusPointRef = useRef<{ x: number; y: number } | null>(null);
-  const cursorDwellStartRef = useRef<number | null>(null);
-  const cursorDwellPositionRef = useRef<{ x: number; y: number } | null>(null);
-  const zoomTargetRef = useRef<number>(1); // Target zoom level (for partial zoom-out)
-  const holdStartTimeRef = useRef<number | null>(null);
-  const cameraOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const neutralCameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
-  const isScrollingRef = useRef<boolean>(false);
-
-  // Click cluster tracking for zoom detection (2+ clicks within 3 seconds)
-  const clickClusterRef = useRef<Array<{ x: number; y: number; timestamp: number }>>([]);
-  const lastZoomTimeRef = useRef<number>(0);
-  const zoomDebounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Simplified tracking refs
+  const lastActivityTimeRef = useRef<number>(Date.now());
+  const lastClickPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const autoZoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const cursorVelocityRef = useRef({ x: 0, y: 0 });
+  const lastCursorUpdateRef = useRef<number>(0);
 
   // Performance optimization refs for camera system
   const currentZoomRef = useRef<number>(1);
+  const zoomTargetRef = useRef<number>(1); // For smooth damping
   const zoomStateRef = useRef<ZoomState>("NEUTRAL");
   const containerDimensionsRef = useRef<{ width: number; height: number } | null>(null);
   const videoDimensionsRef = useRef<{ width: number; height: number; aspect: number } | null>(null);
   const lastDimensionsUpdateRef = useRef<number>(0);
   const transformCacheRef = useRef<{ x: number; y: number; scale: number }>({ x: 0, y: 0, scale: 1 });
   const transitionStateRef = useRef<string | null>(null);
+  const focusPointRef = useRef<{ x: number; y: number } | null>(null);
+  const cursorDwellStartRef = useRef<number | null>(null);
+  const cursorDwellPositionRef = useRef<{ x: number; y: number } | null>(null);
+  const holdStartTimeRef = useRef<number | null>(null);
 
   // Spring-damper velocity tracking for smooth camera motion
   const cameraVelocityRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -308,8 +941,6 @@ export default function Recorder() {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const canvasStreamRef = useRef<MediaStream | null>(null);
   const canvasAnimationFrameRef = useRef<number | null>(null);
-  const canvasIntervalRef = useRef<number | null>(null); // For background tab drawing (when rAF is throttled)
-  const visibilityHandlerRef = useRef<(() => void) | null>(null); // Track visibility change handler for cleanup
 
   // Refs for canvas drawing to access current values
   const zoomLevelRef = useRef(zoomLevel);
@@ -323,6 +954,212 @@ export default function Recorder() {
   const lastCursorPosForParticlesRef = useRef<{ x: number; y: number } | null>(null);
   const lastCursorMoveTimeRef = useRef<number>(0); // Track cursor movement timing for speed calculation
   const cursorSpeedRef = useRef<number>(0); // Normalized cursor speed (0-1)
+
+  // 🎯 AI-Powered Intent Detection & Adaptive Learning
+  const intentAnalyzerRef = useRef(new CursorIntentAnalyzer());
+  const adaptiveLearnerRef = useRef(new AdaptiveCameraLearner());
+  const lastIntentAnalysisRef = useRef<{
+    intent: string;
+    confidence: number;
+    timestamp: number;
+  }>({ intent: 'neutral', confidence: 0, timestamp: 0 });
+
+  const cameraOffsetRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastIntentTimeRef = useRef<number>(0);
+  const lastClickClusterTimeRef = useRef<number>(0);
+  const clickClusterRef = useRef<{ x: number; y: number; timestamp: number }[]>([]);
+  const lastZoomTimeRef = useRef<number>(0);
+  const zoomDebounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Initialize adaptive learning system
+  useEffect(() => {
+    adaptiveLearnerRef.current.loadPreferences();
+    console.log('🧠 Adaptive camera learning system initialized');
+  }, []);
+
+  // 🎯 Content Analyzer for Smart Zoom
+  const analyzeContentForZoom = useCallback((elementInfo: any, clusterInfo: any) => {
+    if (!elementInfo) {
+      // No element info - use cluster-based zoom
+      return {
+        zoom: Math.max(1.2, Math.min(1.8, 0.3 / Math.max(clusterInfo.radius, 0.05))),
+        confidence: 0.5,
+        reason: 'Cluster-based zoom'
+      };
+    }
+
+    // Element-based zoom rules
+    let zoomSuggestion = 1.4; // Default
+    let confidence = 0.8;
+    let reason = 'Default element zoom';
+
+    // Tag-based rules
+    if (CONTENT_ZOOM_RULES[elementInfo.tagName?.toLowerCase()]) {
+      const rule = CONTENT_ZOOM_RULES[elementInfo.tagName.toLowerCase()];
+      zoomSuggestion = rule.zoom;
+      confidence = 0.9;
+      reason = rule.reason;
+    }
+
+    // Semantic-based rules (higher priority)
+    if (elementInfo.semanticType && CONTENT_ZOOM_RULES[elementInfo.semanticType]) {
+      const rule = CONTENT_ZOOM_RULES[elementInfo.semanticType];
+      zoomSuggestion = rule.zoom;
+      confidence = 0.95;
+      reason = rule.reason;
+    }
+
+    // Content analysis based on element text/size
+    if (elementInfo.text) {
+      const textLength = elementInfo.text.length;
+      if (textLength > 50) {
+        // Long text content
+        zoomSuggestion = Math.max(zoomSuggestion, CONTENT_ZOOM_RULES.text.zoom);
+        reason = 'Long text content detected';
+      } else if (textLength < 10) {
+        // Short text (likely buttons/labels)
+        zoomSuggestion = Math.max(zoomSuggestion, 1.6);
+        reason = 'Short text element';
+      }
+    }
+
+    // Element size consideration
+    if (elementInfo.rect) {
+      const area = elementInfo.rect.width * elementInfo.rect.height;
+      if (area < 1000) {
+        // Small element - needs more zoom
+        zoomSuggestion *= 1.1;
+        reason += ' (small element)';
+      } else if (area > 10000) {
+        // Large element - can use less zoom
+        zoomSuggestion *= 0.9;
+        reason += ' (large element)';
+      }
+    }
+
+    // Context density analysis
+    const density = estimateContentDensity(elementInfo);
+    if (CONTENT_ZOOM_RULES[density]) {
+      const densityRule = CONTENT_ZOOM_RULES[density];
+      zoomSuggestion = (zoomSuggestion + densityRule.zoom) / 2; // Blend with density
+      reason += ` (${density} content density)`;
+    }
+
+    return {
+      zoom: Math.max(CAMERA_CONFIG.ZOOM_MIN, Math.min(CAMERA_CONFIG.ZOOM_MAX, zoomSuggestion)),
+      confidence,
+      reason
+    };
+  }, []);
+
+  // Estimate content density around the element
+  const estimateContentDensity = useCallback((elementInfo: any): 'dense' | 'sparse' => {
+    // Simple heuristic based on element properties
+    if (elementInfo.rect) {
+      const area = elementInfo.rect.width * elementInfo.rect.height;
+      const aspectRatio = elementInfo.rect.width / elementInfo.rect.height;
+
+      // Small, square elements tend to be in dense layouts
+      if (area < 2000 && aspectRatio > 0.5 && aspectRatio < 2.0) {
+        return 'dense';
+      }
+    }
+
+    // Text length can indicate density
+    if (elementInfo.text && elementInfo.text.length > 100) {
+      return 'dense';
+    }
+
+    return 'sparse';
+  }, []);
+
+  // 🎭 Gesture Command Handler
+  const handleGestureCommand = useCallback((command: string, x: number, y: number) => {
+    console.log(`🎭 Executing gesture command: ${command}`);
+
+    switch (command) {
+      case 'zoom_in':
+        // Smooth zoom in gesture
+        zoomTargetRef.current = Math.min(zoomLevel + 0.5, CAMERA_CONFIG.ZOOM_MAX);
+        zoomVelocityRef.current = 0;
+        setZoomState("FOCUSED");
+        focusPointRef.current = { x, y };
+        lastIntentTimeRef.current = Date.now();
+        break;
+
+      case 'zoom_out':
+        // Smooth zoom out gesture
+        zoomTargetRef.current = Math.max(zoomLevel - 0.5, CAMERA_CONFIG.ZOOM_MIN);
+        zoomVelocityRef.current = 0;
+        if (zoomTargetRef.current <= CAMERA_CONFIG.ZOOM_MIN + 0.01) {
+          setZoomState("NEUTRAL");
+        } else {
+          setZoomState("FOCUSED");
+        }
+        break;
+
+      case 'switch_mode':
+        // Cycle through camera presets
+        const currentPreset = intentAnalyzerRef.current.getRecommendedPreset();
+        const presets: (keyof typeof CAMERA_PRESETS)[] = ['cinematic', 'fast', 'manual'];
+        const currentIndex = presets.indexOf(currentPreset);
+        const nextIndex = (currentIndex + 1) % presets.length;
+        // Force a different preset for visual feedback
+        console.log(`📹 Switched to ${presets[nextIndex]} camera mode`);
+        break;
+
+      case 'pan_left':
+      case 'pan_right':
+      case 'pan_up':
+      case 'pan_down':
+        // Pan camera in gesture direction
+        const panAmount = 0.2; // Normalized units
+        let panX = 0, panY = 0;
+
+        switch (command) {
+          case 'pan_left': panX = -panAmount; break;
+          case 'pan_right': panX = panAmount; break;
+          case 'pan_up': panY = -panAmount; break;
+          case 'pan_down': panY = panAmount; break;
+        }
+
+        // Set focus point to trigger pan
+        focusPointRef.current = {
+          x: Math.max(0, Math.min(1, x + panX)),
+          y: Math.max(0, Math.min(1, y + panY))
+        };
+        setZoomState("FOCUSED");
+        lastIntentTimeRef.current = Date.now();
+        break;
+
+      case 'reset_camera':
+        // Reset camera to neutral position
+        setZoomState("NEUTRAL");
+        zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+        focusPointRef.current = undefined;
+        cameraVelocityRef.current = { x: 0, y: 0 };
+        zoomVelocityRef.current = 0;
+        console.log('📹 Camera reset to neutral position');
+        break;
+
+      case 'emphasize_selection':
+        // Create emphasis effect (rapid zoom in and out)
+        const originalZoom = zoomLevel;
+        zoomTargetRef.current = Math.min(originalZoom * 1.3, CAMERA_CONFIG.ZOOM_MAX);
+        zoomVelocityRef.current = 0;
+        setZoomState("FOCUSED");
+        focusPointRef.current = { x, y };
+
+        // Return to original zoom after emphasis
+        setTimeout(() => {
+          zoomTargetRef.current = originalZoom;
+        }, 300);
+        break;
+
+      default:
+        console.log(`⚠️ Unknown gesture command: ${command}`);
+    }
+  }, [zoomLevel]);
 
   // Canvas performance optimization refs
   const canvasVideoDimensionsRef = useRef<{ width: number; height: number; aspect: number } | null>(null);
@@ -521,7 +1358,7 @@ export default function Recorder() {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       if (!event.data?.type) return;
-      
+
       if (event.data.type === 'DEMOFORGE_REQUEST_SCREEN_SELECTION') {
         console.log('[Frontend] Extension requested screen selection via window message');
         handleSelectScreen();
@@ -775,23 +1612,14 @@ export default function Recorder() {
 
     // Start capturing the preview container to canvas (OPTIMIZED)
     const drawFrame = (timestamp: number) => {
-      // Helper to stop the drawing loop completely
-      const stopDrawLoop = () => {
-        if (canvasAnimationFrameRef.current) {
-          cancelAnimationFrame(canvasAnimationFrameRef.current);
-          canvasAnimationFrameRef.current = null;
-        }
-        if (canvasIntervalRef.current) {
-          clearInterval(canvasIntervalRef.current);
-          canvasIntervalRef.current = null;
-        }
-      };
-
       // Check if we should continue drawing (recording state will be set before MediaRecorder starts)
       // Use a ref to track if we should continue drawing
       if (!ctx || !video || !container) {
         // Stop the loop if essential elements are missing
-        stopDrawLoop();
+        if (canvasAnimationFrameRef.current) {
+          cancelAnimationFrame(canvasAnimationFrameRef.current);
+          canvasAnimationFrameRef.current = null;
+        }
         return;
       }
 
@@ -800,16 +1628,17 @@ export default function Recorder() {
       const shouldDraw = recordingState === "recording" || recordingState === "countdown" || recordingState === "ready";
       if (!shouldDraw) {
         // Stop the loop if not in a recording-related state
-        stopDrawLoop();
+        if (canvasAnimationFrameRef.current) {
+          cancelAnimationFrame(canvasAnimationFrameRef.current);
+          canvasAnimationFrameRef.current = null;
+        }
         return;
       }
 
       // Throttle canvas updates for better performance (target 30fps for canvas)
-      // Skip throttling when using setInterval (background mode) - it's already at 30fps
       const deltaTime = timestamp - canvasFrameTimeRef.current;
       const targetFrameTime = 1000 / 30; // 30fps for canvas recording
-      if (deltaTime < targetFrameTime && !document.hidden) {
-        // Only use rAF throttling when visible (setInterval already handles timing in background)
+      if (deltaTime < targetFrameTime) {
         canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
         return;
       }
@@ -1084,7 +1913,7 @@ export default function Recorder() {
         lastCursorPosForParticlesRef.current = { x: cursorX, y: cursorY };
       }
 
-      scheduleNextFrame();
+      canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
     };
 
     // Get stream from canvas FIRST (before starting draw loop)
@@ -1100,63 +1929,10 @@ export default function Recorder() {
       return null;
     }
 
-    // Helper to clear both animation frame and interval
-    const clearDrawLoop = () => {
-      if (canvasAnimationFrameRef.current) {
-        cancelAnimationFrame(canvasAnimationFrameRef.current);
-        canvasAnimationFrameRef.current = null;
-      }
-      if (canvasIntervalRef.current) {
-        clearInterval(canvasIntervalRef.current);
-        canvasIntervalRef.current = null;
-      }
-    };
-
-    // Helper to schedule the next frame - uses setInterval when tab is hidden (rAF is throttled)
-    function scheduleNextFrame() {
-      // If document is hidden, rAF will be throttled to 1fps or paused
-      // Use setInterval instead for consistent frame rate in background
-      if (document.hidden) {
-        // Don't double-schedule if interval is already running
-        if (!canvasIntervalRef.current) {
-          // Clear any pending rAF
-          if (canvasAnimationFrameRef.current) {
-            cancelAnimationFrame(canvasAnimationFrameRef.current);
-            canvasAnimationFrameRef.current = null;
-          }
-          // Use interval for background - 30fps target
-          canvasIntervalRef.current = window.setInterval(() => {
-            drawFrame(performance.now());
-          }, 1000 / 30);
-          console.log('[Canvas] Switched to setInterval for background tab recording');
-        }
-      } else {
-        // Tab is visible - use rAF for smooth, efficient rendering
-        // Clear interval if it was running
-        if (canvasIntervalRef.current) {
-          clearInterval(canvasIntervalRef.current);
-          canvasIntervalRef.current = null;
-          console.log('[Canvas] Switched to requestAnimationFrame for visible tab');
-        }
-        canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
-      }
-    }
-
-    // Handle visibility changes - switch between rAF and setInterval
-    const handleVisibilityChange = () => {
-      console.log('[Canvas] Visibility changed:', document.hidden ? 'hidden (using setInterval)' : 'visible (using rAF)');
-      // Clear current scheduling and reschedule with appropriate method
-      clearDrawLoop();
-      scheduleNextFrame();
-    };
-
-    // Store handler reference for cleanup
-    visibilityHandlerRef.current = handleVisibilityChange;
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-
     // Start drawing loop AFTER stream is created
     // This ensures frames are immediately available to the stream
-    scheduleNextFrame();
+    // Use requestAnimationFrame to start the loop
+    canvasAnimationFrameRef.current = requestAnimationFrame(drawFrame);
 
     console.log("Canvas recording setup complete:", {
       canvasSize: `${canvas.width}x${canvas.height}`,
@@ -1224,49 +2000,6 @@ export default function Recorder() {
   };
 
   // 🎯 Click cluster detection: Detects 2+ clicks within 3 seconds
-  // Returns cluster center and whether zoom should trigger
-  const detectClickCluster = useCallback((newClick: { x: number; y: number; timestamp: number }) => {
-    const now = Date.now();
-    const CLUSTER_WINDOW_MS = CAMERA_CONFIG.CLICK_CLUSTER_MS;
-
-    // Add new click to cluster
-    clickClusterRef.current.push(newClick);
-
-    // Remove clicks older than cluster window
-    clickClusterRef.current = clickClusterRef.current.filter(
-      click => (now - click.timestamp) <= CLUSTER_WINDOW_MS
-    );
-
-    // Check if we have enough clicks for zoom
-    if (clickClusterRef.current.length >= CAMERA_CONFIG.MIN_CLICKS_FOR_ZOOM) {
-      // Calculate cluster center (average position)
-      const centerX = clickClusterRef.current.reduce((sum, c) => sum + c.x, 0) / clickClusterRef.current.length;
-      const centerY = clickClusterRef.current.reduce((sum, c) => sum + c.y, 0) / clickClusterRef.current.length;
-
-      // Calculate cluster radius (max distance from center)
-      let maxDistance = 0;
-      for (const click of clickClusterRef.current) {
-        const dx = click.x - centerX;
-        const dy = click.y - centerY;
-        const distance = Math.sqrt(dx * dx + dy * dy);
-        maxDistance = Math.max(maxDistance, distance);
-      }
-
-      return {
-        shouldZoom: true,
-        center: { x: centerX, y: centerY },
-        radius: maxDistance,
-        clickCount: clickClusterRef.current.length
-      };
-    }
-
-    return {
-      shouldZoom: false,
-      center: null,
-      radius: 0,
-      clickCount: clickClusterRef.current.length
-    };
-  }, []);
 
   // Get element information for visual highlights
   const getElementInfo = (event: MouseEvent) => {
@@ -1350,94 +2083,7 @@ export default function Recorder() {
       elementInfo,
     });
 
-    // 🧠 ZOOM-IN: Only on repeated intent (2+ clicks within 3 seconds)
-    if (followCursor) {
-      // Update intent tracking
-      lastIntentTimeRef.current = now;
-      lastClickClusterTimeRef.current = now;
-
-      // 🎯 CORE PRINCIPLE: Detect click cluster (2+ clicks within 3 seconds)
-      const clusterInfo = detectClickCluster({
-        x: normalizedX,
-        y: normalizedY,
-        timestamp: now
-      });
-
-      // Only zoom if cluster detected (repeated intent)
-      if (clusterInfo.shouldZoom && clusterInfo.center) {
-        // Prevent sudden zoom in/out with debouncing
-        const timeSinceLastZoom = now - lastZoomTimeRef.current;
-        const MIN_ZOOM_INTERVAL_MS = 500; // Prevent rapid zoom toggling
-
-        if (timeSinceLastZoom < MIN_ZOOM_INTERVAL_MS && zoomState === "FOCUSED") {
-          // Too soon after last zoom - ignore
-          return;
-        }
-
-        // Clear any pending zoom debounce
-        if (zoomDebounceTimeoutRef.current) {
-          clearTimeout(zoomDebounceTimeoutRef.current);
-          zoomDebounceTimeoutRef.current = null;
-        }
-
-        // Debounce zoom to prevent sudden changes
-        zoomDebounceTimeoutRef.current = setTimeout(() => {
-          try {
-            // Validate inputs
-            if (!Number.isFinite(zoomLevel) || !clusterInfo.center) {
-              return;
-            }
-
-            // If already zoomed in significantly, don't zoom more
-            if (zoomLevel > CAMERA_CONFIG.ZOOM_SUPPRESS_THRESHOLD) {
-              return;
-            }
-
-            // Set focus point to cluster center (not cursor position)
-            focusPointRef.current = clusterInfo.center;
-
-            // Cancel any ongoing zoom-out
-            if (zoomState === "DECAY" || zoomState === "HOLD") {
-              setZoomState("FOCUSED");
-            } else if (zoomState === "NEUTRAL") {
-              setZoomState("FOCUSED");
-            }
-
-            // Calculate zoom level based on cluster tightness
-            // Tighter cluster = more zoom, spread cluster = less zoom
-            const clusterRadius = clusterInfo.radius;
-            const targetReadableArea = 0.15; // Target area to show (15% of viewport)
-            let targetZoom = clamp(
-              targetReadableArea / Math.max(clusterRadius, 0.05),
-              1.3, // Minimum zoom
-              1.8  // Maximum zoom
-            );
-
-            // Boost zoom for more clicks in cluster
-            if (clusterInfo.clickCount >= 3) {
-              targetZoom = Math.min(targetZoom * 1.1, CAMERA_CONFIG.ZOOM_MAX);
-            }
-
-            // Clamp to max zoom
-            targetZoom = Math.max(
-              CAMERA_CONFIG.ZOOM_MIN,
-              Math.min(CAMERA_CONFIG.ZOOM_MAX, targetZoom)
-            );
-
-            zoomTargetRef.current = targetZoom;
-            lastZoomTimeRef.current = Date.now();
-            // Reset velocity when starting new zoom-in for clean transition
-            zoomVelocityRef.current = 0;
-          } catch (error) {
-            console.error('handlePointerDown: Error setting zoom target', error);
-          }
-        }, 100); // Small debounce to batch rapid clicks
-      } else {
-        // Single click - no zoom, just update intent
-        focusPointRef.current = { x: normalizedX, y: normalizedY };
-      }
-    }
-  }, [recordingState, followCursor, zoomState]);
+  }, [recordingState, followCursor, completePathCapture]);
 
   // Helper to notify extension of recording state
   // Uses window.postMessage (handled by content script) - no WebSocket needed
@@ -1497,37 +2143,94 @@ export default function Recorder() {
     const now = Date.now();
 
     if (event.eventType === "move") {
-      // Throttling to ~30fps (33ms)
-      if (now - lastMoveTimeRef.current < 33) return;
-      lastMoveTimeRef.current = now;
-
       const moveData = extensionEventToMoveData(event, videoRect, recordingStartTimeRef.current);
       const normalizedX = moveData.x;
       const normalizedY = moveData.y;
 
-      // [POLISH] Micro Jitter Removal
-      let shouldRecord = true;
-      if (movesRef.current.length > 0) {
-        const lastMove = movesRef.current[movesRef.current.length - 1];
-        const dist = Math.sqrt(
-          Math.pow(normalizedX - lastMove.x, 2) +
-          Math.pow(normalizedY - lastMove.y, 2)
-        );
-        if (dist < 0.005) {
-          shouldRecord = false;
-        }
-      }
+      // Complete path capture mode: No throttling, minimal filtering
+      if (completePathCapture) {
+        // Only minimal throttling to prevent overwhelming (~120fps max)
+        if (now - lastMoveTimeRef.current < 8) return; // ~120fps
+        lastMoveTimeRef.current = now;
 
-      if (shouldRecord) {
+        // Store ALL movements for complete path
         movesRef.current.push(moveData);
-        if (movesRef.current.length === 1 || movesRef.current.length % 50 === 0) {
-          console.log('[Frontend] ✅ Recorded', movesRef.current.length, 'move events');
+
+        // Less frequent logging for complete path mode
+        if (movesRef.current.length % 100 === 0) {
+          console.log('[Frontend] ✅ Complete path: Recorded', movesRef.current.length, 'move events');
+        }
+      } else {
+        // Standard mode: Throttling to ~30fps with jitter filtering
+        if (now - lastMoveTimeRef.current < 33) return;
+        lastMoveTimeRef.current = now;
+
+        // [POLISH] Micro Jitter Removal
+        let shouldRecord = true;
+        if (movesRef.current.length > 0) {
+          const lastMove = movesRef.current[movesRef.current.length - 1];
+          const dist = Math.sqrt(
+            Math.pow(normalizedX - lastMove.x, 2) +
+            Math.pow(normalizedY - lastMove.y, 2)
+          );
+          if (dist < 0.005) {
+            shouldRecord = false;
+          }
+        }
+
+        if (shouldRecord) {
+          movesRef.current.push(moveData);
+          if (movesRef.current.length === 1 || movesRef.current.length % 50 === 0) {
+            console.log('[Frontend] ✅ Recorded', movesRef.current.length, 'move events');
+          }
+        }
+        // Jitter filter: small movements are ignored (no log needed)
+      }
+
+      // 🎯 AI Intent Analysis - feed cursor data to analyzer
+      intentAnalyzerRef.current.addMovement(normalizedX, normalizedY, now);
+
+      // Analyze intent periodically (every 100ms to avoid excessive computation)
+      if (now - lastIntentAnalysisRef.current.timestamp > 100) {
+        const intentResult = intentAnalyzerRef.current.analyzeIntent();
+        lastIntentAnalysisRef.current = {
+          intent: intentResult.intent,
+          confidence: intentResult.confidence,
+          timestamp: now
+        };
+
+        // 🎯 Adaptive Learning: Update movement pattern analysis
+        const movementStats = intentAnalyzerRef.current.getMovementStats();
+        adaptiveLearnerRef.current.recordMovementPattern(
+          movementStats.movementSmoothness,
+          movementStats.avgVelocity
+        );
+
+        // 🎯 Gesture Command Processing with Learning
+        const gesture = intentAnalyzerRef.current.analyzeGesture();
+        if (gesture.confidence > 0.7 && gesture.command) {
+          handleGestureCommand(gesture.command, normalizedX, normalizedY);
+
+          // Record gesture usage for adaptive learning
+          adaptiveLearnerRef.current.recordGestureUsage(gesture.type);
+
+          console.log(`🎭 Gesture: ${gesture.type} -> ${gesture.command} (${Math.round(gesture.confidence * 100)}% confidence)`);
+        }
+
+        // Log significant intent changes
+        if (intentResult.confidence > 0.7) {
+          console.log(`🎯 Intent: ${intentResult.intent} (${Math.round(intentResult.confidence * 100)}% confidence)`);
         }
       }
-      // Jitter filter: small movements are ignored (no log needed)
 
-      // Update current cursor position for preview following
+      // Update current cursor position and viewport
       setCurrentCursorPos({ x: normalizedX, y: normalizedY });
+      currentCursorPosRef.current = { x: normalizedX, y: normalizedY };
+
+      // Update viewport manager
+      if (viewportManagerRef.current && followCursor) {
+        viewportManagerRef.current.updateCursor({ x: normalizedX, y: normalizedY });
+      }
 
       // Track cursor speed for conditional zoom boost
       if (lastCursorPosForParticlesRef.current && lastCursorMoveTimeRef.current > 0) {
@@ -1594,60 +2297,14 @@ export default function Recorder() {
         totalClicks: clicksRef.current.length
       });
 
-      // 🧠 ZOOM-IN: Only on repeated intent (2+ clicks within 3 seconds)
-      if (followCursor) {
-        lastIntentTimeRef.current = now;
-        lastClickClusterTimeRef.current = now;
-
-        const clusterInfo = detectClickCluster({
-          x: normalizedX,
-          y: normalizedY,
-          timestamp: now
-        });
-
-        if (clusterInfo.shouldZoom && clusterInfo.center) {
-          const timeSinceLastZoom = now - lastZoomTimeRef.current;
-          const MIN_ZOOM_INTERVAL_MS = 500;
-
-          if (timeSinceLastZoom < MIN_ZOOM_INTERVAL_MS && zoomState === "FOCUSED") {
-            return;
-          }
-
-          if (zoomDebounceTimeoutRef.current) {
-            clearTimeout(zoomDebounceTimeoutRef.current);
-            zoomDebounceTimeoutRef.current = null;
-          }
-
-          zoomDebounceTimeoutRef.current = setTimeout(() => {
-            try {
-              if (!Number.isFinite(zoomLevel) || !clusterInfo.center) {
-                return;
-              }
-
-              if (zoomLevel > CAMERA_CONFIG.ZOOM_SUPPRESS_THRESHOLD) {
-                return;
-              }
-
-              focusPointRef.current = clusterInfo.center;
-
-              if (zoomState === "DECAY" || zoomState === "HOLD") {
-                setZoomState("FOCUSED");
-                holdStartTimeRef.current = null;
-              } else if (zoomState === "NEUTRAL") {
-                setZoomState("FOCUSED");
-                holdStartTimeRef.current = null;
-              }
-
-              zoomTargetRef.current = CAMERA_CONFIG.ZOOM_TARGET_CLICK;
-              lastZoomTimeRef.current = now;
-            } catch (error) {
-              console.error('handleExtensionMouseEvent: Error setting zoom target', error);
-            }
-          }, 100);
-        }
+      // Handle click with viewport manager
+      if (viewportManagerRef.current && followCursor) {
+        viewportManagerRef.current.handleClick({ x: normalizedX, y: normalizedY });
+        lastActivityTimeRef.current = now;
+        lastClickPositionRef.current = { x: normalizedX, y: normalizedY };
       }
     }
-  }, [recordingState, followCursor, zoomState, zoomLevel, detectClickCluster]);
+  }, [recordingState, followCursor, completePathCapture, viewportManagerRef]);
 
   // Store handler in ref to avoid effect re-running on every render
   const handleExtensionMouseEventRef = useRef(handleExtensionMouseEvent);
@@ -1755,7 +2412,7 @@ export default function Recorder() {
       // Reset zoom state when not following or not recording
       if (zoomState !== "NEUTRAL") {
         setZoomState("NEUTRAL");
-        setZoomLevel(1);
+        setViewportZoom(1);
         zoomTargetRef.current = 1;
       }
       return;
@@ -1811,10 +2468,21 @@ export default function Recorder() {
 
       // State machine transitions
       if (zoomState === "FOCUSED") {
-        // Check if we should enter HOLD state
-        if (isIntentIdle || cursorLeftFocus || clickClusterEnded) {
+        // Only enter HOLD state if zoom has reached its target and settled
+        const targetZoom = zoomTargetRef.current;
+        const currentZoom = Number.isFinite(zoomLevel) ? zoomLevel : CAMERA_CONFIG.ZOOM_MIN;
+        const zoomError = Math.abs(currentZoom - targetZoom);
+        const zoomVelocity = Number.isFinite(zoomVelocityRef.current) ? Math.abs(zoomVelocityRef.current) : 0;
+
+        // Check if zoom has settled at target
+        const zoomHasSettled = zoomError < CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD &&
+          zoomVelocity < CAMERA_CONFIG.SPRING_SETTLE_THRESHOLD;
+
+        // Check if we should enter HOLD state (only when zoom has settled)
+        if (zoomHasSettled && (isIntentIdle || cursorLeftFocus || clickClusterEnded)) {
           setZoomState("HOLD");
           holdStartTimeRef.current = now;
+          console.log(`🎯 Zoom reached target ${targetZoom.toFixed(2)}x, entering HOLD phase`);
         }
       } else if (zoomState === "HOLD") {
         // Hold for configured duration before decay (ScreenStudio-style: let brain finish processing)
@@ -1889,11 +2557,11 @@ export default function Recorder() {
   // Cursor following effect - smooth pan/zoom to follow cursor (OPTIMIZED)
   useEffect(() => {
     if (!followCursor || recordingState !== "recording" || !previewContainerRef.current) {
-      // Reset transform when not following
-      if (videoPreviewRef.current) {
-        videoPreviewRef.current.style.transform = `scale3d(${zoomLevel}, ${zoomLevel}, 1)`;
-        videoPreviewRef.current.style.transition = "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
-        videoPreviewRef.current.style.willChange = "auto";
+      // Reset transform when not following - apply to container, not video
+      if (previewContainerRef.current) {
+        previewContainerRef.current.style.transform = `scale3d(${zoomLevel}, ${zoomLevel}, 1)`;
+        previewContainerRef.current.style.transition = "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
+        previewContainerRef.current.style.willChange = "auto";
       }
       containerDimensionsRef.current = null;
       videoDimensionsRef.current = null;
@@ -1904,10 +2572,10 @@ export default function Recorder() {
     const video = videoPreviewRef.current;
     if (!container || !video) return;
 
-    // Enable GPU acceleration
-    video.style.willChange = "transform";
-    video.style.backfaceVisibility = "hidden";
-    video.style.perspective = "1000px";
+    // Enable GPU acceleration - apply to container, not video
+    container.style.willChange = "transform";
+    container.style.backfaceVisibility = "hidden";
+    container.style.perspective = "1000px";
 
     let animationFrameId: number | null = null;
     let lastUpdateTime = 0;
@@ -2058,7 +2726,7 @@ export default function Recorder() {
             // Only update state if change is significant (reduce re-renders)
             if (Math.abs(newZoom - zoomLevelRef.current) > CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD) {
               if (isMounted) {
-                setZoomLevel(newZoom);
+                setViewportZoom(newZoom);
               }
             }
           }
@@ -2092,7 +2760,7 @@ export default function Recorder() {
             // Only update state if change is significant
             if (Math.abs(newZoom - zoomLevelRef.current) > CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD) {
               if (isMounted) {
-                setZoomLevel(newZoom);
+                setViewportZoom(newZoom);
               }
             }
 
@@ -2130,43 +2798,54 @@ export default function Recorder() {
         const cursorX = Math.max(0, Math.min(1, cursorPos.x));
         const cursorY = Math.max(0, Math.min(1, cursorPos.y));
 
-        // 🎯 ZOOM TO CLUSTER CENTER: When zoomed, center on cluster center, not cursor
-        // When not zoomed, follow cursor with safe box logic
-        let targetX = cursorX;
-        let targetY = cursorY;
+        // 🎯 CAMERA ANTICIPATION: Predict where cursor will go
+        const currentIntent = intentAnalyzerRef.current.analyzeIntent();
+        let anticipatedX = cursorX;
+        let anticipatedY = cursorY;
 
-        // If zoomed in and we have a focus point (cluster center), use that instead
-        if (currentZoomState === "FOCUSED" && focusPointRef.current) {
-          targetX = focusPointRef.current.x;
-          targetY = focusPointRef.current.y;
+        // Use predicted position if confidence is high enough
+        if (currentIntent.confidence > 0.6 && currentIntent.predictedPosition) {
+          const predicted = currentIntent.predictedPosition;
+          const anticipationStrength = CAMERA_CONFIG.ANTICIPATION_STRENGTH;
+
+          // Different anticipation strength based on intent
+          let effectiveAnticipation = anticipationStrength;
+          if (currentIntent.intent === 'targeting') {
+            effectiveAnticipation *= 1.5; // Strong anticipation for targeting
+          } else if (currentIntent.intent === 'reading') {
+            effectiveAnticipation *= 0.8; // Moderate anticipation for reading
+          } else if (currentIntent.intent === 'gesturing') {
+            effectiveAnticipation *= 0.3; // Light anticipation for gesturing
+          }
+
+          // Blend current position with predicted position
+          anticipatedX = cursorX * (1 - effectiveAnticipation) + predicted.x * effectiveAnticipation;
+          anticipatedY = cursorY * (1 - effectiveAnticipation) + predicted.y * effectiveAnticipation;
+
+          // Clamp to valid range
+          anticipatedX = Math.max(0, Math.min(1, anticipatedX));
+          anticipatedY = Math.max(0, Math.min(1, anticipatedY));
         }
 
-        // 🎯 SAFE BOX LOGIC: Camera only moves when cursor leaves center 40%
-        // This mimics real cameramen - camera stays still when cursor is in safe area
-        const SAFE_BOX_SIZE = CAMERA_CONFIG.SAFE_BOX_SIZE; // 40% of viewport
-        const safeBoxMin = (1 - SAFE_BOX_SIZE) / 2; // 0.3 (30% from edge)
-        const safeBoxMax = 1 - safeBoxMin; // 0.7 (70% from edge)
+        // 🎯 CURSOR CENTERING: Always center on current cursor position when following
+        // The camera should keep the cursor perfectly centered at all times
+        let targetX = anticipatedX;
+        let targetY = anticipatedY;
 
-        // Check if target (cursor or cluster center) is in safe box
-        const isInSafeBox = targetX >= safeBoxMin && targetX <= safeBoxMax &&
-          targetY >= safeBoxMin && targetY <= safeBoxMax;
+        // Always center on cursor position - focus points are for initial zoom targeting only
+        // This ensures the cursor stays perfectly centered during recording
 
-        // Get current camera position
+        // 🎯 CURSOR CENTERING: Always center cursor when following is enabled
+        // The camera should keep the cursor perfectly centered at all times for predictable behavior
         const currentCameraX = Number.isFinite(transformCacheRef.current.x) ? transformCacheRef.current.x : 0;
         const currentCameraY = Number.isFinite(transformCacheRef.current.y) ? transformCacheRef.current.y : 0;
 
-        // Calculate the target offset needed to center the target (cursor or cluster center)
+        // Calculate the target offset needed to center the cursor perfectly
         let targetOffsetX = (containerWidth / 2) - (targetX * scaledWidth);
         let targetOffsetY = (containerHeight / 2) - (targetY * scaledHeight);
 
-        // If target is in safe box and not zoomed, keep camera still (don't pan)
-        // When zoomed, always center on cluster center (ignore safe box)
-        if (isInSafeBox && currentZoomState !== "DECAY" && currentZoomState !== "FOCUSED") {
-          // Target is in safe area and not zoomed - keep camera at current position
-          // This prevents constant micro-adjustments and feels more natural
-          targetOffsetX = currentCameraX;
-          targetOffsetY = currentCameraY;
-        }
+        // Always center the cursor - no safe box logic that prevents centering
+        // The camera should follow the cursor continuously for smooth, predictable behavior
 
         // 🧠 Gentle camera re-centering during zoom-out (80-90% instead of perfect)
         if (currentZoomState === "DECAY") {
@@ -2206,15 +2885,46 @@ export default function Recorder() {
         const distanceY = Math.abs(targetOffsetY - currentCameraY);
         const distance = Math.sqrt(distanceX * distanceX + distanceY * distanceY);
 
-        // Effective stiffness: lerp between min and max based on distance
-        // When distance > threshold → stiffness max (confident)
-        // When distance < threshold → stiffness min (gentle)
+        // 🎯 ADAPTIVE CAMERA BEHAVIOR: Learn from user patterns
+        const adaptiveParams = adaptiveLearnerRef.current.getAdaptiveParameters();
+        const recommendedPreset = intentAnalyzerRef.current.getRecommendedPreset();
+        const activePreset = CAMERA_PRESETS[recommendedPreset];
+
+        // Base stiffness calculation
         const distanceNormalized = Math.min(1, Math.max(0, distance / CAMERA_CONFIG.DISTANCE_STIFFNESS_THRESHOLD));
-        const effectiveStiffness = lerp(
-          CAMERA_CONFIG.CAMERA_STIFFNESS_MIN,
-          CAMERA_CONFIG.CAMERA_STIFFNESS_MAX,
+
+        // 🎬 Use preset values as base, then apply adaptive learning adjustments
+        let effectiveStiffness = lerp(
+          activePreset.stiffness * 0.8, // Min variation
+          activePreset.stiffness * 1.4, // Max variation
           distanceNormalized
-        );
+        ) * adaptiveParams.stiffnessMultiplier;
+
+        let effectiveDamping = activePreset.damping * adaptiveParams.dampingMultiplier;
+        let effectiveAnticipation = activePreset.anticipation * adaptiveParams.anticipationMultiplier;
+
+        // 🎯 Intent-specific fine-tuning within preset
+        if (currentIntent.intent === 'targeting' && currentIntent.confidence > 0.7) {
+          // Always boost responsiveness for targeting, regardless of preset
+          effectiveStiffness *= 1.3;
+          effectiveDamping *= 0.85;
+          effectiveAnticipation *= 0.8; // Less anticipation for immediate response
+        } else if (currentIntent.intent === 'reading' && recommendedPreset === 'cinematic') {
+          // Enhance cinematic feel for reading in cinematic mode
+          effectiveDamping = Math.min(effectiveDamping * 1.2, 0.98);
+          effectiveAnticipation *= 1.2;
+        }
+
+        // 🎯 Adaptive behavior learning: Adjust based on movement statistics
+        const movementStats = intentAnalyzerRef.current.getMovementStats();
+        if (movementStats.movementSmoothness > 0.8) {
+          // User moves smoothly: Use more cinematic settings
+          effectiveDamping = Math.min(effectiveDamping * 1.1, CAMERA_CONFIG.CINEMATIC_DAMPING);
+        } else if (movementStats.movementSmoothness < 0.3) {
+          // User moves erratically: Use more responsive settings
+          effectiveStiffness *= 1.2;
+          effectiveDamping *= 0.9;
+        }
 
         // 🟢 Apply spring-damper smoothing to camera pan (X/Y)
         // Uses velocity-based physics for responsive, natural motion
@@ -2226,7 +2936,7 @@ export default function Recorder() {
           currentVelX,
           targetOffsetX,
           effectiveStiffness,
-          CAMERA_CONFIG.CAMERA_DAMPING
+          effectiveDamping
         );
 
         const { current: smoothedY, velocity: velY } = smoothSpring(
@@ -2379,11 +3089,11 @@ export default function Recorder() {
           Math.abs(cache.y - clampedOffsetY) > CAMERA_CONFIG.CAMERA_UPDATE_THRESHOLD ||
           Math.abs(cache.scale - effectiveZoom) > CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD;
 
-        if (transformChanged && video) {
+        if (transformChanged && container) {
           try {
-            // Use transform3d for GPU acceleration
+            // Use transform3d for GPU acceleration - apply to container, not video
             const transform = `translate3d(${clampedOffsetX}px, ${clampedOffsetY}px, 0) scale3d(${effectiveZoom}, ${effectiveZoom}, 1)`;
-            video.style.transform = transform;
+            container.style.transform = transform;
 
             // Cache the transform
             transformCacheRef.current = {
@@ -2408,11 +3118,11 @@ export default function Recorder() {
           transitionStateRef.current = newTransitionState;
           try {
             if (currentZoomState === "FOCUSED") {
-              video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
+              container.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
             } else if (currentZoomState === "DECAY") {
-              video.style.transition = "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
+              container.style.transition = "transform 0.3s cubic-bezier(0.4, 0, 0.2, 1)";
             } else {
-              video.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
+              container.style.transition = "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)";
             }
           } catch (error) {
             console.error('Transition update: Error setting transition', error);
@@ -2466,10 +3176,10 @@ export default function Recorder() {
 
   // Reset zoom and transform when not recording
   useEffect(() => {
-    if (recordingState !== "recording" && videoPreviewRef.current) {
-      videoPreviewRef.current.style.transform = "scale(1)";
-      videoPreviewRef.current.style.transition = "transform 0.3s ease";
-      setZoomLevel(1);
+    if (recordingState !== "recording" && previewContainerRef.current) {
+      previewContainerRef.current.style.transform = "scale(1)";
+      previewContainerRef.current.style.transition = "transform 0.3s ease";
+      setViewportZoom(1);
       setCurrentCursorPos(null);
       setCursorIndicatorPos(null);
       setZoomState("NEUTRAL");
@@ -2478,6 +3188,9 @@ export default function Recorder() {
       cursorDwellStartRef.current = null;
       cursorDwellPositionRef.current = null;
       holdStartTimeRef.current = null;
+
+      // Save adaptive learning preferences when stopping recording
+      adaptiveLearnerRef.current.savePreferences();
       cameraOffsetRef.current = { x: 0, y: 0 };
       lastIntentTimeRef.current = 0;
       lastClickClusterTimeRef.current = 0;
@@ -2501,14 +3214,6 @@ export default function Recorder() {
       if (canvasAnimationFrameRef.current) {
         cancelAnimationFrame(canvasAnimationFrameRef.current);
         canvasAnimationFrameRef.current = null;
-      }
-      if (canvasIntervalRef.current) {
-        clearInterval(canvasIntervalRef.current);
-        canvasIntervalRef.current = null;
-      }
-      if (visibilityHandlerRef.current) {
-        document.removeEventListener('visibilitychange', visibilityHandlerRef.current);
-        visibilityHandlerRef.current = null;
       }
       if (canvasStreamRef.current) {
         canvasStreamRef.current.getTracks().forEach(track => track.stop());
@@ -2534,34 +3239,20 @@ export default function Recorder() {
 
   // Zoom controls (manual - overrides automatic system)
   const handleZoomIn = () => {
-    const newZoom = Math.min(zoomLevel + 0.25, 3);
-    zoomTargetRef.current = newZoom;
-    zoomVelocityRef.current = 0; // Reset velocity for smooth transition
-    setZoomState("FOCUSED");
-    lastIntentTimeRef.current = Date.now();
-    if (currentCursorPos) {
-      focusPointRef.current = currentCursorPos;
-    }
+    const newZoom = Math.min(viewportZoom + 0.3, CAMERA_CONFIG.ZOOM_MAX);
+    viewportManagerRef.current?.setZoom(newZoom);
+    lastActivityTimeRef.current = Date.now();
   };
 
   const handleZoomOut = () => {
-    const newZoom = Math.max(zoomLevel - 0.25, 0.5);
-    zoomTargetRef.current = newZoom;
-    zoomVelocityRef.current = 0; // Reset velocity for smooth transition
-    if (newZoom <= 1.01) {
-      setZoomState("NEUTRAL");
-      zoomTargetRef.current = 1.0;
-    } else {
-      setZoomState("FOCUSED");
-      lastIntentTimeRef.current = Date.now();
-    }
+    const newZoom = Math.max(viewportZoom - 0.3, CAMERA_CONFIG.ZOOM_MIN);
+    viewportManagerRef.current?.setZoom(newZoom);
+    lastActivityTimeRef.current = Date.now();
   };
 
   const handleResetZoom = () => {
-    zoomTargetRef.current = 1;
-    zoomVelocityRef.current = 0; // Reset velocity for smooth transition
-    setZoomState("NEUTRAL");
-    focusPointRef.current = null;
+    viewportManagerRef.current?.setZoom(CAMERA_CONFIG.ZOOM_DEFAULT);
+    lastActivityTimeRef.current = Date.now();
   };
 
   const startRecordingActual = async () => {
@@ -2583,7 +3274,7 @@ export default function Recorder() {
       recordingStartTime: recordingStartTimeRef.current
     }, '*');
     console.log('[Frontend] 📤 Signaled extension to start recording via window message');
-    
+
     // 2. WebSocket → background script → sets storage + broadcasts to all tabs
     // This is the PRIMARY path for cross-tab recording
     extensionWS.startRecording(recordingStartTimeRef.current);
@@ -2722,14 +3413,6 @@ export default function Recorder() {
         cancelAnimationFrame(canvasAnimationFrameRef.current);
         canvasAnimationFrameRef.current = null;
       }
-      if (canvasIntervalRef.current) {
-        clearInterval(canvasIntervalRef.current);
-        canvasIntervalRef.current = null;
-      }
-      if (visibilityHandlerRef.current) {
-        document.removeEventListener('visibilitychange', visibilityHandlerRef.current);
-        visibilityHandlerRef.current = null;
-      }
       if (canvasStreamRef.current) {
         canvasStreamRef.current.getTracks().forEach(track => track.stop());
         canvasStreamRef.current = null;
@@ -2846,7 +3529,7 @@ export default function Recorder() {
     // 1. Window message → content script on DemoForge tab
     window.postMessage({ type: 'DEMOFORGE_STOP_RECORDING' }, '*');
     console.log('[Frontend] 📤 Signaled extension to stop recording via window message');
-    
+
     // 2. WebSocket → background script → broadcasts to all tabs
     extensionWS.stopRecording();
     console.log('[Frontend] 📤 Signaled extension to stop recording via WebSocket');
@@ -2879,14 +3562,6 @@ export default function Recorder() {
       if (canvasAnimationFrameRef.current) {
         cancelAnimationFrame(canvasAnimationFrameRef.current);
         canvasAnimationFrameRef.current = null;
-      }
-      if (canvasIntervalRef.current) {
-        clearInterval(canvasIntervalRef.current);
-        canvasIntervalRef.current = null;
-      }
-      if (visibilityHandlerRef.current) {
-        document.removeEventListener('visibilitychange', visibilityHandlerRef.current);
-        visibilityHandlerRef.current = null;
       }
       if (canvasStreamRef.current) {
         canvasStreamRef.current.getTracks().forEach(track => track.stop());
@@ -3157,626 +3832,648 @@ export default function Recorder() {
               <div className="w-12" /> {/* Spacer for centering */}
             </div>
 
-            {/* Preview Area */}
+            {/* Preview Area - Redesigned with proper zoom layers */}
             <div
-              ref={previewContainerRef}
-              className={`relative flex aspect-video flex-col items-center justify-center bg-gradient-subtle transition-all duration-300 overflow-hidden p-4 ${recordingState === "recording"
+              className={`relative aspect-video bg-gradient-subtle transition-all duration-300 overflow-hidden ${recordingState === "recording"
                 ? "ring-2 ring-primary/20 shadow-lg shadow-primary/5"
                 : recordingState === "paused"
                   ? "ring-2 ring-warning/20 shadow-lg shadow-warning/5"
                   : ""
                 }`}
             >
-              {/* Video Preview */}
-              {showPreview && mediaStreamRef.current && recordingState !== "idle" && (
-                <video
-                  ref={videoPreviewRef}
-                  autoPlay
-                  muted
-                  playsInline
-                  className="absolute inset-4 w-[calc(100%-2rem)] h-[calc(100%-2rem)] object-contain origin-center rounded-lg shadow-2xl border border-border/50"
-                  style={{
-                    transform: followCursor && currentCursorPos ? undefined : `scale(${zoomLevel})`,
-                    transition: "transform 0.2s cubic-bezier(0.4, 0, 0.2, 1)",
-                  }}
-                />
-              )}
-
-              {/* Cursor Position Indicator (when following) - FIXED alignment */}
-              {followCursor && cursorIndicatorPos && recordingState === "recording" && showPreview && (
-                <div
-                  className="absolute z-30 pointer-events-none"
-                  style={{
-                    // cursorIndicatorPos is already in container-relative coordinates (0-1)
-                    left: `${cursorIndicatorPos.x * 100}%`,
-                    top: `${cursorIndicatorPos.y * 100}%`,
-                    transform: "translate(-50%, -50%)",
-                  }}
-                >
-                  <div className="relative">
-                    {/* Outer ring */}
-                    <div className="absolute inset-0 w-8 h-8 border-2 border-primary/60 rounded-full animate-ping" />
-                    {/* Inner dot */}
-                    <div className="w-3 h-3 bg-primary rounded-full shadow-lg shadow-primary/50" />
-                    {/* Crosshair lines */}
-                    <div className="absolute top-1/2 left-1/2 w-16 h-px bg-primary/30 -translate-x-1/2 -translate-y-1/2" />
-                    <div className="absolute top-1/2 left-1/2 w-px h-16 bg-primary/30 -translate-x-1/2 -translate-y-1/2" />
-                  </div>
+              {/* Viewport Container - This handles the zoom and pan */}
+              <div
+                ref={previewContainerRef}
+                className="absolute inset-0 w-full h-full"
+                style={{
+                  transformOrigin: 'center center',
+                }}
+              >
+                {/* Video Container - Fixed size, centered */}
+                <div className="absolute inset-4 flex items-center justify-center">
+                  {/* Video Preview */}
+                  {showPreview && mediaStreamRef.current && recordingState !== "idle" && (
+                    <video
+                      ref={videoPreviewRef}
+                      autoPlay
+                      muted
+                      playsInline
+                      className="w-full h-full object-contain rounded-lg shadow-2xl border border-border/50"
+                    />
+                  )}
                 </div>
-              )}
 
-              {/* Overlay content */}
-              <div className={`relative z-10 flex flex-col items-center justify-center p-8 ${showPreview && mediaStreamRef.current && recordingState !== "idle" ? 'bg-background/40 backdrop-blur-sm rounded-lg' : ''}`}>
-                {/* Idle State */}
-                {recordingState === "idle" && (
-                  <div className="text-center animate-scale-in">
-                    <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 shadow-inner animate-pulse-slow">
-                      <Video className="h-10 w-10 text-primary" />
-                    </div>
-                    <h3 className="text-lg font-semibold">Ready to record?</h3>
-                    <p className="text-sm text-muted-foreground max-w-[200px] mx-auto mt-1">
-                      Click the button below to start.
-                    </p>
-                    <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
-                      <Zap className="h-3 w-3" />
-                      <span>Smart features enabled</span>
+
+                {/* Cursor Position Indicator (when following) - FIXED alignment */}
+                {followCursor && cursorIndicatorPos && recordingState === "recording" && showPreview && (
+                  <div
+                    className="absolute z-30 pointer-events-none"
+                    style={{
+                      // cursorIndicatorPos is already in container-relative coordinates (0-1)
+                      left: `${cursorIndicatorPos.x * 100}%`,
+                      top: `${cursorIndicatorPos.y * 100}%`,
+                      transform: "translate(-50%, -50%)",
+                    }}
+                  >
+                    <div className="relative">
+                      {/* Outer ring */}
+                      <div className="absolute inset-0 w-8 h-8 border-2 border-primary/60 rounded-full animate-ping" />
+                      {/* Inner dot */}
+                      <div className="w-3 h-3 bg-primary rounded-full shadow-lg shadow-primary/50" />
+                      {/* Crosshair lines */}
+                      <div className="absolute top-1/2 left-1/2 w-16 h-px bg-primary/30 -translate-x-1/2 -translate-y-1/2" />
+                      <div className="absolute top-1/2 left-1/2 w-px h-16 bg-primary/30 -translate-x-1/2 -translate-y-1/2" />
                     </div>
                   </div>
                 )}
 
-                {/* Selecting / Hide Prompt State */}
-                {recordingState === "selecting" && (
-                  <div className="text-center animate-fade-in max-w-sm">
-                    <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
-                      <Monitor className="h-8 w-8 text-primary" />
+                {/* Overlay content */}
+                <div className={`relative z-10 flex flex-col items-center justify-center p-8 ${showPreview && mediaStreamRef.current && recordingState !== "idle" ? 'bg-background/40 backdrop-blur-sm rounded-lg' : ''}`} style={{minHeight:'300px'}}>
+                  {/* Idle State */}
+                  {recordingState === "idle" && (
+                    <div className="text-center animate-scale-in">
+                      <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10 shadow-inner animate-pulse-slow">
+                        <Video className="h-10 w-10 text-primary" />
+                      </div>
+                      <h3 className="text-lg font-semibold">Ready to record?</h3>
+                      <p className="text-sm text-muted-foreground max-w-[200px] mx-auto mt-1">
+                        Click the button below to start.
+                      </p>
+                      <div className="mt-4 flex items-center justify-center gap-2 text-xs text-muted-foreground">
+                        <Zap className="h-3 w-3" />
+                        <span>Smart features enabled</span>
+                      </div>
                     </div>
-                    <h3 className="text-lg font-semibold mb-2">Screen Selected!</h3>
-                    <p className="text-sm text-muted-foreground mb-6">
-                      Please click <span className="font-bold text-foreground">"Hide"</span> on the browser sharing bar at the bottom of your screen.
-                    </p>
-                  </div>
-                )}
+                  )}
 
-                {/* Ready State */}
-                {recordingState === "ready" && (
-                  <div className="text-center animate-fade-in">
-                    <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-destructive/10">
-                      <Circle className="h-10 w-10 fill-destructive text-destructive" />
+                  {/* Selecting / Hide Prompt State */}
+                  {recordingState === "selecting" && (
+                    <div className="text-center animate-fade-in max-w-sm">
+                      <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full bg-primary/10">
+                        <Monitor className="h-8 w-8 text-primary" />
+                      </div>
+                      <h3 className="text-lg font-semibold mb-2">Screen Selected!</h3>
+                      <p className="text-sm text-muted-foreground mb-6">
+                        Please click <span className="font-bold text-foreground">"Hide"</span> on the browser sharing bar at the bottom of your screen.
+                      </p>
                     </div>
-                    <h3 className="text-lg font-semibold text-destructive">Ready to Capture</h3>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      Click "Start Recording" when ready.
-                    </p>
-                  </div>
-                )}
+                  )}
 
-                {/* Countdown State */}
-                {recordingState === "countdown" && (
-                  <div className="text-center animate-scale-in flex flex-col items-center justify-center absolute inset-0 bg-background/80 backdrop-blur-sm z-50">
-                    <div className="text-9xl font-bold text-primary animate-pulse tabular-nums">
-                      {countdown}
+                  {/* Ready State */}
+                  {recordingState === "ready" && (
+                    <div className="text-center animate-fade-in">
+                      <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-destructive/10">
+                        <Circle className="h-10 w-10 fill-destructive text-destructive" />
+                      </div>
+                      <h3 className="text-lg font-semibold text-destructive">Ready to Capture</h3>
+                      <p className="text-sm text-muted-foreground mt-1">
+                        Click "Start Recording" when ready.
+                      </p>
                     </div>
-                    <p className="mt-4 text-xl font-medium text-muted-foreground">Get ready...</p>
-                  </div>
-                )}
+                  )}
 
-                {/* Recording / Paused State */}
-                {(recordingState === "recording" || recordingState === "paused") && (
-                  <div className="text-center animate-fade-in relative z-20">
-                    <div className="relative mx-auto mb-6 flex h-24 w-24 items-center justify-center">
-                      {recordingState === "recording" && (
-                        <div className="absolute inset-0 rounded-full bg-destructive/20 animate-pulse-ring" />
-                      )}
-                      <div className={`relative flex h-20 w-20 items-center justify-center rounded-full shadow-lg transition-colors ${recordingState === "recording" ? "bg-destructive text-destructive-foreground" : "bg-warning text-warning-foreground"
+                  {/* Countdown State */}
+                  {recordingState === "countdown" && (
+                    <div className="text-center animate-scale-in flex flex-col items-center justify-center absolute inset-0 bg-background/80 backdrop-blur-sm z-50">
+                      <div className="text-9xl font-bold text-primary animate-pulse tabular-nums">
+                        {countdown}
+                      </div>
+                      <p className="mt-4 text-xl font-medium text-muted-foreground">Get ready...</p>
+                    </div>
+                  )}
+
+                  {/* Recording / Paused State */}
+                  {(recordingState === "recording" || recordingState === "paused") && (
+                    <div className="text-center animate-fade-in relative z-20">
+                      <div className="relative mx-auto mb-6 flex h-24 w-24 items-center justify-center">
+                        {recordingState === "recording" && (
+                          <div className="absolute inset-0 rounded-full bg-destructive/20 animate-pulse-ring" />
+                        )}
+                        <div className={`relative flex h-20 w-20 items-center justify-center rounded-full shadow-lg transition-colors ${recordingState === "recording" ? "bg-destructive text-destructive-foreground" : "bg-warning text-warning-foreground"
+                          }`}>
+                          {recordingState === "recording" ? (
+                            <Circle className="h-8 w-8 fill-current" />
+                          ) : (
+                            <Pause className="h-8 w-8 fill-current" />
+                          )}
+                        </div>
+                      </div>
+                      <div className="font-mono text-4xl font-bold tracking-wider tabular-nums">
+                        {formatTime(timer)}
+                      </div>
+                      <div className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide ${recordingState === "recording" ? "bg-destructive/10 text-destructive" : "bg-warning/10 text-warning"
                         }`}>
-                        {recordingState === "recording" ? (
-                          <Circle className="h-8 w-8 fill-current" />
-                        ) : (
-                          <Pause className="h-8 w-8 fill-current" />
-                        )}
-                      </div>
-                    </div>
-                    <div className="font-mono text-4xl font-bold tracking-wider tabular-nums">
-                      {formatTime(timer)}
-                    </div>
-                    <div className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium uppercase tracking-wide ${recordingState === "recording" ? "bg-destructive/10 text-destructive" : "bg-warning/10 text-warning"
-                      }`}>
-                      <div className={`h-2 w-2 rounded-full ${recordingState === "recording" ? "bg-destructive animate-pulse" : "bg-warning"}`} />
-                      {recordingState === "recording" ? "Recording" : "Paused"}
-                    </div>
-
-                    {/* Zoom and Follow Controls */}
-                    {recordingState === "recording" && (
-                      <div className="mt-4 flex flex-col items-center justify-center gap-2">
-                        <div className="flex items-center justify-center gap-2">
-                          <div className="flex items-center gap-1 rounded-lg bg-background/80 backdrop-blur-sm border border-border/50 px-2 py-1 shadow-sm">
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 hover:bg-background"
-                              onClick={handleZoomOut}
-                              disabled={zoomLevel <= 0.5}
-                              title="Zoom Out (-)"
-                            >
-                              <ZoomOut className="h-3.5 w-3.5" />
-                            </Button>
-                            <span className="text-xs font-mono px-2 min-w-[3.5rem] text-center font-medium">
-                              {Math.round(zoomLevel * 100)}%
-                            </span>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 hover:bg-background"
-                              onClick={handleZoomIn}
-                              disabled={zoomLevel >= 3}
-                              title="Zoom In (+)"
-                            >
-                              <ZoomIn className="h-3.5 w-3.5" />
-                            </Button>
-                            <div className="h-4 w-px bg-border mx-1" />
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 w-7 p-0 hover:bg-background"
-                              onClick={handleResetZoom}
-                              disabled={zoomLevel === 1}
-                              title="Reset Zoom (0)"
-                            >
-                              <Maximize2 className="h-3.5 w-3.5" />
-                            </Button>
-                          </div>
-                          <Button
-                            variant={followCursor ? "default" : "outline"}
-                            size="sm"
-                            className={`h-7 px-3 gap-1.5 transition-all ${followCursor
-                              ? "bg-primary text-primary-foreground shadow-sm"
-                              : ""
-                              }`}
-                            onClick={() => setFollowCursor(!followCursor)}
-                            title="Toggle Cursor Following (F)"
-                          >
-                            <Move className="h-3.5 w-3.5" />
-                            <span className="text-xs font-medium">Follow</span>
-                            {followCursor && (
-                              <div className="h-1.5 w-1.5 rounded-full bg-primary-foreground/60 animate-pulse" />
-                            )}
-                          </Button>
-                        </div>
-                        {followCursor && currentCursorPos && (
-                          <div className="text-xs text-muted-foreground flex items-center gap-1">
-                            <Move className="h-3 w-3" />
-                            <span>Following cursor at ({Math.round(currentCursorPos.x * 100)}%, {Math.round(currentCursorPos.y * 100)}%)</span>
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {/* Recording Stats */}
-                    <div className="mt-4 flex flex-col items-center gap-2">
-                      <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground flex-wrap">
-                        <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
-                          <Video className="h-3 w-3" />
-                          <span>~{estimatedSize} MB</span>
-                        </div>
-                        {markers.length > 0 && (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
-                            <Bookmark className="h-3 w-3" />
-                            <span>{markers.length} markers</span>
-                          </div>
-                        )}
-                        <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
-                          <Circle className="h-3 w-3" />
-                          <span>{clicksRef.current.length} clicks</span>
-                        </div>
-                        {interactionCount > 0 && (
-                          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
-                            <Activity className="h-3 w-3" />
-                            <span>{interactionCount} interactions</span>
-                          </div>
-                        )}
+                        <div className={`h-2 w-2 rounded-full ${recordingState === "recording" ? "bg-destructive animate-pulse" : "bg-warning"}`} />
+                        {recordingState === "recording" ? "Recording" : "Paused"}
                       </div>
 
-                      {/* Smart Quality Score */}
-                      {recordingState === "recording" && timer > 5 && (
-                        <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/90 backdrop-blur-sm border border-border/50 shadow-sm hover:shadow-md transition-shadow">
-                          <div className="flex items-center gap-2">
-                            <TrendingUp className={`h-3.5 w-3.5 ${recordingQualityScore >= 80 ? 'text-green-500 animate-pulse' : recordingQualityScore >= 60 ? 'text-yellow-500' : 'text-red-500'}`} />
-                            <span className="text-xs font-medium">Quality Score</span>
-                            <div className="flex items-center gap-1">
-                              <div className="w-20 h-2 bg-secondary rounded-full overflow-hidden shadow-inner">
-                                <div
-                                  className={`h-full transition-all duration-700 ease-out ${recordingQualityScore >= 80 ? 'bg-gradient-to-r from-green-400 to-green-500' :
-                                    recordingQualityScore >= 60 ? 'bg-gradient-to-r from-yellow-400 to-yellow-500' : 'bg-gradient-to-r from-red-400 to-red-500'
-                                    }`}
-                                  style={{ width: `${recordingQualityScore}%` }}
-                                />
-                              </div>
-                              <span className={`text-xs font-mono font-semibold min-w-[2.5rem] ${recordingQualityScore >= 80 ? 'text-green-500' :
-                                recordingQualityScore >= 60 ? 'text-yellow-500' : 'text-red-500'
-                                }`}>
-                                {Math.round(recordingQualityScore)}%
+                      {/* Zoom and Follow Controls */}
+                      {recordingState === "recording" && (
+                        <div className="mt-4 flex flex-col items-center justify-center gap-2">
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="flex items-center gap-1 rounded-lg bg-background/80 backdrop-blur-sm border border-border/50 px-2 py-1 shadow-sm">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 hover:bg-background"
+                                onClick={handleZoomOut}
+                                disabled={viewportZoom <= CAMERA_CONFIG.ZOOM_MIN}
+                                title="Zoom Out (-)"
+                              >
+                                <ZoomOut className="h-3.5 w-3.5" />
+                              </Button>
+                              <span className="text-xs font-mono px-2 min-w-[3.5rem] text-center font-medium">
+                                {Math.round(viewportZoom * 100)}%
                               </span>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 hover:bg-background"
+                                onClick={handleZoomIn}
+                                disabled={viewportZoom >= CAMERA_CONFIG.ZOOM_MAX}
+                                title="Zoom In (+)"
+                              >
+                                <ZoomIn className="h-3.5 w-3.5" />
+                              </Button>
+                              <div className="h-4 w-px bg-border mx-1" />
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 w-7 p-0 hover:bg-background"
+                                onClick={handleResetZoom}
+                                disabled={viewportZoom === CAMERA_CONFIG.ZOOM_DEFAULT}
+                                title="Reset Zoom (0)"
+                              >
+                                <Maximize2 className="h-3.5 w-3.5" />
+                              </Button>
                             </div>
+                            <Button
+                              variant={followCursor ? "default" : "outline"}
+                              size="sm"
+                              className={`h-7 px-3 gap-1.5 transition-all ${followCursor
+                                ? "bg-primary text-primary-foreground shadow-sm"
+                                : ""
+                                }`}
+                              onClick={() => setFollowCursor(!followCursor)}
+                              title="Toggle Cursor Following (F)"
+                            >
+                              <Move className="h-3.5 w-3.5" />
+                              <span className="text-xs font-medium">Follow</span>
+                              {followCursor && (
+                                <div className="h-1.5 w-1.5 rounded-full bg-primary-foreground/60 animate-pulse" />
+                              )}
+                            </Button>
                           </div>
-                        </div>
-                      )}
-
-                      {/* Active Effects Indicator */}
-                      {(cursorEffects || clickRipple || cursorGlow || cursorTrail || showClickIndicator) && (
-                        <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
-                          <Sparkles className="h-3 w-3 text-primary" />
-                          <span className="text-xs text-primary font-medium">
-                            Visual Effects Active
-                          </span>
-                        </div>
-                      )}
-
-                      {/* Smart Interaction Insights */}
-                      {recordingState === "recording" && timer > 3 && (
-                        <div className="mt-3 space-y-1.5">
-                          {avgClickInterval && avgClickInterval > 0 && (
-                            <div className="text-xs text-muted-foreground flex items-center justify-center gap-2">
-                              <Activity className="h-3 w-3" />
-                              <span>Avg click interval: {Math.round(avgClickInterval)}ms</span>
-                              {avgClickInterval > 2000 && (
-                                <span className="text-green-500">✓ Good pacing</span>
-                              )}
-                              {avgClickInterval < 1000 && avgClickInterval > 500 && (
-                                <span className="text-yellow-500">⚡ Fast pace</span>
-                              )}
-                              {avgClickInterval < 500 && (
-                                <span className="text-amber-500">⚠ Very fast</span>
-                              )}
+                          {followCursor && currentCursorPos && (
+                            <div className="text-xs text-muted-foreground flex items-center gap-1">
+                              <Move className="h-3 w-3" />
+                              <span>Following cursor at ({Math.round(currentCursorPos.x * 100)}%, {Math.round(currentCursorPos.y * 100)}%)</span>
                             </div>
                           )}
                         </div>
                       )}
 
-                      {/* Cursor Following Indicator */}
-                      {followCursor && recordingState === "recording" && (
-                        <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20">
-                          <Move className="h-3 w-3 text-green-600 dark:text-green-400" />
-                          <span className="text-xs text-green-600 dark:text-green-400 font-medium">
-                            Following Cursor
-                          </span>
+                      {/* Recording Stats */}
+                      <div className="mt-4 flex flex-col items-center gap-2">
+                        <div className="flex items-center justify-center gap-4 text-xs text-muted-foreground flex-wrap">
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
+                            <Video className="h-3 w-3" />
+                            <span>~{estimatedSize} MB</span>
+                          </div>
+                          {markers.length > 0 && (
+                            <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
+                              <Bookmark className="h-3 w-3" />
+                              <span>{markers.length} markers</span>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
+                            <Circle className="h-3 w-3" />
+                            <span>{clicksRef.current.length} clicks</span>
+                          </div>
+                          {interactionCount > 0 && (
+                            <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-background/80 backdrop-blur-sm border border-border/50">
+                              <Activity className="h-3 w-3" />
+                              <span>{interactionCount} interactions</span>
+                            </div>
+                          )}
+                        </div>
+
+                        {/* Smart Quality Score */}
+                        {recordingState === "recording" && timer > 5 && (
+                          <div className="mt-2 flex items-center gap-2 px-3 py-1.5 rounded-lg bg-background/90 backdrop-blur-sm border border-border/50 shadow-sm hover:shadow-md transition-shadow">
+                            <div className="flex items-center gap-2">
+                              <TrendingUp className={`h-3.5 w-3.5 ${recordingQualityScore >= 80 ? 'text-green-500 animate-pulse' : recordingQualityScore >= 60 ? 'text-yellow-500' : 'text-red-500'}`} />
+                              <span className="text-xs font-medium">Quality Score</span>
+                              <div className="flex items-center gap-1">
+                                <div className="w-20 h-2 bg-secondary rounded-full overflow-hidden shadow-inner">
+                                  <div
+                                    className={`h-full transition-all duration-700 ease-out ${recordingQualityScore >= 80 ? 'bg-gradient-to-r from-green-400 to-green-500' :
+                                      recordingQualityScore >= 60 ? 'bg-gradient-to-r from-yellow-400 to-yellow-500' : 'bg-gradient-to-r from-red-400 to-red-500'
+                                      }`}
+                                    style={{ width: `${recordingQualityScore}%` }}
+                                  />
+                                </div>
+                                <span className={`text-xs font-mono font-semibold min-w-[2.5rem] ${recordingQualityScore >= 80 ? 'text-green-500' :
+                                  recordingQualityScore >= 60 ? 'text-yellow-500' : 'text-red-500'
+                                  }`}>
+                                  {Math.round(recordingQualityScore)}%
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Active Effects Indicator */}
+                        {(cursorEffects || clickRipple || cursorGlow || cursorTrail || showClickIndicator) && (
+                          <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 animate-pulse">
+                            <Sparkles className="h-3 w-3 text-primary" />
+                            <span className="text-xs text-primary font-medium">
+                              Visual Effects Active
+                            </span>
+                          </div>
+                        )}
+
+                        {/* Smart Interaction Insights */}
+                        {recordingState === "recording" && timer > 3 && (
+                          <div className="mt-3 space-y-1.5">
+                            {avgClickInterval && avgClickInterval > 0 && (
+                              <div className="text-xs text-muted-foreground flex items-center justify-center gap-2">
+                                <Activity className="h-3 w-3" />
+                                <span>Avg click interval: {Math.round(avgClickInterval)}ms</span>
+                                {avgClickInterval > 2000 && (
+                                  <span className="text-green-500">✓ Good pacing</span>
+                                )}
+                                {avgClickInterval < 1000 && avgClickInterval > 500 && (
+                                  <span className="text-yellow-500">⚡ Fast pace</span>
+                                )}
+                                {avgClickInterval < 500 && (
+                                  <span className="text-amber-500">⚠ Very fast</span>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {/* Cursor Following Indicator */}
+                        {followCursor && recordingState === "recording" && (
+                          <div className="flex items-center gap-2 mt-2 px-3 py-1 rounded-full bg-green-500/10 border border-green-500/20">
+                            <Move className="h-3 w-3 text-green-600 dark:text-green-400" />
+                            <span className="text-xs text-green-600 dark:text-green-400 font-medium">
+                              Following Cursor
+                            </span>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Microphone Level Indicator */}
+                      {(audioSource === "microphone" || audioSource === "both") && recordingState === "recording" && (
+                        <div className="mt-4 w-48 mx-auto">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Mic className="h-3 w-3 text-muted-foreground" />
+                            <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
+                              <div
+                                className="h-full bg-primary transition-all duration-75"
+                                style={{ width: `${micLevel}%` }}
+                              />
+                            </div>
+                          </div>
                         </div>
                       )}
                     </div>
+                  )}
 
-                    {/* Microphone Level Indicator */}
-                    {(audioSource === "microphone" || audioSource === "both") && recordingState === "recording" && (
-                      <div className="mt-4 w-48 mx-auto">
-                        <div className="flex items-center gap-2 mb-1">
-                          <Mic className="h-3 w-3 text-muted-foreground" />
-                          <div className="flex-1 h-2 bg-secondary rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-primary transition-all duration-75"
-                              style={{ width: `${micLevel}%` }}
-                            />
-                          </div>
-                        </div>
+                  {/* Stopped State */}
+                  {recordingState === "stopped" && (
+                    <div className="text-center animate-scale-in">
+                      <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-success text-success-foreground shadow-lg">
+                        <CheckCircle2 className="h-10 w-10" />
                       </div>
-                    )}
-                  </div>
-                )}
-
-                {/* Stopped State */}
-                {recordingState === "stopped" && (
-                  <div className="text-center animate-scale-in">
-                    <div className="mx-auto mb-4 flex h-20 w-20 items-center justify-center rounded-full bg-success text-success-foreground shadow-lg">
-                      <CheckCircle2 className="h-10 w-10" />
+                      <h3 className="text-lg font-semibold">Saved!</h3>
+                      <p className="text-sm text-muted-foreground">Redirecting to editor...</p>
                     </div>
-                    <h3 className="text-lg font-semibold">Saved!</h3>
-                    <p className="text-sm text-muted-foreground">Redirecting to editor...</p>
-                  </div>
-                )}
+                  )}
+                </div>
+                
               </div>
+
             </div>
+                          {/* Divider */}
+                          <div className="h-px w-full bg-border/50" />
 
-            {/* Divider */}
-            <div className="h-px w-full bg-border/50" />
+{/* Settings Panel */}
+<Collapsible open={showSettings} onOpenChange={setShowSettings}>
+  <CollapsibleTrigger className="w-full px-6 py-3 border-b border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors flex items-center justify-between">
+    <div className="flex items-center gap-2">
+      <Settings className="h-4 w-4" />
+      <span className="text-sm font-medium">Recording Settings</span>
+    </div>
+    {showSettings ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+  </CollapsibleTrigger>
+  <CollapsibleContent className="p-6 space-y-4 bg-card">
+    <div className="space-y-2">
+      <Label htmlFor="countdown">Countdown Duration (seconds)</Label>
+      <div className="flex items-center gap-4">
+        <Slider
+          id="countdown"
+          min={0}
+          max={10}
+          step={1}
+          value={[countdownDuration]}
+          onValueChange={(value) => setCountdownDuration(value[0])}
+          className="flex-1"
+          disabled={recordingState !== "idle"}
+        />
+        <span className="text-sm font-mono w-8">{countdownDuration}s</span>
+      </div>
+    </div>
 
-            {/* Settings Panel */}
-            <Collapsible open={showSettings} onOpenChange={setShowSettings}>
-              <CollapsibleTrigger className="w-full px-6 py-3 border-b border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <Settings className="h-4 w-4" />
-                  <span className="text-sm font-medium">Recording Settings</span>
-                </div>
-                {showSettings ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-              </CollapsibleTrigger>
-              <CollapsibleContent className="p-6 space-y-4 bg-card">
-                <div className="space-y-2">
-                  <Label htmlFor="countdown">Countdown Duration (seconds)</Label>
-                  <div className="flex items-center gap-4">
-                    <Slider
-                      id="countdown"
-                      min={0}
-                      max={10}
-                      step={1}
-                      value={[countdownDuration]}
-                      onValueChange={(value) => setCountdownDuration(value[0])}
-                      className="flex-1"
-                      disabled={recordingState !== "idle"}
-                    />
-                    <span className="text-sm font-mono w-8">{countdownDuration}s</span>
-                  </div>
-                </div>
+    <div className="space-y-2">
+      <Label htmlFor="audio">Audio Source</Label>
+      <Select
+        value={audioSource}
+        onValueChange={(value) => setAudioSource(value as AudioSource)}
+        disabled={recordingState !== "idle"}
+      >
+        <SelectTrigger id="audio">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="both">System + Microphone</SelectItem>
+          <SelectItem value="system">System Audio Only</SelectItem>
+          <SelectItem value="microphone">Microphone Only</SelectItem>
+          <SelectItem value="none">No Audio</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="audio">Audio Source</Label>
-                  <Select
-                    value={audioSource}
-                    onValueChange={(value) => setAudioSource(value as AudioSource)}
-                    disabled={recordingState !== "idle"}
-                  >
-                    <SelectTrigger id="audio">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="both">System + Microphone</SelectItem>
-                      <SelectItem value="system">System Audio Only</SelectItem>
-                      <SelectItem value="microphone">Microphone Only</SelectItem>
-                      <SelectItem value="none">No Audio</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+    <div className="space-y-2">
+      <Label htmlFor="quality">Recording Quality</Label>
+      <Select
+        value={recordingQuality}
+        onValueChange={(value) => setRecordingQuality(value as RecordingQuality)}
+        disabled={recordingState !== "idle"}
+      >
+        <SelectTrigger id="quality">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          <SelectItem value="high">High (1080p @ 30fps)</SelectItem>
+          <SelectItem value="medium">Medium (720p @ 24fps)</SelectItem>
+          <SelectItem value="low">Low (480p @ 15fps)</SelectItem>
+        </SelectContent>
+      </Select>
+    </div>
 
-                <div className="space-y-2">
-                  <Label htmlFor="quality">Recording Quality</Label>
-                  <Select
-                    value={recordingQuality}
-                    onValueChange={(value) => setRecordingQuality(value as RecordingQuality)}
-                    disabled={recordingState !== "idle"}
-                  >
-                    <SelectTrigger id="quality">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="high">High (1080p @ 30fps)</SelectItem>
-                      <SelectItem value="medium">Medium (720p @ 24fps)</SelectItem>
-                      <SelectItem value="low">Low (480p @ 15fps)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <Label htmlFor="rawRecording">Raw Recording Mode</Label>
+        <Switch
+          id="rawRecording"
+          checked={rawRecording}
+          onCheckedChange={(checked) => {
+            setRawRecording(checked);
+            localStorage.setItem("recorder_rawRecording", String(checked));
+          }}
+          disabled={recordingState !== "idle"}
+        />
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {rawRecording
+          ? "Recording raw screen (no effects). Effects will be applied during rendering for better quality."
+          : "Recording with effects applied. Use raw mode for advanced post-processing."}
+      </p>
+    </div>
 
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
-                    <Label htmlFor="rawRecording">Raw Recording Mode</Label>
-                    <Switch
-                      id="rawRecording"
-                      checked={rawRecording}
-                      onCheckedChange={(checked) => {
-                        setRawRecording(checked);
-                        localStorage.setItem("recorder_rawRecording", String(checked));
-                      }}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    {rawRecording
-                      ? "Recording raw screen (no effects). Effects will be applied during rendering for better quality."
-                      : "Recording with effects applied. Use raw mode for advanced post-processing."}
-                  </p>
-                </div>
+    <div className="flex items-center justify-between">
+      <Label htmlFor="preview" className="cursor-pointer">Show Preview</Label>
+      <Switch
+        id="preview"
+        checked={showPreview}
+        onCheckedChange={setShowPreview}
+        disabled={recordingState === "idle"}
+      />
+    </div>
 
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="preview" className="cursor-pointer">Show Preview</Label>
-                  <Switch
-                    id="preview"
-                    checked={showPreview}
-                    onCheckedChange={setShowPreview}
-                    disabled={recordingState === "idle"}
-                  />
-                </div>
+    <div className="border-t border-border pt-4 space-y-3">
+      <Label className="text-sm font-semibold">Visual Effects</Label>
 
-                <div className="border-t border-border pt-4 space-y-3">
-                  <Label className="text-sm font-semibold">Visual Effects</Label>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Cursor Effects</Label>
+          <span className="text-xs text-muted-foreground">Glow and highlight cursor</span>
+        </div>
+        <Switch
+          id="cursor-effects"
+          checked={cursorEffects}
+          onCheckedChange={setCursorEffects}
+          disabled={recordingState !== "idle"}
+        />
+      </div>
 
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Cursor Effects</Label>
-                      <span className="text-xs text-muted-foreground">Glow and highlight cursor</span>
-                    </div>
-                    <Switch
-                      id="cursor-effects"
-                      checked={cursorEffects}
-                      onCheckedChange={setCursorEffects}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="click-ripple" className="cursor-pointer text-sm">Click Ripple</Label>
+          <span className="text-xs text-muted-foreground">Animated ripple on clicks</span>
+        </div>
+        <Switch
+          id="click-ripple"
+          checked={clickRipple}
+          onCheckedChange={setClickRipple}
+          disabled={recordingState !== "idle"}
+        />
+      </div>
 
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="click-ripple" className="cursor-pointer text-sm">Click Ripple</Label>
-                      <span className="text-xs text-muted-foreground">Animated ripple on clicks</span>
-                    </div>
-                    <Switch
-                      id="click-ripple"
-                      checked={clickRipple}
-                      onCheckedChange={setClickRipple}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="cursor-glow" className="cursor-pointer text-sm">Cursor Glow</Label>
+          <span className="text-xs text-muted-foreground">Glowing effect around cursor</span>
+        </div>
+        <Switch
+          id="cursor-glow"
+          checked={cursorGlow}
+          onCheckedChange={setCursorGlow}
+          disabled={recordingState !== "idle"}
+        />
+      </div>
 
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="cursor-glow" className="cursor-pointer text-sm">Cursor Glow</Label>
-                      <span className="text-xs text-muted-foreground">Glowing effect around cursor</span>
-                    </div>
-                    <Switch
-                      id="cursor-glow"
-                      checked={cursorGlow}
-                      onCheckedChange={setCursorGlow}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="cursor-trail" className="cursor-pointer text-sm">Cursor Trail</Label>
+          <span className="text-xs text-muted-foreground">Trail effect for mouse movement</span>
+        </div>
+        <Switch
+          id="cursor-trail"
+          checked={cursorTrail}
+          onCheckedChange={setCursorTrail}
+          disabled={recordingState !== "idle"}
+        />
+      </div>
 
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="cursor-trail" className="cursor-pointer text-sm">Cursor Trail</Label>
-                      <span className="text-xs text-muted-foreground">Trail effect for mouse movement</span>
-                    </div>
-                    <Switch
-                      id="cursor-trail"
-                      checked={cursorTrail}
-                      onCheckedChange={setCursorTrail}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="complete-path" className="cursor-pointer text-sm">Complete Path Capture</Label>
+          <span className="text-xs text-muted-foreground">Capture every mouse movement for complete path visualization</span>
+        </div>
+        <Switch
+          id="complete-path"
+          checked={completePathCapture}
+          onCheckedChange={setCompletePathCapture}
+          disabled={recordingState !== "idle"}
+        />
+      </div>
 
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="click-indicator" className="cursor-pointer text-sm">Click Indicators</Label>
-                      <span className="text-xs text-muted-foreground">Visual markers for clicks</span>
-                    </div>
-                    <Switch
-                      id="click-indicator"
-                      checked={showClickIndicator}
-                      onCheckedChange={setShowClickIndicator}
-                      disabled={recordingState !== "idle"}
-                    />
-                  </div>
-                </div>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="click-indicator" className="cursor-pointer text-sm">Click Indicators</Label>
+          <span className="text-xs text-muted-foreground">Visual markers for clicks</span>
+        </div>
+        <Switch
+          id="click-indicator"
+          checked={showClickIndicator}
+          onCheckedChange={setShowClickIndicator}
+          disabled={recordingState !== "idle"}
+        />
+      </div>
+    </div>
 
-                <div className="border-t border-border pt-4 space-y-3">
-                  <Label className="text-sm font-semibold">Preview Controls</Label>
+    <div className="border-t border-border pt-4 space-y-3">
+      <Label className="text-sm font-semibold">Preview Controls</Label>
 
-                  <div className="flex items-center justify-between">
-                    <div className="flex flex-col">
-                      <Label htmlFor="follow-cursor" className="cursor-pointer text-sm">Follow Cursor</Label>
-                      <span className="text-xs text-muted-foreground">Auto-pan preview to follow cursor</span>
-                    </div>
-                    <Switch
-                      id="follow-cursor"
-                      checked={followCursor}
-                      onCheckedChange={setFollowCursor}
-                    />
-                  </div>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-col">
+          <Label htmlFor="follow-cursor" className="cursor-pointer text-sm">Follow Cursor</Label>
+          <span className="text-xs text-muted-foreground">Auto-pan preview to follow cursor</span>
+        </div>
+        <Switch
+          id="follow-cursor"
+          checked={followCursor}
+          onCheckedChange={setFollowCursor}
+        />
+      </div>
 
-                  {recordingState === "recording" && (
-                    <div className="rounded-lg bg-primary/5 border border-primary/20 p-3">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Move className="h-4 w-4 text-primary" />
-                        <span className="text-sm font-medium text-primary">Cursor Following Active</span>
-                      </div>
-                      <p className="text-xs text-muted-foreground">
-                        The preview will automatically pan and zoom to keep your cursor centered. Use zoom controls during recording to adjust.
-                      </p>
-                    </div>
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
+      {recordingState === "recording" && (
+        <div className="rounded-lg bg-primary/5 border border-primary/20 p-3">
+          <div className="flex items-center gap-2 mb-2">
+            <Move className="h-4 w-4 text-primary" />
+            <span className="text-sm font-medium text-primary">Cursor Following Active</span>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            The preview will automatically pan and zoom to keep your cursor centered. Use zoom controls during recording to adjust.
+          </p>
+        </div>
+      )}
+    </div>
+  </CollapsibleContent>
+</Collapsible>
 
-            {/* Controls Bar */}
-            <div className="bg-card p-6 flex flex-col gap-4">
-              {recordingState === "idle" && (
-                <Button size="lg" className="h-12 w-full max-w-sm gap-2 text-base" onClick={handleSelectScreen}>
-                  <Monitor className="h-5 w-5" />
-                  Select Screen
-                </Button>
-              )}
+{/* Controls Bar */}
+<div className="bg-card p-6 flex flex-col gap-4">
+  {recordingState === "idle" && (
+    <Button size="lg" className="h-12 w-full max-w-sm gap-2 text-base" onClick={handleSelectScreen}>
+      <Monitor className="h-5 w-5" />
+      Select Screen
+    </Button>
+  )}
 
-              {recordingState === "selecting" && (
-                <Button size="lg" className="h-12 w-full max-w-sm gap-2" onClick={handleConfirmHide}>
-                  <CheckCircle2 className="h-5 w-5" />
-                  I've Hidden the Bar
-                </Button>
-              )}
+  {recordingState === "selecting" && (
+    <Button size="lg" className="h-12 w-full max-w-sm gap-2" onClick={handleConfirmHide}>
+      <CheckCircle2 className="h-5 w-5" />
+      I've Hidden the Bar
+    </Button>
+  )}
 
-              {recordingState === "ready" && (
-                <Button variant="destructive" size="lg" className="h-12 w-full max-w-sm gap-2 text-base shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStartCountdown}>
-                  <Circle className="h-5 w-5 fill-current" />
-                  Start Recording
-                </Button>
-              )}
+  {recordingState === "ready" && (
+    <Button variant="destructive" size="lg" className="h-12 w-full max-w-sm gap-2 text-base shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStartCountdown}>
+      <Circle className="h-5 w-5 fill-current" />
+      Start Recording
+    </Button>
+  )}
 
-              {recordingState === "countdown" && (
-                <Button variant="outline" size="lg" disabled className="h-12 w-full max-w-sm">
-                  Starting in {countdown}...
-                </Button>
-              )}
+  {recordingState === "countdown" && (
+    <Button variant="outline" size="lg" disabled className="h-12 w-full max-w-sm">
+      Starting in {countdown}...
+    </Button>
+  )}
 
-              {(recordingState === "recording" || recordingState === "paused") && (
-                <>
-                  <div className="flex w-full items-center justify-center gap-4">
-                    {recordingState === "recording" ? (
-                      <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handlePauseRecording}>
-                        <Pause className="h-4 w-4 fill-current" />
-                        Pause
-                      </Button>
-                    ) : (
-                      <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handleResumeRecording}>
-                        <Circle className="h-4 w-4 fill-current text-primary" />
-                        Resume
-                      </Button>
-                    )}
+  {(recordingState === "recording" || recordingState === "paused") && (
+    <>
+      <div className="flex w-full items-center justify-center gap-4">
+        {recordingState === "recording" ? (
+          <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handlePauseRecording}>
+            <Pause className="h-4 w-4 fill-current" />
+            Pause
+          </Button>
+        ) : (
+          <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handleResumeRecording}>
+            <Circle className="h-4 w-4 fill-current text-primary" />
+            Resume
+          </Button>
+        )}
 
-                    <Button
-                      variant="outline"
-                      size="lg"
-                      className="h-12 w-32 gap-2"
-                      onClick={handleAddMarker}
-                      disabled={recordingState === "paused"}
-                    >
-                      <Bookmark className="h-4 w-4" />
-                      Marker
-                    </Button>
+        <Button
+          variant="outline"
+          size="lg"
+          className="h-12 w-32 gap-2"
+          onClick={handleAddMarker}
+          disabled={recordingState === "paused"}
+        >
+          <Bookmark className="h-4 w-4" />
+          Marker
+        </Button>
 
-                    <Button variant="destructive" size="lg" className="h-12 w-40 gap-2 shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStopRecording}>
-                      <Square className="h-4 w-4 fill-current" />
-                      Stop
-                    </Button>
-                  </div>
+        <Button variant="destructive" size="lg" className="h-12 w-40 gap-2 shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStopRecording}>
+          <Square className="h-4 w-4 fill-current" />
+          Stop
+        </Button>
+      </div>
 
-                  {/* Keyboard Shortcuts Hint */}
-                  <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
-                    <div className="flex items-center gap-1">
-                      <Keyboard className="h-3 w-3" />
-                      <span>Space: Pause/Resume</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Keyboard className="h-3 w-3" />
-                      <span>M: Add Marker</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Keyboard className="h-3 w-3" />
-                      <span>Esc: Stop</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Keyboard className="h-3 w-3" />
-                      <span>+/-: Zoom</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <Keyboard className="h-3 w-3" />
-                      <span>F: Follow Cursor</span>
-                    </div>
-                  </div>
+      {/* Keyboard Shortcuts Hint */}
+      <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
+        <div className="flex items-center gap-1">
+          <Keyboard className="h-3 w-3" />
+          <span>Space: Pause/Resume</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Keyboard className="h-3 w-3" />
+          <span>M: Add Marker</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Keyboard className="h-3 w-3" />
+          <span>Esc: Stop</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Keyboard className="h-3 w-3" />
+          <span>+/-: Zoom</span>
+        </div>
+        <div className="flex items-center gap-1">
+          <Keyboard className="h-3 w-3" />
+          <span>F: Follow Cursor</span>
+        </div>
+      </div>
 
-                  {/* Markers List */}
-                  {markers.length > 0 && (
-                    <div className="border-t border-border/50 pt-4">
-                      <div className="text-xs font-medium text-muted-foreground mb-2">Markers:</div>
-                      <div className="flex flex-wrap gap-2">
-                        {markers.map((marker, idx) => (
-                          <div
-                            key={idx}
-                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-primary/10 text-primary text-xs"
-                          >
-                            <Bookmark className="h-3 w-3" />
-                            <span>{formatTime(marker.timestamp)}</span>
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+      {/* Markers List */}
+      {markers.length > 0 && (
+        <div className="border-t border-border/50 pt-4">
+          <div className="text-xs font-medium text-muted-foreground mb-2">Markers:</div>
+          <div className="flex flex-wrap gap-2">
+            {markers.map((marker, idx) => (
+              <div
+                key={idx}
+                className="inline-flex items-center gap-1 px-2 py-1 rounded bg-primary/10 text-primary text-xs"
+              >
+                <Bookmark className="h-3 w-3" />
+                <span>{formatTime(marker.timestamp)}</span>
+              </div>
+            ))}
           </div>
         </div>
+      )}
+    </>
+  )}
+</div>
+          </div>
 
+        </div>
       </main>
     </div>
   );

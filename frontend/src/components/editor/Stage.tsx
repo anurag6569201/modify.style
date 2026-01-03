@@ -1,7 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { useEditorState, editorStore } from '@/lib/editor/store';
 import { VideoLayer } from './VideoLayer';
-import { CursorLayer } from './CursorLayer';
 import { BackgroundLayer } from './BackgroundLayer';
 import { updateCameraSystem, getInitialCameraState } from '@/lib/composition/camera';
 import { calculateOutputDimensions, calculateVideoTransform } from '@/lib/composition/aspectRatio';
@@ -269,8 +268,6 @@ export const Stage: React.FC = () => {
                 }}
             >
                 <VideoLayer />
-                {/* Always show cursor layer in editor for preview */}
-                <CursorLayer />
             </div>
         </div>
     );

@@ -24,22 +24,22 @@ export function mapExtensionEventToVideoCoords(
 ): { x: number; y: number; timestamp: number } {
   // Use Date.now() based timestamp (event.t is already Date.now())
   const timestamp = (event.t - recordingStartTime) / 1000;
-  
+
   // For screen recording, we use screenX/screenY which are absolute screen coords
   // These represent where the cursor actually is on the monitor
   const screenX = event.screenX;
   const screenY = event.screenY;
-  
+
   // Get screen dimensions
   // window.screen.width/height are in CSS pixels (logical pixels)
   // screenX/screenY are also in CSS pixels, so they match
   const screenWidth = window.screen.width;
   const screenHeight = window.screen.height;
-  
+
   // Normalize screen coordinates to 0-1
   const normalizedX = screenX / screenWidth;
   const normalizedY = screenY / screenHeight;
-  
+
   // Debug logging (throttled)
   const now = Date.now();
   if (now - lastLogTime > LOG_INTERVAL) {
@@ -52,7 +52,7 @@ export function mapExtensionEventToVideoCoords(
     });
     lastLogTime = now;
   }
-  
+
   // Clamp to valid range (cursor might be on a different monitor)
   return {
     x: Math.max(0, Math.min(1, normalizedX)),
@@ -70,7 +70,7 @@ export function extensionEventToMoveData(
   recordingStartTime: number
 ): MoveData {
   const coords = mapExtensionEventToVideoCoords(event, videoRect, recordingStartTime);
-  
+
   return {
     x: coords.x,
     y: coords.y,
@@ -90,7 +90,7 @@ export function extensionEventToClickData(
   clickType: "click" | "doubleClick" | "rightClick" = "click"
 ): ClickData {
   const coords = mapExtensionEventToVideoCoords(event, videoRect, recordingStartTime);
-  
+
   return {
     x: coords.x,
     y: coords.y,

@@ -21,6 +21,10 @@ export interface CursorConfig {
     glow: boolean;
     trail: boolean;
     trailLength: number; // Number of history points to keep
+    style: 'modern' | 'classic' | 'gaming' | 'minimal' | 'custom'; // Cursor style theme
+    theme: 'light' | 'dark' | 'auto'; // Color theme
+    animation: boolean;  // Enable cursor animations
+    completePath: boolean; // Enable complete path capture and visualization
 }
 
 export interface EffectsConfig {
@@ -164,6 +168,10 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         glow: false,
         trail: false,
         trailLength: 0,
+        style: 'modern',
+        theme: 'dark',
+        animation: true,
+        completePath: false,
     },
     effects: {
         clickRipple: false,

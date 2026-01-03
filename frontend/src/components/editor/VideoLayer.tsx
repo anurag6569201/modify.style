@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useEditorState, editorStore } from '@/lib/editor/store';
+import { CursorLayer } from './CursorLayer';
 import { FilterEngine } from '@/lib/effects/filters';
 
 export const VideoLayer: React.FC = () => {
@@ -14,16 +15,16 @@ export const VideoLayer: React.FC = () => {
     useEffect(() => {
         const canvas = canvasRef.current;
         const video = videoRef.current;
-        
+
         // Try to get dimensions from video element if not set in config
         if (canvas && video && video.readyState >= 1) {
             const width = videoConfig.width > 0 ? videoConfig.width : video.videoWidth;
             const height = videoConfig.height > 0 ? videoConfig.height : video.videoHeight;
-            
+
             if (width > 0 && height > 0) {
                 canvas.width = width;
                 canvas.height = height;
-                
+
                 // Update store if dimensions were missing
                 if (videoConfig.width === 0 || videoConfig.height === 0) {
                     editorStore.setVideo({ width, height, aspectRatio: width / height });
@@ -70,17 +71,17 @@ export const VideoLayer: React.FC = () => {
     useEffect(() => {
         const video = videoRef.current;
         if (!video) return;
-        
+
         // Validate currentTime is finite and valid
         const targetTime = playback.currentTime;
         if (!isFinite(targetTime) || targetTime < 0 || isNaN(targetTime)) {
             return;
         }
-        
+
         // Clamp to video duration if available
         const maxTime = video.duration && isFinite(video.duration) ? video.duration : Infinity;
         const clampedTime = Math.min(targetTime, maxTime);
-        
+
         // Only seek if difference is significant (e.g. user scrubbed)
         // Reduced threshold for smoother scrubbing
         const timeDiff = Math.abs(video.currentTime - clampedTime);
@@ -109,14 +110,14 @@ export const VideoLayer: React.FC = () => {
         const video = e.currentTarget;
         const width = video.videoWidth || videoConfig.width || 1920;
         const height = video.videoHeight || videoConfig.height || 1080;
-        
+
         editorStore.setVideo({
             duration: video.duration || 0,
             width,
             height,
             aspectRatio: width / height
         });
-        
+
         // Update canvas dimensions
         const canvas = canvasRef.current;
         if (canvas && width > 0 && height > 0) {
@@ -129,7 +130,7 @@ export const VideoLayer: React.FC = () => {
     useEffect(() => {
         const canvas = canvasRef.current;
         const video = videoRef.current;
-        
+
         if (!canvas || !video) return;
 
         const ctx = canvas.getContext('2d');
@@ -138,7 +139,7 @@ export const VideoLayer: React.FC = () => {
         // Initialize filter engine if needed
         const width = canvas.width || videoConfig.width;
         const height = canvas.height || videoConfig.height;
-        
+
         if (!filterEngineRef.current && width > 0 && height > 0) {
             filterEngineRef.current = new FilterEngine(ctx, width, height);
         }
@@ -147,7 +148,7 @@ export const VideoLayer: React.FC = () => {
         if (!filterEngine || width === 0 || height === 0) return;
 
         // Check if we need to apply filters
-        const hasFilters = 
+        const hasFilters =
             colorGrading.brightness !== 0 ||
             colorGrading.contrast !== 0 ||
             colorGrading.saturation !== 0 ||
@@ -166,10 +167,10 @@ export const VideoLayer: React.FC = () => {
             const crop = presentation.videoCrop;
             const videoWidth = video.videoWidth || width;
             const videoHeight = video.videoHeight || height;
-            
+
             // Clear canvas
             ctx.clearRect(0, 0, width, height);
-            
+
             // Apply rounded corners if enabled
             if (crop.enabled && crop.roundedCorners && crop.cornerRadius > 0) {
                 ctx.save();
@@ -187,24 +188,24 @@ export const VideoLayer: React.FC = () => {
                 ctx.closePath();
                 ctx.clip();
             }
-            
+
             // Calculate crop parameters
             let sourceX = 0;
             let sourceY = 0;
             let sourceWidth = videoWidth;
             let sourceHeight = videoHeight;
-            
+
             if (crop.enabled) {
                 // Calculate crop in source video coordinates
                 const scaleX = videoWidth / width;
                 const scaleY = videoHeight / height;
-                
+
                 sourceX = crop.left * scaleX;
                 sourceY = crop.top * scaleY;
                 sourceWidth = videoWidth - (crop.left + crop.right) * scaleX;
                 sourceHeight = videoHeight - (crop.top + crop.bottom) * scaleY;
             }
-            
+
             if (hasFilters && filterEngine) {
                 // Create a temporary canvas for cropped video if needed
                 if (crop.enabled) {
@@ -212,7 +213,7 @@ export const VideoLayer: React.FC = () => {
                     tempCanvas.width = width;
                     tempCanvas.height = height;
                     const tempCtx = tempCanvas.getContext('2d');
-                    
+
                     if (tempCtx) {
                         // Draw cropped video to temp canvas
                         tempCtx.drawImage(
@@ -220,7 +221,7 @@ export const VideoLayer: React.FC = () => {
                             sourceX, sourceY, sourceWidth, sourceHeight,
                             0, 0, width, height
                         );
-                        
+
                         // Apply filters to temp canvas
                         const tempFilterEngine = new FilterEngine(tempCtx, width, height);
                         tempFilterEngine.applyFilters(tempCanvas, {
@@ -236,7 +237,7 @@ export const VideoLayer: React.FC = () => {
                                 amount: Math.abs(colorGrading.temperature) * 0.3,
                             } : undefined,
                         });
-                        
+
                         // Draw filtered temp canvas to main canvas
                         ctx.drawImage(tempCanvas, 0, 0);
                     }
@@ -264,7 +265,7 @@ export const VideoLayer: React.FC = () => {
                     0, 0, width, height
                 );
             }
-            
+
             // Restore clipping if rounded corners were applied
             if (crop.enabled && crop.roundedCorners && crop.cornerRadius > 0) {
                 ctx.restore();
@@ -292,7 +293,7 @@ export const VideoLayer: React.FC = () => {
                 height: '100%',
                 borderRadius: '12px',
                 overflow: 'hidden',
-                background:'transparent',
+                background: 'transparent',
             }}
         >
             {videoConfig.url && (
@@ -311,19 +312,22 @@ export const VideoLayer: React.FC = () => {
                         preload="metadata"
                     />
                     {/* Canvas for rendering with filters */}
-                    <canvas
-                        ref={canvasRef}
-                        className="block"
-                        style={{
-                            width: '100%',
-                            height: '100%',
-                            objectFit: 'contain',
-                            boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
-                            borderRadius: presentation.videoCrop.enabled && presentation.videoCrop.roundedCorners
-                                ? `${presentation.videoCrop.cornerRadius}px`
-                                : '0',
-                        }}
-                    />
+                    <div>
+                        <canvas
+                            ref={canvasRef}
+                            className="block"
+                            style={{
+                                width: '100%',
+                                height: '100%',
+                                objectFit: 'contain',
+                                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                                borderRadius: presentation.videoCrop.enabled && presentation.videoCrop.roundedCorners
+                                    ? `${presentation.videoCrop.cornerRadius}px`
+                                    : '0',
+                            }}
+                        />
+                        <CursorLayer />
+                    </div>
                 </>
             )}
         </div>
