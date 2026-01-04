@@ -18,8 +18,8 @@ import {
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-
-type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'cursor' | 'effects';
+import { useEditorState, editorStore } from '@/lib/editor/store';
+import { TabId } from '@/lib/editor/types';
 
 interface SidebarItemProps {
     id: TabId;
@@ -54,7 +54,12 @@ const SidebarItem = ({ id, icon: Icon, label, isActive, onClick }: SidebarItemPr
 );
 
 export function EditorPanel() {
-    const [activeTab, setActiveTab] = useState<TabId>('script');
+    // Use global state for panel management
+    const activeTab = useEditorState().activePanel || 'script';
+
+    const setActiveTab = (id: TabId) => {
+        editorStore.setState({ activePanel: id });
+    };
 
     const renderPanel = () => {
         switch (activeTab) {

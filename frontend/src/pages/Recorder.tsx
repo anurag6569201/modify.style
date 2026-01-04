@@ -769,6 +769,43 @@ const CAMERA_CONFIG = {
   PAN_TRANSITION_MS: 200,       // Quick pan movements
   EASE_FUNCTION: 'cubic-bezier(0.4, 0, 0.2, 1)', // Smooth ease
 
+  // Mouse movement smoothing
+  SMOOTHING: 0.15,              // How much to smooth mouse path
+
+  // Intent Detection
+  INTENT_IDLE_MS: 1500,         // Time before considering cursor as idle
+  CURSOR_LEAVE_DISTANCE: 100,   // Distance from focus point to trigger zoom out
+  CURSOR_LEAVE_FOCUS_MS: 600,   // Time cursor must be away to trigger zoom out
+  CLICK_CLUSTER_MS: 1000,       // Time window to group clicks
+
+  // Spring Physics Constants
+  ZOOM_STIFFNESS: 0.1,
+  ZOOM_DAMPING: 0.8,
+  ZOOM_UPDATE_THRESHOLD: 0.001,
+  SPRING_SETTLE_THRESHOLD: 0.01,
+  HOLD_DURATION_MS: 2000,       // How long to hold zoom before decaying
+
+  // Performance
+  TARGET_FPS: 60,
+  FRAME_TIME_MS: 1000 / 60,
+  DIMENSIONS_CACHE_MS: 1000,
+
+  // Advanced Camera Logic
+  ANTICIPATION_STRENGTH: 0.3,   // How much camera leads the cursor
+  DECAY_BLEND_FACTOR: 0.05,     // Softness of decay movement
+  DISTANCE_STIFFNESS_THRESHOLD: 300, // Distance where stiffness changes
+  CINEMATIC_DAMPING: 0.95,      // Higher damping for smooth shots
+  CAMERA_DAMPING: 0.9,
+
+  // Cursor
+  CURSOR_STIFFNESS: 0.2,
+  CURSOR_DAMPING: 0.8,
+  CURSOR_UPDATE_THRESHOLD: 0.5,
+
+  // Layout
+  EDGE_PADDING: 50,
+  CAMERA_UPDATE_THRESHOLD: 0.01,
+
   // Auto-zoom behavior
   AUTO_ZOOM: {
     ENABLED: true,
@@ -777,6 +814,11 @@ const CAMERA_CONFIG = {
     IDLE_TIMEOUT_MS: 3000,      // Return to normal after idle
     MIN_MOVEMENT_PX: 50,        // Minimum movement to break idle
   },
+
+  // Gesture Recognition
+  INTENT_ANALYSIS_WINDOW_MS: 300,
+  GESTURE_RECOGNITION_TIME_MS: 500,
+  PREDICTION_HORIZON_MS: 200,
 
   // Smart detection
   ACTIVITY_ZONES: {
@@ -938,10 +980,16 @@ export default function Recorder() {
   const chunksRef = useRef<Blob[]>([]);
   const clicksRef = useRef<ClickData[]>([]);
   const movesRef = useRef<MoveData[]>([]);
+  const effectsRef = useRef<EffectEvent[]>([]); // Captured effects (zooms, etc.)
   const recordingStartTimeRef = useRef<number>(0);
   const lastClickTimeRef = useRef<number>(0);
   const lastMoveTimeRef = useRef<number>(0);
   const animationFrameRef = useRef<number | null>(null);
+
+  // Double-click zoom detection
+  const doubleClickTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const lastDoubleClickPosRef = useRef<{ x: number, y: number } | null>(null);
+  const activeZoomTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
   // Canvas recording refs - for recording the preview container
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -976,6 +1024,28 @@ export default function Recorder() {
   const clickClusterRef = useRef<{ x: number; y: number; timestamp: number }[]>([]);
   const lastZoomTimeRef = useRef<number>(0);
   const zoomDebounceTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper to record zoom effects for the timeline
+  const recordZoomEffect = useCallback((targetZoom: number, x?: number, y?: number) => {
+    console.log(`[Recorder] 📝 recordZoomEffect called. State: ${recordingState}, Zoom: ${targetZoom}`);
+    if (recordingState === "recording") {
+      const focusX = x !== undefined ? x : (currentCursorPosRef.current?.x || 0.5);
+      const focusY = y !== undefined ? y : (currentCursorPosRef.current?.y || 0.5);
+
+      effectsRef.current.push({
+        type: 'zoom',
+        timestamp: Date.now() - recordingStartTimeRef.current,
+        data: {
+          zoomLevel: targetZoom,
+          x: focusX,
+          y: focusY
+        }
+      });
+      console.log(`[Recorder] ✅ Effect saved. Total count: ${effectsRef.current.length}`);
+    } else {
+      console.warn(`[Recorder] ⚠️ Effect IGNORED because state is ${recordingState}`);
+    }
+  }, [recordingState]);
 
   // Initialize adaptive learning system
   useEffect(() => {
@@ -1085,12 +1155,29 @@ export default function Recorder() {
 
     switch (command) {
       case 'zoom_in':
+        // DISABLED: Now using double-click for zoom instead of gestures
         // Smooth zoom in gesture
-        zoomTargetRef.current = Math.min(zoomLevel + 0.5, CAMERA_CONFIG.ZOOM_MAX);
-        zoomVelocityRef.current = 0;
-        setZoomState("FOCUSED");
-        focusPointRef.current = { x, y };
-        lastIntentTimeRef.current = Date.now();
+        // const newTarget = Math.min(zoomLevel + 0.5, CAMERA_CONFIG.ZOOM_MAX);
+        // console.log(`[Zoom] Setting target: ${newTarget}, current zoomLevel: ${zoomLevel}`);
+        // zoomTargetRef.current = newTarget;
+        // zoomVelocityRef.current = 0;
+        // setZoomState("FOCUSED");
+        // console.log(`[Zoom] State set to FOCUSED, zoomStateRef will be:`, zoomStateRef.current);
+        // focusPointRef.current = { x, y };
+        // lastIntentTimeRef.current = Date.now();
+
+        // Record effect
+        if (recordingState === "recording") {
+          effectsRef.current.push({
+            type: 'zoom',
+            timestamp: Date.now() - recordingStartTimeRef.current,
+            data: {
+              zoomLevel: Math.min(zoomLevel + 0.5, CAMERA_CONFIG.ZOOM_MAX),
+              x,
+              y
+            }
+          });
+        }
         break;
 
       case 'zoom_out':
@@ -1101,6 +1188,19 @@ export default function Recorder() {
           setZoomState("NEUTRAL");
         } else {
           setZoomState("FOCUSED");
+        }
+
+        // Record effect
+        if (recordingState === "recording") {
+          effectsRef.current.push({
+            type: 'zoom',
+            timestamp: Date.now() - recordingStartTimeRef.current,
+            data: {
+              zoomLevel: Math.max(zoomLevel - 0.5, CAMERA_CONFIG.ZOOM_MIN),
+              x: focusPointRef.current?.x || 0.5,
+              y: focusPointRef.current?.y || 0.5
+            }
+          });
         }
         break;
 
@@ -1146,6 +1246,19 @@ export default function Recorder() {
         cameraVelocityRef.current = { x: 0, y: 0 };
         zoomVelocityRef.current = 0;
         console.log('📹 Camera reset to neutral position');
+
+        // Record effect
+        if (recordingState === "recording") {
+          effectsRef.current.push({
+            type: 'zoom',
+            timestamp: Date.now() - recordingStartTimeRef.current,
+            data: {
+              zoomLevel: 1.0,
+              x: 0.5,
+              y: 0.5
+            }
+          });
+        }
         break;
 
       case 'emphasize_selection':
@@ -1979,6 +2092,7 @@ export default function Recorder() {
       });
     }
 
+    // Pass a callback that checks the current recording state ref to avoid closure staleness
     return setupCanvasRecordingSync();
   }, [setupCanvasRecordingSync, cursorTrail]);
 
@@ -2303,6 +2417,70 @@ export default function Recorder() {
         totalClicks: clicksRef.current.length
       });
 
+      // Double-click zoom detection: 2 clicks within 2 seconds
+      const DOUBLE_CLICK_WINDOW = 2000; // 2 seconds
+      const DOUBLE_CLICK_DISTANCE = 0.1; // 10% of screen (normalized coords)
+      const ZOOM_DURATION = 5000; // 5 seconds
+
+      // Prevent concurrent zooms - ignore clicks if zoom is already active
+      if (activeZoomTimeoutRef.current) {
+        console.log('[Zoom] ⚠️ Zoom already active, ignoring click');
+        return; // Exit early, don't process this click for zoom
+      }
+
+      if (lastDoubleClickPosRef.current && doubleClickTimerRef.current) {
+        // Check if this is a second click within the time window
+        const distance = Math.sqrt(
+          Math.pow(normalizedX - lastDoubleClickPosRef.current.x, 2) +
+          Math.pow(normalizedY - lastDoubleClickPosRef.current.y, 2)
+        );
+
+        if (distance < DOUBLE_CLICK_DISTANCE) {
+          // Double-click detected! Trigger 5-second zoom
+          console.log(`[Zoom] 🎯 Double-click detected! Triggering 5s zoom at (${normalizedX.toFixed(2)}, ${normalizedY.toFixed(2)})`);
+
+          // Enable followCursor temporarily logic REMOVED - loop now handles !followCursor case
+          // const wasFollowCursorEnabled = followCursor;
+          // if (!followCursor) { ... }
+
+          // Trigger zoom-in
+          zoomTargetRef.current = 1.5;
+          zoomVelocityRef.current = 0;
+          setZoomState("FOCUSED");
+          focusPointRef.current = { x: normalizedX, y: normalizedY };
+          lastIntentTimeRef.current = now;
+
+          // Auto zoom-out after 5 seconds
+          activeZoomTimeoutRef.current = setTimeout(() => {
+            console.log('[Zoom] ⏱️ 5s elapsed, zooming out');
+            zoomTargetRef.current = 1.0;
+            setZoomState("DECAY");
+            activeZoomTimeoutRef.current = null;
+          }, ZOOM_DURATION);
+
+          // Clear double-click detection
+          if (doubleClickTimerRef.current) {
+            clearTimeout(doubleClickTimerRef.current);
+            doubleClickTimerRef.current = null;
+          }
+          lastDoubleClickPosRef.current = null;
+        } else {
+          // Too far apart, reset
+          lastDoubleClickPosRef.current = { x: normalizedX, y: normalizedY };
+        }
+      } else {
+        // First click, start timer
+        lastDoubleClickPosRef.current = { x: normalizedX, y: normalizedY };
+        if (doubleClickTimerRef.current) {
+          clearTimeout(doubleClickTimerRef.current);
+        }
+        doubleClickTimerRef.current = setTimeout(() => {
+          // Window expired
+          lastDoubleClickPosRef.current = null;
+          doubleClickTimerRef.current = null;
+        }, DOUBLE_CLICK_WINDOW);
+      }
+
       // Handle click with viewport manager
       if (viewportManagerRef.current && followCursor) {
         viewportManagerRef.current.handleClick({ x: normalizedX, y: normalizedY });
@@ -2356,6 +2534,29 @@ export default function Recorder() {
     };
   }, [recordingState]); // Only depends on recordingState now
 
+  // 👁️ DOM OBSERVER: The ultimate "What You See Is What You Get" capture source
+  // This watches the actual preview element for transform changes, guaranteeing that 
+  // whatever visual zoom happens (keys, scroll, AI, etc.) is recorded.
+  // 👁️ ZOOM STATE RECORDER: Records zoom effects based on state transitions
+  // This replaces the MutationObserver for more reliable event capturing
+  useEffect(() => {
+    if (recordingState !== "recording") return;
+
+    if (zoomState === "FOCUSED") {
+      // Record Zoom In
+      console.log(`[Recorder] 👁️ Zoom State: FOCUSED. Recording target: ${zoomTargetRef.current}`);
+      const focusX = focusPointRef.current?.x || 0.5;
+      const focusY = focusPointRef.current?.y || 0.5;
+      recordZoomEffect(zoomTargetRef.current, focusX, focusY);
+    } else if (zoomState === "DECAY") {
+      // Record Zoom Out start (when decay begins)
+      if (zoomTargetRef.current <= 1.05) {
+        console.log(`[Recorder] 👁️ Zoom State: DECAY. Recording reset (1.0)`);
+        recordZoomEffect(1.0);
+      }
+    }
+  }, [zoomState, recordingState]);
+
   // Set up scroll/wheel tracking (still needed for zoom-out on scroll)
   useEffect(() => {
     if (recordingState === "recording") {
@@ -2373,6 +2574,7 @@ export default function Recorder() {
         if (zoomState === "FOCUSED" || zoomState === "HOLD" || zoomState === "DECAY") {
           setZoomState("NEUTRAL");
           zoomTargetRef.current = 1;
+          recordZoomEffect(1.0);
         }
 
         // Clear scroll timeout
@@ -2508,6 +2710,8 @@ export default function Recorder() {
             // Proceed to decay
             try {
               setZoomState("DECAY");
+              recordZoomEffect(1.0); // Record return to neutral
+
               // Set partial zoom target (don't always return to 1.0)
               const currentZoom = Number.isFinite(zoomLevel) ? zoomLevel : CAMERA_CONFIG.ZOOM_MIN;
               if (currentZoom > 1.3) {
@@ -2523,6 +2727,7 @@ export default function Recorder() {
               // Fail safe: reset to neutral
               setZoomState("NEUTRAL");
               zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+              recordZoomEffect(CAMERA_CONFIG.ZOOM_MIN);
             }
           }
         }
@@ -2562,7 +2767,10 @@ export default function Recorder() {
 
   // Cursor following effect - smooth pan/zoom to follow cursor (OPTIMIZED)
   useEffect(() => {
-    if (!followCursor || recordingState !== "recording" || !previewContainerRef.current) {
+    // Run loop if following cursor OR if a zoom is active (to render the zoom effect)
+    const shouldRunLoop = (followCursor || zoomState !== "NEUTRAL") && recordingState === "recording" && !!previewContainerRef.current;
+
+    if (!shouldRunLoop) {
       // Reset transform when not following - apply to container, not video
       if (previewContainerRef.current) {
         previewContainerRef.current.style.transform = `scale3d(${zoomLevel}, ${zoomLevel}, 1)`;
@@ -2714,6 +2922,11 @@ export default function Recorder() {
             ? Math.max(CAMERA_CONFIG.ZOOM_MIN, Math.min(CAMERA_CONFIG.ZOOM_MAX, zoomTargetRef.current))
             : CAMERA_CONFIG.ZOOM_MIN;
 
+          // Debug: Log occasionally (every 60 frames = ~1 second)
+          if (Math.random() < 0.016) {
+            console.log(`[Zoom Loop] FOCUSED state. Current: ${currentZoom.toFixed(2)}, Target: ${targetZoom.toFixed(2)}`);
+          }
+
           // Spring smoothing with configured values
           const { current: smoothedZoom, velocity: zoomVel } = smoothSpring(
             currentZoom,
@@ -2780,7 +2993,8 @@ export default function Recorder() {
                 zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
                 zoomVelocityRef.current = 0; // Reset velocity when reaching neutral
               } else {
-                zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
+                // DO NOT AUTO-RESET ZOOM! This prevents holding focus.
+                // zoomTargetRef.current = CAMERA_CONFIG.ZOOM_MIN;
               }
             }
           }
@@ -2801,16 +3015,33 @@ export default function Recorder() {
         }
 
         // Calculate cursor position (already validated above)
-        const cursorX = Math.max(0, Math.min(1, cursorPos.x));
-        const cursorY = Math.max(0, Math.min(1, cursorPos.y));
+        // Determine target position (follow cursor OR lock to focus point)
+        let cursorX = 0.5;
+        let cursorY = 0.5;
+
+        // If following cursor, use actual cursor position
+        if (followCursor && cursorPos) {
+          cursorX = cursorPos.x;
+          cursorY = cursorPos.y;
+        }
+        // If NOT following cursor (but zooming), lock to focus point
+        else if (!followCursor && focusPointRef.current) {
+          cursorX = focusPointRef.current.x;
+          cursorY = focusPointRef.current.y;
+        }
+        else if (cursorPos) {
+          cursorX = cursorPos.x;
+          cursorY = cursorPos.y;
+        }
 
         // 🎯 CAMERA ANTICIPATION: Predict where cursor will go
+        // Only anticipate if we are actually following the cursor
         const currentIntent = intentAnalyzerRef.current.analyzeIntent();
         let anticipatedX = cursorX;
         let anticipatedY = cursorY;
 
-        // Use predicted position if confidence is high enough
-        if (currentIntent.confidence > 0.6 && currentIntent.predictedPosition) {
+        // Use predicted position if confidence is high enough AND following cursor
+        if (followCursor && currentIntent.confidence > 0.6 && currentIntent.predictedPosition) {
           const predicted = currentIntent.predictedPosition;
           const anticipationStrength = CAMERA_CONFIG.ANTICIPATION_STRENGTH;
 
@@ -3101,6 +3332,16 @@ export default function Recorder() {
             const transform = `translate3d(${clampedOffsetX}px, ${clampedOffsetY}px, 0) scale3d(${effectiveZoom}, ${effectiveZoom}, 1)`;
             container.style.transform = transform;
 
+            // Safety: Ensure video element itself is doesn't have conflicting transforms
+            if (videoPreviewRef.current) {
+              videoPreviewRef.current.style.transform = "none";
+            }
+
+            // Debug: Log zoom changes
+            if (Math.abs(cache.scale - effectiveZoom) > CAMERA_CONFIG.ZOOM_UPDATE_THRESHOLD) {
+              console.log(`[AnimLoop] 🔄 Zoom changed: ${cache.scale.toFixed(2)} → ${effectiveZoom.toFixed(2)}, Transform applied:`, transform);
+            }
+
             // Cache the transform
             transformCacheRef.current = {
               x: clampedOffsetX,
@@ -3248,17 +3489,20 @@ export default function Recorder() {
     const newZoom = Math.min(viewportZoom + 0.3, CAMERA_CONFIG.ZOOM_MAX);
     viewportManagerRef.current?.setZoom(newZoom);
     lastActivityTimeRef.current = Date.now();
+    recordZoomEffect(newZoom);
   };
 
   const handleZoomOut = () => {
     const newZoom = Math.max(viewportZoom - 0.3, CAMERA_CONFIG.ZOOM_MIN);
     viewportManagerRef.current?.setZoom(newZoom);
     lastActivityTimeRef.current = Date.now();
+    recordZoomEffect(newZoom);
   };
 
   const handleResetZoom = () => {
     viewportManagerRef.current?.setZoom(CAMERA_CONFIG.ZOOM_DEFAULT);
     lastActivityTimeRef.current = Date.now();
+    recordZoomEffect(CAMERA_CONFIG.ZOOM_DEFAULT, 0.5, 0.5);
   };
 
   const startRecordingActual = async () => {
@@ -3482,14 +3726,91 @@ export default function Recorder() {
         markers: markers.length
       });
 
+      console.log('[Recorder] 🏁 Finishing recording. Stats:', {
+        clicks: clicksRef.current.length,
+        moves: movesRef.current.length,
+        effects: effectsRef.current.length,
+        firstEffect: effectsRef.current[0],
+        lastEffect: effectsRef.current[effectsRef.current.length - 1]
+      });
+
       setTimeout(() => {
+        // 🎯 ZOOM INTELLIGENCE: Auto-generate zoom events for double clicks
+        // This detects rapid interaction clusters and creates editable zoom effects
+        const clicks = clicksRef.current;
+        const generatedEffects = [...effectsRef.current];
+
+        // Config: 3s window, 1.5x zoom, 100ms anticipation
+        const DOUBLE_CLICK_WINDOW = 3000;
+        const ZOOM_ANTICIPATION = 100;
+        const ZOOM_DURATION_BUFFER = 2000;
+
+        for (let i = 0; i < clicks.length; i++) {
+          const c1 = clicks[i];
+          let clusterEndIndex = i;
+
+          // Look ahead for click clusters
+          for (let j = i + 1; j < clicks.length; j++) {
+            const c2 = clicks[j];
+            const prev = clicks[j - 1];
+            // If click is within window of previous click
+            if (c2.timestamp - prev.timestamp <= DOUBLE_CLICK_WINDOW) {
+              clusterEndIndex = j;
+            } else {
+              break;
+            }
+          }
+
+          // Identify double+ click clusters
+          if (clusterEndIndex > i) {
+            const firstClick = clicks[i];
+            const lastClick = clicks[clusterEndIndex];
+            const duration = (lastClick.timestamp - firstClick.timestamp) + ZOOM_DURATION_BUFFER;
+
+            // Create Zoom Effect
+            // NO x/y properties provided -> enables "Tracking Zoom" mode in camera.ts
+            const autoZoomEffect: EffectEvent = {
+              type: 'zoom',
+              timestamp: Math.max(0, firstClick.timestamp - ZOOM_ANTICIPATION),
+              zoomLevel: 1.5,
+              duration: duration / 1000, // Editor expects seconds usually? Wait, Editor divides timestamp by 1000. 
+              // Let's check Editor.tsx line 144: startTime: e.timestamp / 1000.
+              // line 128-132 calculate duration in seconds.
+              // But here I am passing 'duration' property. Editor logic calculates duration itself!
+              // Editor logic line 127: let duration = 2.0;
+              // It IGNORES my duration property unless I change Editor.tsx logic?
+              // Editor.tsx:
+              // index < sortedEffects.length - 1 ? ... : 2.0
+              // IT DOES NOT READ e.duration or e.data.duration.
+              // I MUST UPDATE EDITOR.TSX to read duration from the effect if present.
+
+              // For now, I'll pass it, but I need to fix Editor.tsx to respect it.
+              data: {
+                zoomLevel: 1.5,
+                // x, y undefined
+              }
+            };
+            // Add duration to top level for Editor to potentially read if updated
+            // Note: timestamp in clicks is usually in ms? Yes, Date.now().
+            // Editor divides by 1000. So here I should keep it in ms.
+
+            generatedEffects.push(autoZoomEffect);
+
+            // Skip the rest of this cluster
+            i = clusterEndIndex;
+          }
+        }
+
+        console.log('[Recorder] 🧠 ZOOM INTELLIGENCE: Generated effects:', generatedEffects.length - effectsRef.current.length);
+
         navigate("/editor/new", {
           state: {
             videoUrl,
             clickData: clicksRef.current,
             moveData: movesRef.current,
+            capturedEffects: generatedEffects, // Use the augmented effects list
             markers: markers,
-            rawRecording, // Pass raw recording flag for layered rendering
+            rawRecording,
             visualEffects: {
               cursorEffects,
               clickRipple,

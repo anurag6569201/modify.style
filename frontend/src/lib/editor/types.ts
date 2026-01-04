@@ -38,6 +38,20 @@ export interface EffectsConfig {
     clickEasing: 'linear' | 'ease-out' | 'ease-in-out' | 'bounce' | 'elastic';
 }
 
+export interface CameraEffect {
+    id: string;
+    name: string; // User-friendly name (e.g., "Zoom A")
+    type: 'zoom' | 'pan' | 'shake' | 'idle';
+    startTime: number;
+    duration: number;
+    // Properties
+    zoomLevel?: number; // Target zoom
+    x?: number; // Target X (0-1)
+    y?: number; // Target Y (0-1)
+    intensity?: number; // For shake/effects
+    easing?: 'linear' | 'ease-in-out' | 'elastic';
+}
+
 export type AspectRatioPreset = 'native' | '16:9' | '9:16' | '1:1' | '4:3' | '21:9' | 'custom';
 
 export interface PresentationConfig {
@@ -124,6 +138,8 @@ export interface PlaybackState {
     isMuted: boolean;
 }
 
+export type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'cursor' | 'effects';
+
 export interface EditorState {
     video: VideoConfig;
     camera: CameraConfig;
@@ -139,6 +155,9 @@ export interface EditorState {
         temperature: number;
         vignette: number;
     };
+    activePanel: TabId;
+    cameraEffects: CameraEffect[];
+    selectedEffectId: string | null;
     textOverlays: Array<{
         id: string;
         text: string;
@@ -280,6 +299,9 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         temperature: 0,
         vignette: 0,
     },
+    activePanel: 'script',
+    cameraEffects: [],
+    selectedEffectId: null,
     textOverlays: [],
     events: {
         clicks: [],

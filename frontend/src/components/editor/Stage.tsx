@@ -56,6 +56,7 @@ export const Stage: React.FC = () => {
                     currentState.events.clicks,
                     currentState.events.moves,
                     currentState.events.effects || [],
+                    currentState.cameraEffects || [], // NEW
                     { width, height },
                     currentState.video.duration || 0,
                     {

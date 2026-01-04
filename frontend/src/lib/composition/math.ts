@@ -187,7 +187,7 @@ export const getCursorVelocity = (
     const dx = p2.x - p1.x;
     const dy = p2.y - p1.y;
     const distance = Math.hypot(dx, dy);
-    
+
     return distance / (2 * window);
 };
 
@@ -277,7 +277,7 @@ export const solveSpring = (
 
     // Calculate forces
     const springForce = -stiffness * displacement;
-    
+
     // Calculate damping coefficient based on ratio (zeta)
     const criticalDamping = 2 * Math.sqrt(stiffness * mass);
     const dampingCoefficient = damping * criticalDamping;
@@ -300,7 +300,7 @@ export const springCritical = (
     velocity: number,
     k: number,
     dt: number
-): { value: number; velocity: number } => 
+): { value: number; velocity: number } =>
     solveSpring(current, target, velocity, k, 1.0, 1.0, dt);
 
 /**
@@ -312,7 +312,7 @@ export const springBouncy = (
     velocity: number,
     k: number,
     dt: number
-): { value: number; velocity: number } => 
+): { value: number; velocity: number } =>
     solveSpring(current, target, velocity, k, 0.7, 1.0, dt);
 
 /**
@@ -324,7 +324,7 @@ export const springSmooth = (
     velocity: number,
     k: number,
     dt: number
-): { value: number; velocity: number } => 
+): { value: number; velocity: number } =>
     solveSpring(current, target, velocity, k, 1.2, 1.0, dt);
 
 // ===== PADDING & FOLLOW LOGIC =====
@@ -420,7 +420,7 @@ export const cleanJitterAdvanced = (
         const dy = current.y - lastValid.y;
         const dist = Math.sqrt(dx * dx + dy * dy);
         const timeDiff = (current.timestamp - lastValid.timestamp) * 1000;
-        
+
         // Calculate velocity
         const velocity = timeDiff > 0 ? (dist / timeDiff) * 1000 : 0;
 
@@ -551,7 +551,7 @@ export const renderCursorOverlay = (
             if (rect) {
                 const x = pos.x * rect.width;
                 const y = pos.y * rect.height;
-                
+
                 // Use translate3d for hardware acceleration
                 cursorElement.style.transform = `translate3d(${x}px, ${y}px, 0)`;
             }
