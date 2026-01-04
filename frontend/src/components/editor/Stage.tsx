@@ -296,8 +296,8 @@ export const Stage: React.FC = () => {
                 }}
             >
                 <VideoLayer />
-                <TextLayer />
             </div>
+            <TextLayer />
         </div>
     );
 };

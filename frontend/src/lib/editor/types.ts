@@ -168,10 +168,19 @@ export interface EditorState {
         shadowBlur: number;
         shadowOffsetX: number;
         shadowOffsetY: number;
+        // Advanced Styling
+        backdropBlur: number;
+        textTransform: 'none' | 'uppercase' | 'lowercase' | 'capitalize';
+        gradient: {
+            enabled: boolean;
+            colors: string[];
+            angle: number;
+        };
+        blendMode: 'normal' | 'overlay' | 'screen' | 'multiply' | 'difference' | 'plus-lighter';
         // Timing & Animation
         startTime: number;
         endTime: number;
-        animation: 'none' | 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'typewriter' | 'scale' | 'pop';
+        animation: 'none' | 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'typewriter' | 'scale' | 'pop' | 'blur-in' | 'glitch' | 'spin-3d';
     }>;
 
     events: {
@@ -192,7 +201,7 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         aspectRatio: 16 / 9,
     },
     camera: {
-        zoomStrength: 2.5,
+        zoomStrength: 1.3,
         speed: 1.0,
         padding: 0.2, // 20% deadzone
         mode: 'cinematic',
@@ -221,7 +230,7 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         aspectRatio: 'native',
         outputWidth: 1920,
         outputHeight: 1080,
-        backgroundMode: 'hidden',
+        backgroundMode: 'solid',
         backgroundColor: '#000000',
         backgroundGradient: {
             type: 'linear',
@@ -239,12 +248,12 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
             bottom: 0,
             left: 0,
             right: 0,
-            roundedCorners: false,
-            cornerRadius: 12,
+            roundedCorners: true,
+            cornerRadius: 8,
         },
         screenDPR: 1.0,
         videoPadding: {
-            enabled: false,
+            enabled: true,
             top: 50,
             right: 50,
             bottom: 50,
@@ -252,14 +261,14 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
             uniform: true,
         },
         videoStyle: {
-            borderEnabled: false,
+            borderEnabled: true,
             borderColor: '#ffffff',
-            borderWidth: 0,
-            shadowEnabled: false,
-            shadowColor: 'rgba(0,0,0,0.5)',
-            shadowBlur: 20,
+            borderWidth: 2,
+            shadowEnabled: true,
+            shadowColor: 'rgba(255, 255, 255, 0.9)',
+            shadowBlur: 30,
             shadowOffsetX: 0,
-            shadowOffsetY: 10,
+            shadowOffsetY: 0,
             rotation: 0,
         },
     },

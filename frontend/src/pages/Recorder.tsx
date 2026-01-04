@@ -831,7 +831,7 @@ export default function Recorder() {
   const [cursorGlow, setCursorGlow] = useState(true);
   const [cursorTrail, setCursorTrail] = useState(false);
   const [showClickIndicator, setShowClickIndicator] = useState(true);
-  const [completePathCapture, setCompletePathCapture] = useState(false);
+  const [completePathCapture, setCompletePathCapture] = useState(true);
 
   // Simplified viewport and cursor following settings
   const [viewportZoom, setViewportZoom] = useState(1);
@@ -868,6 +868,9 @@ export default function Recorder() {
   const cursorDwellStartRef = useRef<number | null>(null);
   const cursorDwellPositionRef = useRef<{ x: number; y: number } | null>(null);
   const holdStartTimeRef = useRef<number | null>(null);
+  const neutralCameraRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+  const lastScrollTimeRef = useRef<number>(0);
+  const isScrollingRef = useRef<boolean>(false);
 
   // Spring-damper velocity tracking for smooth camera motion
   const cameraVelocityRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
@@ -901,9 +904,12 @@ export default function Recorder() {
     damping: number = 0.75
   ): { current: number; velocity: number } => {
     // Validate inputs to prevent NaN/Infinity
-    if (!Number.isFinite(current) || !Number.isFinite(velocity) || !Number.isFinite(target)) {
-      console.warn('smoothSpring: Invalid input detected', { current, velocity, target });
-      return { current: Number.isFinite(current) ? current : target, velocity: 0 };
+    if (!Number.isFinite(current) || !Number.isFinite(velocity) || !Number.isFinite(target) || !Number.isFinite(stiffness) || !Number.isFinite(damping)) {
+      // Only log if it's not a common case (e.g. initial load)
+      if (Number.isFinite(current) || Number.isFinite(target)) {
+        // console.warn('smoothSpring: Invalid input detected', { current, velocity, target, stiffness, damping });
+      }
+      return { current: Number.isFinite(current) ? current : (Number.isFinite(target) ? target : 0), velocity: 0 };
     }
 
     // Clamp stiffness and damping to valid ranges
@@ -3888,7 +3894,7 @@ export default function Recorder() {
                 )}
 
                 {/* Overlay content */}
-                <div className={`relative z-10 flex flex-col items-center justify-center p-8 ${showPreview && mediaStreamRef.current && recordingState !== "idle" ? 'bg-background/40 backdrop-blur-sm rounded-lg' : ''}`} style={{minHeight:'300px'}}>
+                <div className={`relative z-10 flex flex-col items-center justify-center p-8 ${showPreview && mediaStreamRef.current && recordingState !== "idle" ? 'bg-background/40 backdrop-blur-sm rounded-lg' : ''}`} style={{ minHeight: '300px' }}>
                   {/* Idle State */}
                   {recordingState === "idle" && (
                     <div className="text-center animate-scale-in">
@@ -4153,324 +4159,324 @@ export default function Recorder() {
                     </div>
                   )}
                 </div>
-                
+
               </div>
 
             </div>
-                          {/* Divider */}
-                          <div className="h-px w-full bg-border/50" />
+            {/* Divider */}
+            <div className="h-px w-full bg-border/50" />
 
-{/* Settings Panel */}
-<Collapsible open={showSettings} onOpenChange={setShowSettings}>
-  <CollapsibleTrigger className="w-full px-6 py-3 border-b border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors flex items-center justify-between">
-    <div className="flex items-center gap-2">
-      <Settings className="h-4 w-4" />
-      <span className="text-sm font-medium">Recording Settings</span>
-    </div>
-    {showSettings ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
-  </CollapsibleTrigger>
-  <CollapsibleContent className="p-6 space-y-4 bg-card">
-    <div className="space-y-2">
-      <Label htmlFor="countdown">Countdown Duration (seconds)</Label>
-      <div className="flex items-center gap-4">
-        <Slider
-          id="countdown"
-          min={0}
-          max={10}
-          step={1}
-          value={[countdownDuration]}
-          onValueChange={(value) => setCountdownDuration(value[0])}
-          className="flex-1"
-          disabled={recordingState !== "idle"}
-        />
-        <span className="text-sm font-mono w-8">{countdownDuration}s</span>
-      </div>
-    </div>
+            {/* Settings Panel */}
+            <Collapsible open={showSettings} onOpenChange={setShowSettings}>
+              <CollapsibleTrigger className="w-full px-6 py-3 border-b border-border/50 bg-secondary/30 hover:bg-secondary/50 transition-colors flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Settings className="h-4 w-4" />
+                  <span className="text-sm font-medium">Recording Settings</span>
+                </div>
+                {showSettings ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
+              </CollapsibleTrigger>
+              <CollapsibleContent className="p-6 space-y-4 bg-card">
+                <div className="space-y-2">
+                  <Label htmlFor="countdown">Countdown Duration (seconds)</Label>
+                  <div className="flex items-center gap-4">
+                    <Slider
+                      id="countdown"
+                      min={0}
+                      max={10}
+                      step={1}
+                      value={[countdownDuration]}
+                      onValueChange={(value) => setCountdownDuration(value[0])}
+                      className="flex-1"
+                      disabled={recordingState !== "idle"}
+                    />
+                    <span className="text-sm font-mono w-8">{countdownDuration}s</span>
+                  </div>
+                </div>
 
-    <div className="space-y-2">
-      <Label htmlFor="audio">Audio Source</Label>
-      <Select
-        value={audioSource}
-        onValueChange={(value) => setAudioSource(value as AudioSource)}
-        disabled={recordingState !== "idle"}
-      >
-        <SelectTrigger id="audio">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="both">System + Microphone</SelectItem>
-          <SelectItem value="system">System Audio Only</SelectItem>
-          <SelectItem value="microphone">Microphone Only</SelectItem>
-          <SelectItem value="none">No Audio</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
+                <div className="space-y-2">
+                  <Label htmlFor="audio">Audio Source</Label>
+                  <Select
+                    value={audioSource}
+                    onValueChange={(value) => setAudioSource(value as AudioSource)}
+                    disabled={recordingState !== "idle"}
+                  >
+                    <SelectTrigger id="audio">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="both">System + Microphone</SelectItem>
+                      <SelectItem value="system">System Audio Only</SelectItem>
+                      <SelectItem value="microphone">Microphone Only</SelectItem>
+                      <SelectItem value="none">No Audio</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-    <div className="space-y-2">
-      <Label htmlFor="quality">Recording Quality</Label>
-      <Select
-        value={recordingQuality}
-        onValueChange={(value) => setRecordingQuality(value as RecordingQuality)}
-        disabled={recordingState !== "idle"}
-      >
-        <SelectTrigger id="quality">
-          <SelectValue />
-        </SelectTrigger>
-        <SelectContent>
-          <SelectItem value="high">High (1080p @ 30fps)</SelectItem>
-          <SelectItem value="medium">Medium (720p @ 24fps)</SelectItem>
-          <SelectItem value="low">Low (480p @ 15fps)</SelectItem>
-        </SelectContent>
-      </Select>
-    </div>
+                <div className="space-y-2">
+                  <Label htmlFor="quality">Recording Quality</Label>
+                  <Select
+                    value={recordingQuality}
+                    onValueChange={(value) => setRecordingQuality(value as RecordingQuality)}
+                    disabled={recordingState !== "idle"}
+                  >
+                    <SelectTrigger id="quality">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="high">High (1080p @ 30fps)</SelectItem>
+                      <SelectItem value="medium">Medium (720p @ 24fps)</SelectItem>
+                      <SelectItem value="low">Low (480p @ 15fps)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
 
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <Label htmlFor="rawRecording">Raw Recording Mode</Label>
-        <Switch
-          id="rawRecording"
-          checked={rawRecording}
-          onCheckedChange={(checked) => {
-            setRawRecording(checked);
-            localStorage.setItem("recorder_rawRecording", String(checked));
-          }}
-          disabled={recordingState !== "idle"}
-        />
-      </div>
-      <p className="text-xs text-muted-foreground">
-        {rawRecording
-          ? "Recording raw screen (no effects). Effects will be applied during rendering for better quality."
-          : "Recording with effects applied. Use raw mode for advanced post-processing."}
-      </p>
-    </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="rawRecording">Raw Recording Mode</Label>
+                    <Switch
+                      id="rawRecording"
+                      checked={rawRecording}
+                      onCheckedChange={(checked) => {
+                        setRawRecording(checked);
+                        localStorage.setItem("recorder_rawRecording", String(checked));
+                      }}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {rawRecording
+                      ? "Recording raw screen (no effects). Effects will be applied during rendering for better quality."
+                      : "Recording with effects applied. Use raw mode for advanced post-processing."}
+                  </p>
+                </div>
 
-    <div className="flex items-center justify-between">
-      <Label htmlFor="preview" className="cursor-pointer">Show Preview</Label>
-      <Switch
-        id="preview"
-        checked={showPreview}
-        onCheckedChange={setShowPreview}
-        disabled={recordingState === "idle"}
-      />
-    </div>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="preview" className="cursor-pointer">Show Preview</Label>
+                  <Switch
+                    id="preview"
+                    checked={showPreview}
+                    onCheckedChange={setShowPreview}
+                    disabled={recordingState === "idle"}
+                  />
+                </div>
 
-    <div className="border-t border-border pt-4 space-y-3">
-      <Label className="text-sm font-semibold">Visual Effects</Label>
+                <div className="border-t border-border pt-4 space-y-3">
+                  <Label className="text-sm font-semibold">Visual Effects</Label>
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Cursor Effects</Label>
-          <span className="text-xs text-muted-foreground">Glow and highlight cursor</span>
-        </div>
-        <Switch
-          id="cursor-effects"
-          checked={cursorEffects}
-          onCheckedChange={setCursorEffects}
-          disabled={recordingState !== "idle"}
-        />
-      </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="cursor-effects" className="cursor-pointer text-sm">Cursor Effects</Label>
+                      <span className="text-xs text-muted-foreground">Glow and highlight cursor</span>
+                    </div>
+                    <Switch
+                      id="cursor-effects"
+                      checked={cursorEffects}
+                      onCheckedChange={setCursorEffects}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="click-ripple" className="cursor-pointer text-sm">Click Ripple</Label>
-          <span className="text-xs text-muted-foreground">Animated ripple on clicks</span>
-        </div>
-        <Switch
-          id="click-ripple"
-          checked={clickRipple}
-          onCheckedChange={setClickRipple}
-          disabled={recordingState !== "idle"}
-        />
-      </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="click-ripple" className="cursor-pointer text-sm">Click Ripple</Label>
+                      <span className="text-xs text-muted-foreground">Animated ripple on clicks</span>
+                    </div>
+                    <Switch
+                      id="click-ripple"
+                      checked={clickRipple}
+                      onCheckedChange={setClickRipple}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="cursor-glow" className="cursor-pointer text-sm">Cursor Glow</Label>
-          <span className="text-xs text-muted-foreground">Glowing effect around cursor</span>
-        </div>
-        <Switch
-          id="cursor-glow"
-          checked={cursorGlow}
-          onCheckedChange={setCursorGlow}
-          disabled={recordingState !== "idle"}
-        />
-      </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="cursor-glow" className="cursor-pointer text-sm">Cursor Glow</Label>
+                      <span className="text-xs text-muted-foreground">Glowing effect around cursor</span>
+                    </div>
+                    <Switch
+                      id="cursor-glow"
+                      checked={cursorGlow}
+                      onCheckedChange={setCursorGlow}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="cursor-trail" className="cursor-pointer text-sm">Cursor Trail</Label>
-          <span className="text-xs text-muted-foreground">Trail effect for mouse movement</span>
-        </div>
-        <Switch
-          id="cursor-trail"
-          checked={cursorTrail}
-          onCheckedChange={setCursorTrail}
-          disabled={recordingState !== "idle"}
-        />
-      </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="cursor-trail" className="cursor-pointer text-sm">Cursor Trail</Label>
+                      <span className="text-xs text-muted-foreground">Trail effect for mouse movement</span>
+                    </div>
+                    <Switch
+                      id="cursor-trail"
+                      checked={cursorTrail}
+                      onCheckedChange={setCursorTrail}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="complete-path" className="cursor-pointer text-sm">Complete Path Capture</Label>
-          <span className="text-xs text-muted-foreground">Capture every mouse movement for complete path visualization</span>
-        </div>
-        <Switch
-          id="complete-path"
-          checked={completePathCapture}
-          onCheckedChange={setCompletePathCapture}
-          disabled={recordingState !== "idle"}
-        />
-      </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="complete-path" className="cursor-pointer text-sm">Complete Path Capture</Label>
+                      <span className="text-xs text-muted-foreground">Capture every mouse movement for complete path visualization</span>
+                    </div>
+                    <Switch
+                      id="complete-path"
+                      checked={completePathCapture}
+                      onCheckedChange={setCompletePathCapture}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="click-indicator" className="cursor-pointer text-sm">Click Indicators</Label>
-          <span className="text-xs text-muted-foreground">Visual markers for clicks</span>
-        </div>
-        <Switch
-          id="click-indicator"
-          checked={showClickIndicator}
-          onCheckedChange={setShowClickIndicator}
-          disabled={recordingState !== "idle"}
-        />
-      </div>
-    </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="click-indicator" className="cursor-pointer text-sm">Click Indicators</Label>
+                      <span className="text-xs text-muted-foreground">Visual markers for clicks</span>
+                    </div>
+                    <Switch
+                      id="click-indicator"
+                      checked={showClickIndicator}
+                      onCheckedChange={setShowClickIndicator}
+                      disabled={recordingState !== "idle"}
+                    />
+                  </div>
+                </div>
 
-    <div className="border-t border-border pt-4 space-y-3">
-      <Label className="text-sm font-semibold">Preview Controls</Label>
+                <div className="border-t border-border pt-4 space-y-3">
+                  <Label className="text-sm font-semibold">Preview Controls</Label>
 
-      <div className="flex items-center justify-between">
-        <div className="flex flex-col">
-          <Label htmlFor="follow-cursor" className="cursor-pointer text-sm">Follow Cursor</Label>
-          <span className="text-xs text-muted-foreground">Auto-pan preview to follow cursor</span>
-        </div>
-        <Switch
-          id="follow-cursor"
-          checked={followCursor}
-          onCheckedChange={setFollowCursor}
-        />
-      </div>
+                  <div className="flex items-center justify-between">
+                    <div className="flex flex-col">
+                      <Label htmlFor="follow-cursor" className="cursor-pointer text-sm">Follow Cursor</Label>
+                      <span className="text-xs text-muted-foreground">Auto-pan preview to follow cursor</span>
+                    </div>
+                    <Switch
+                      id="follow-cursor"
+                      checked={followCursor}
+                      onCheckedChange={setFollowCursor}
+                    />
+                  </div>
 
-      {recordingState === "recording" && (
-        <div className="rounded-lg bg-primary/5 border border-primary/20 p-3">
-          <div className="flex items-center gap-2 mb-2">
-            <Move className="h-4 w-4 text-primary" />
-            <span className="text-sm font-medium text-primary">Cursor Following Active</span>
-          </div>
-          <p className="text-xs text-muted-foreground">
-            The preview will automatically pan and zoom to keep your cursor centered. Use zoom controls during recording to adjust.
-          </p>
-        </div>
-      )}
-    </div>
-  </CollapsibleContent>
-</Collapsible>
+                  {recordingState === "recording" && (
+                    <div className="rounded-lg bg-primary/5 border border-primary/20 p-3">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Move className="h-4 w-4 text-primary" />
+                        <span className="text-sm font-medium text-primary">Cursor Following Active</span>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        The preview will automatically pan and zoom to keep your cursor centered. Use zoom controls during recording to adjust.
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </CollapsibleContent>
+            </Collapsible>
 
-{/* Controls Bar */}
-<div className="bg-card p-6 flex flex-col gap-4">
-  {recordingState === "idle" && (
-    <Button size="lg" className="h-12 w-full max-w-sm gap-2 text-base" onClick={handleSelectScreen}>
-      <Monitor className="h-5 w-5" />
-      Select Screen
-    </Button>
-  )}
+            {/* Controls Bar */}
+            <div className="bg-card p-6 flex flex-col gap-4">
+              {recordingState === "idle" && (
+                <Button size="lg" className="h-12 w-full max-w-sm gap-2 text-base" onClick={handleSelectScreen}>
+                  <Monitor className="h-5 w-5" />
+                  Select Screen
+                </Button>
+              )}
 
-  {recordingState === "selecting" && (
-    <Button size="lg" className="h-12 w-full max-w-sm gap-2" onClick={handleConfirmHide}>
-      <CheckCircle2 className="h-5 w-5" />
-      I've Hidden the Bar
-    </Button>
-  )}
+              {recordingState === "selecting" && (
+                <Button size="lg" className="h-12 w-full max-w-sm gap-2" onClick={handleConfirmHide}>
+                  <CheckCircle2 className="h-5 w-5" />
+                  I've Hidden the Bar
+                </Button>
+              )}
 
-  {recordingState === "ready" && (
-    <Button variant="destructive" size="lg" className="h-12 w-full max-w-sm gap-2 text-base shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStartCountdown}>
-      <Circle className="h-5 w-5 fill-current" />
-      Start Recording
-    </Button>
-  )}
+              {recordingState === "ready" && (
+                <Button variant="destructive" size="lg" className="h-12 w-full max-w-sm gap-2 text-base shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStartCountdown}>
+                  <Circle className="h-5 w-5 fill-current" />
+                  Start Recording
+                </Button>
+              )}
 
-  {recordingState === "countdown" && (
-    <Button variant="outline" size="lg" disabled className="h-12 w-full max-w-sm">
-      Starting in {countdown}...
-    </Button>
-  )}
+              {recordingState === "countdown" && (
+                <Button variant="outline" size="lg" disabled className="h-12 w-full max-w-sm">
+                  Starting in {countdown}...
+                </Button>
+              )}
 
-  {(recordingState === "recording" || recordingState === "paused") && (
-    <>
-      <div className="flex w-full items-center justify-center gap-4">
-        {recordingState === "recording" ? (
-          <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handlePauseRecording}>
-            <Pause className="h-4 w-4 fill-current" />
-            Pause
-          </Button>
-        ) : (
-          <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handleResumeRecording}>
-            <Circle className="h-4 w-4 fill-current text-primary" />
-            Resume
-          </Button>
-        )}
+              {(recordingState === "recording" || recordingState === "paused") && (
+                <>
+                  <div className="flex w-full items-center justify-center gap-4">
+                    {recordingState === "recording" ? (
+                      <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handlePauseRecording}>
+                        <Pause className="h-4 w-4 fill-current" />
+                        Pause
+                      </Button>
+                    ) : (
+                      <Button variant="outline" size="lg" className="h-12 w-32 gap-2" onClick={handleResumeRecording}>
+                        <Circle className="h-4 w-4 fill-current text-primary" />
+                        Resume
+                      </Button>
+                    )}
 
-        <Button
-          variant="outline"
-          size="lg"
-          className="h-12 w-32 gap-2"
-          onClick={handleAddMarker}
-          disabled={recordingState === "paused"}
-        >
-          <Bookmark className="h-4 w-4" />
-          Marker
-        </Button>
+                    <Button
+                      variant="outline"
+                      size="lg"
+                      className="h-12 w-32 gap-2"
+                      onClick={handleAddMarker}
+                      disabled={recordingState === "paused"}
+                    >
+                      <Bookmark className="h-4 w-4" />
+                      Marker
+                    </Button>
 
-        <Button variant="destructive" size="lg" className="h-12 w-40 gap-2 shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStopRecording}>
-          <Square className="h-4 w-4 fill-current" />
-          Stop
-        </Button>
-      </div>
+                    <Button variant="destructive" size="lg" className="h-12 w-40 gap-2 shadow-lg shadow-destructive/20 hover:shadow-destructive/30" onClick={handleStopRecording}>
+                      <Square className="h-4 w-4 fill-current" />
+                      Stop
+                    </Button>
+                  </div>
 
-      {/* Keyboard Shortcuts Hint */}
-      <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
-        <div className="flex items-center gap-1">
-          <Keyboard className="h-3 w-3" />
-          <span>Space: Pause/Resume</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Keyboard className="h-3 w-3" />
-          <span>M: Add Marker</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Keyboard className="h-3 w-3" />
-          <span>Esc: Stop</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Keyboard className="h-3 w-3" />
-          <span>+/-: Zoom</span>
-        </div>
-        <div className="flex items-center gap-1">
-          <Keyboard className="h-3 w-3" />
-          <span>F: Follow Cursor</span>
-        </div>
-      </div>
+                  {/* Keyboard Shortcuts Hint */}
+                  <div className="flex flex-wrap items-center justify-center gap-4 text-xs text-muted-foreground">
+                    <div className="flex items-center gap-1">
+                      <Keyboard className="h-3 w-3" />
+                      <span>Space: Pause/Resume</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Keyboard className="h-3 w-3" />
+                      <span>M: Add Marker</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Keyboard className="h-3 w-3" />
+                      <span>Esc: Stop</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Keyboard className="h-3 w-3" />
+                      <span>+/-: Zoom</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <Keyboard className="h-3 w-3" />
+                      <span>F: Follow Cursor</span>
+                    </div>
+                  </div>
 
-      {/* Markers List */}
-      {markers.length > 0 && (
-        <div className="border-t border-border/50 pt-4">
-          <div className="text-xs font-medium text-muted-foreground mb-2">Markers:</div>
-          <div className="flex flex-wrap gap-2">
-            {markers.map((marker, idx) => (
-              <div
-                key={idx}
-                className="inline-flex items-center gap-1 px-2 py-1 rounded bg-primary/10 text-primary text-xs"
-              >
-                <Bookmark className="h-3 w-3" />
-                <span>{formatTime(marker.timestamp)}</span>
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-    </>
-  )}
-</div>
+                  {/* Markers List */}
+                  {markers.length > 0 && (
+                    <div className="border-t border-border/50 pt-4">
+                      <div className="text-xs font-medium text-muted-foreground mb-2">Markers:</div>
+                      <div className="flex flex-wrap gap-2">
+                        {markers.map((marker, idx) => (
+                          <div
+                            key={idx}
+                            className="inline-flex items-center gap-1 px-2 py-1 rounded bg-primary/10 text-primary text-xs"
+                          >
+                            <Bookmark className="h-3 w-3" />
+                            <span>{formatTime(marker.timestamp)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
           </div>
 
         </div>

@@ -68,28 +68,33 @@ export function DesignPanel() {
     };
 
     return (
-        <div className="space-y-6 p-4">
-            <Accordion type="single" collapsible defaultValue="layout" className="w-full">
+        <div className="space-y-4 p-4 pb-20">
+            <Accordion type="single" collapsible defaultValue="layout" className="w-full space-y-3">
 
                 {/* --- LAYOUT SECTION --- */}
-                <AccordionItem value="layout" className="border-b border-border/50">
-                    <AccordionTrigger className="hover:no-underline">
-                        <div className="flex items-center gap-2">
-                            <Layout className="h-4 w-4 text-primary" />
-                            <span className="font-semibold">Canvas & Layout</span>
+                <AccordionItem value="layout" className="border-none bg-card/40 backdrop-blur-sm rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                    <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3">
+                            <div className="p-1.5 rounded-lg bg-primary/10 text-primary">
+                                <Layout className="h-4 w-4" />
+                            </div>
+                            <span className="font-semibold text-sm tracking-wide">Canvas & Layout</span>
                         </div>
                     </AccordionTrigger>
-                    <AccordionContent className="space-y-4 pt-2">
+                    <AccordionContent className="px-4 pb-4 pt-2 space-y-5">
                         {/* Aspect Ratio */}
-                        <div className="space-y-2">
-                            <Label>Aspect Ratio</Label>
+                        <div className="space-y-3">
+                            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Aspect Ratio</Label>
                             <div className="grid grid-cols-2 gap-2">
                                 {ASPECT_RATIOS.map((ratio) => (
                                     <Button
                                         key={ratio.value}
-                                        variant={presentation.aspectRatio === ratio.value ? "secondary" : "outline"}
+                                        variant="outline"
                                         size="sm"
-                                        className={`justify-start gap-2 h-9 ${presentation.aspectRatio === ratio.value ? "bg-primary/10 border-primary/50 text-foreground" : ""}`}
+                                        className={`justify-start gap-2 h-10 transition-all ${presentation.aspectRatio === ratio.value
+                                                ? "bg-primary text-primary-foreground border-primary shadow-md hover:bg-primary/90"
+                                                : "bg-background/50 hover:bg-background border-border/40 text-muted-foreground hover:text-foreground"
+                                            }`}
                                         onClick={() => updatePresentation({ aspectRatio: ratio.value })}
                                     >
                                         <ratio.icon className="h-3.5 w-3.5" />
@@ -100,10 +105,10 @@ export function DesignPanel() {
                         </div>
 
                         {/* Screen DPR */}
-                        <div className="space-y-3 pt-2">
+                        <div className="space-y-3">
                             <div className="flex items-center justify-between">
-                                <Label>Pixel Density (DPR)</Label>
-                                <span className="text-xs text-muted-foreground font-mono">{presentation.screenDPR.toFixed(1)}x</span>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Pixel Density</Label>
+                                <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">{presentation.screenDPR.toFixed(1)}x</span>
                             </div>
                             <Slider
                                 min={0.5}
@@ -111,67 +116,71 @@ export function DesignPanel() {
                                 step={0.1}
                                 value={[presentation.screenDPR]}
                                 onValueChange={([value]) => updatePresentation({ screenDPR: value })}
+                                className="cursor-pointer"
                             />
                         </div>
 
-                        {/* Output Dimensions Readout (mostly for info) */}
-                        <div className="grid grid-cols-2 gap-4 pt-2">
-                            <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Width</Label>
-                                <Input
-                                    readOnly
-                                    className="h-8 font-mono text-xs bg-muted/50"
-                                    value={`${presentation.outputWidth}px`}
-                                />
+                        {/* Output Dimensions Readout */}
+                        <div className="grid grid-cols-2 gap-4">
+                            <div className="space-y-1.5">
+                                <Label className="text-[10px] text-muted-foreground uppercase">Width</Label>
+                                <div className="h-9 px-3 flex items-center bg-background/30 rounded-md border border-border/40 font-mono text-xs">
+                                    {presentation.outputWidth}px
+                                </div>
                             </div>
-                            <div className="space-y-1">
-                                <Label className="text-xs text-muted-foreground">Height</Label>
-                                <Input
-                                    readOnly
-                                    className="h-8 font-mono text-xs bg-muted/50"
-                                    value={`${presentation.outputHeight}px`}
-                                />
+                            <div className="space-y-1.5">
+                                <Label className="text-[10px] text-muted-foreground uppercase">Height</Label>
+                                <div className="h-9 px-3 flex items-center bg-background/30 rounded-md border border-border/40 font-mono text-xs">
+                                    {presentation.outputHeight}px
+                                </div>
                             </div>
                         </div>
                     </AccordionContent>
                 </AccordionItem>
 
                 {/* --- BACKGROUND SECTION --- */}
-                <AccordionItem value="background" className="border-b border-border/50">
-                    <AccordionTrigger className="hover:no-underline">
-                        <div className="flex items-center gap-2">
-                            <Palette className="h-4 w-4 text-primary" />
-                            <span className="font-semibold">Background</span>
+                <AccordionItem value="background" className="border-none bg-card/40 backdrop-blur-sm rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                    <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3">
+                            <div className="p-1.5 rounded-lg bg-pink-500/10 text-pink-500">
+                                <Palette className="h-4 w-4" />
+                            </div>
+                            <span className="font-semibold text-sm tracking-wide">Background</span>
                         </div>
                     </AccordionTrigger>
-                    <AccordionContent className="space-y-4 pt-2">
+                    <AccordionContent className="px-4 pb-4 pt-2 space-y-5">
                         {/* Mode Selection */}
-                        <div className="grid grid-cols-4 gap-1 p-1 bg-secondary/30 rounded-lg">
+                        <div className="p-1 bg-background/50 rounded-lg border border-border/40 grid grid-cols-4 gap-1">
                             {(['hidden', 'solid', 'gradient', 'image'] as const).map((mode) => (
-                                <Button
+                                <button
                                     key={mode}
-                                    variant="ghost"
-                                    size="sm"
-                                    className={`h-7 text-xs capitalize ${presentation.backgroundMode === mode ? "bg-background shadow-sm text-foreground" : "text-muted-foreground"}`}
+                                    className={`
+                                        h-8 rounded-md text-xs font-medium transition-all duration-200 capitalize
+                                        ${presentation.backgroundMode === mode
+                                            ? "bg-background shadow-sm text-foreground ring-1 ring-border/50"
+                                            : "text-muted-foreground hover:text-foreground hover:bg-white/5"}
+                                    `}
                                     onClick={() => updatePresentation({ backgroundMode: mode })}
                                 >
                                     {mode}
-                                </Button>
+                                </button>
                             ))}
                         </div>
 
                         {presentation.backgroundMode === 'solid' && (
-                            <div className="space-y-2">
-                                <Label>Color</Label>
-                                <div className="flex gap-2">
+                            <div className="space-y-2 animate-in fade-in zoom-in-95 duration-200">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Color</Label>
+                                <div className="flex gap-2 items-center">
+                                    <div className="relative h-10 w-10 shrink-0 overflow-hidden rounded-lg border border-border/50 shadow-sm transition-transform active:scale-95">
+                                        <input
+                                            type="color"
+                                            className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer border-0"
+                                            value={presentation.backgroundColor}
+                                            onChange={(e) => updatePresentation({ backgroundColor: e.target.value })}
+                                        />
+                                    </div>
                                     <Input
-                                        type="color"
-                                        className="h-9 w-9 p-1 cursor-pointer"
-                                        value={presentation.backgroundColor}
-                                        onChange={(e) => updatePresentation({ backgroundColor: e.target.value })}
-                                    />
-                                    <Input
-                                        className="flex-1 h-9 font-mono"
+                                        className="h-10 font-mono text-xs bg-background/50 border-border/40"
                                         value={presentation.backgroundColor}
                                         onChange={(e) => updatePresentation({ backgroundColor: e.target.value })}
                                     />
@@ -180,9 +189,9 @@ export function DesignPanel() {
                         )}
 
                         {presentation.backgroundMode === 'gradient' && (
-                            <div className="space-y-4">
+                            <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
                                 <div className="space-y-2">
-                                    <Label>Gradient Type</Label>
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Gradient Type</Label>
                                     <Select
                                         value={presentation.backgroundGradient.type}
                                         onValueChange={(val: 'linear' | 'radial') =>
@@ -191,7 +200,9 @@ export function DesignPanel() {
                                             })
                                         }
                                     >
-                                        <SelectTrigger><SelectValue /></SelectTrigger>
+                                        <SelectTrigger className="h-9 bg-background/50 border-border/40">
+                                            <SelectValue />
+                                        </SelectTrigger>
                                         <SelectContent>
                                             <SelectItem value="linear">Linear</SelectItem>
                                             <SelectItem value="radial">Radial</SelectItem>
@@ -200,26 +211,31 @@ export function DesignPanel() {
                                 </div>
                                 <div className="flex gap-2">
                                     {presentation.backgroundGradient.stops.map((stop, index) => (
-                                        <div key={index} className="space-y-1 flex-1">
-                                            <Label className="text-xs">Stop {index + 1}</Label>
-                                            <Input
-                                                type="color"
-                                                className="h-8 w-full p-1"
-                                                value={stop.color}
-                                                onChange={(e) => {
-                                                    const newStops = [...presentation.backgroundGradient.stops];
-                                                    newStops[index] = { ...stop, color: e.target.value };
-                                                    updatePresentation({
-                                                        backgroundGradient: { ...presentation.backgroundGradient, stops: newStops }
-                                                    });
-                                                }}
-                                            />
+                                        <div key={index} className="space-y-1.5 flex-1">
+                                            <Label className="text-[10px] text-muted-foreground uppercase">Stop {index + 1}</Label>
+                                            <div className="relative h-8 w-full overflow-hidden rounded-md border border-border/50">
+                                                <input
+                                                    type="color"
+                                                    className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer"
+                                                    value={stop.color}
+                                                    onChange={(e) => {
+                                                        const newStops = [...presentation.backgroundGradient.stops];
+                                                        newStops[index] = { ...stop, color: e.target.value };
+                                                        updatePresentation({
+                                                            backgroundGradient: { ...presentation.backgroundGradient, stops: newStops }
+                                                        });
+                                                    }}
+                                                />
+                                            </div>
                                         </div>
                                     ))}
                                 </div>
                                 {presentation.backgroundGradient.type === 'linear' && (
-                                    <div className="space-y-2">
-                                        <Label>Angle: {presentation.backgroundGradient.angle}°</Label>
+                                    <div className="space-y-3">
+                                        <div className="flex items-center justify-between">
+                                            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Angle</Label>
+                                            <span className="text-xs font-mono text-muted-foreground">{presentation.backgroundGradient.angle}°</span>
+                                        </div>
                                         <Slider
                                             min={0}
                                             max={360}
@@ -239,8 +255,8 @@ export function DesignPanel() {
                         {(presentation.backgroundMode !== 'hidden') && (
                             <div className="space-y-3 pt-2">
                                 <div className="flex items-center justify-between">
-                                    <Label>Blur Intensity</Label>
-                                    <span className="text-xs text-muted-foreground">{presentation.backgroundBlur}px</span>
+                                    <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Blur</Label>
+                                    <span className="text-xs font-mono text-muted-foreground">{presentation.backgroundBlur}px</span>
                                 </div>
                                 <Slider
                                     min={0}
@@ -255,68 +271,73 @@ export function DesignPanel() {
                 </AccordionItem>
 
                 {/* --- VIDEO FRAME SECTION --- */}
-                <AccordionItem value="frame" className="border-b border-border/50">
-                    <AccordionTrigger className="hover:no-underline">
-                        <div className="flex items-center gap-2">
-                            <Crop className="h-4 w-4 text-primary" />
-                            <span className="font-semibold">Frame & Style</span>
+                <AccordionItem value="frame" className="border-none bg-card/40 backdrop-blur-sm rounded-xl overflow-hidden shadow-sm hover:shadow-md transition-all duration-300">
+                    <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-white/5 transition-colors">
+                        <div className="flex items-center gap-3">
+                            <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-500">
+                                <Crop className="h-4 w-4" />
+                            </div>
+                            <span className="font-semibold text-sm tracking-wide">Frame & Style</span>
                         </div>
                     </AccordionTrigger>
-                    <AccordionContent className="space-y-6 pt-2">
+                    <AccordionContent className="px-4 pb-4 pt-2 space-y-6">
                         {/* --- CORNER RADIUS --- */}
-                        <div className="space-y-3 pt-2">
+                        <div className="space-y-3">
                             <div className="flex items-center justify-between">
-                                <Label>Corner Radius</Label>
-                                <div className="flex items-center gap-2">
-                                    <Switch
-                                        checked={presentation.videoCrop.roundedCorners}
-                                        onCheckedChange={(c) => updateVideoCrop({ roundedCorners: c, enabled: true })}
-                                    />
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Corner Radius</Label>
+                                <div className="flex items-center gap-3">
                                     {presentation.videoCrop.roundedCorners && (
                                         <Input
                                             type="number"
-                                            className="h-7 w-14 text-xs text-right"
+                                            className="h-6 w-12 text-xs text-center p-0 bg-background/50 border-border/40"
                                             value={presentation.videoCrop.cornerRadius}
                                             onChange={(e) => updateVideoCrop({ cornerRadius: Number(e.target.value) })}
                                         />
                                     )}
+                                    <Switch
+                                        checked={presentation.videoCrop.roundedCorners}
+                                        onCheckedChange={(c) => updateVideoCrop({ roundedCorners: c, enabled: true })}
+                                    />
                                 </div>
                             </div>
                         </div>
 
                         {/* --- BORDER --- */}
-                        <div className="space-y-3 pt-2 border-t border-border/40">
+                        <div className="space-y-3">
                             <div className="flex items-center justify-between">
-                                <Label>Border</Label>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Border</Label>
                                 <Switch
                                     checked={presentation.videoStyle.borderEnabled}
                                     onCheckedChange={(c) => updateVideoStyle({ borderEnabled: c })}
                                 />
                             </div>
                             {presentation.videoStyle.borderEnabled && (
-                                <div className="grid grid-cols-2 gap-4">
-                                    <div className="space-y-1">
-                                        <Label className="text-xs text-muted-foreground">Color</Label>
+                                <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] text-muted-foreground uppercase">Color</Label>
                                         <div className="flex gap-2">
+                                            <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md border border-border/50">
+                                                <input
+                                                    type="color"
+                                                    className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer"
+                                                    value={presentation.videoStyle.borderColor}
+                                                    onChange={(e) => updateVideoStyle({ borderColor: e.target.value })}
+                                                />
+                                            </div>
                                             <Input
-                                                type="color"
-                                                className="h-8 w-8 p-1 cursor-pointer"
-                                                value={presentation.videoStyle.borderColor}
-                                                onChange={(e) => updateVideoStyle({ borderColor: e.target.value })}
-                                            />
-                                            <Input
-                                                className="flex-1 h-8 font-mono text-xs"
+                                                className="flex-1 h-8 font-mono text-xs bg-background/50 border-border/40"
                                                 value={presentation.videoStyle.borderColor}
                                                 onChange={(e) => updateVideoStyle({ borderColor: e.target.value })}
                                             />
                                         </div>
                                     </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-xs text-muted-foreground">Width (px)</Label>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] text-muted-foreground uppercase">Width</Label>
                                         <Slider
                                             min={1} max={50} step={1}
                                             value={[presentation.videoStyle.borderWidth]}
                                             onValueChange={([val]) => updateVideoStyle({ borderWidth: val })}
+                                            className="pt-2"
                                         />
                                     </div>
                                 </div>
@@ -324,43 +345,45 @@ export function DesignPanel() {
                         </div>
 
                         {/* --- SHADOW --- */}
-                        <div className="space-y-3 pt-2 border-t border-border/40">
+                        <div className="space-y-3">
                             <div className="flex items-center justify-between">
-                                <Label>Shadow</Label>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Shadow</Label>
                                 <Switch
                                     checked={presentation.videoStyle.shadowEnabled}
                                     onCheckedChange={(c) => updateVideoStyle({ shadowEnabled: c })}
                                 />
                             </div>
                             {presentation.videoStyle.shadowEnabled && (
-                                <div className="space-y-3">
-                                    <div className="space-y-1">
-                                        <Label className="text-xs text-muted-foreground">Color</Label>
+                                <div className="space-y-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] text-muted-foreground uppercase">Color</Label>
                                         <div className="flex gap-2">
+                                            <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md border border-border/50">
+                                                <input
+                                                    type="color"
+                                                    className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer"
+                                                    value={presentation.videoStyle.shadowColor}
+                                                    onChange={(e) => updateVideoStyle({ shadowColor: e.target.value })}
+                                                />
+                                            </div>
                                             <Input
-                                                type="color"
-                                                className="h-8 w-8 p-1 cursor-pointer"
-                                                value={presentation.videoStyle.shadowColor}
-                                                onChange={(e) => updateVideoStyle({ shadowColor: e.target.value })}
-                                            />
-                                            <Input
-                                                className="flex-1 h-8 font-mono text-xs"
+                                                className="flex-1 h-8 font-mono text-xs bg-background/50 border-border/40"
                                                 value={presentation.videoStyle.shadowColor}
                                                 onChange={(e) => updateVideoStyle({ shadowColor: e.target.value })}
                                             />
                                         </div>
                                     </div>
                                     <div className="grid grid-cols-2 gap-4">
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-muted-foreground">Blur</Label>
+                                        <div className="space-y-1.5">
+                                            <Label className="text-[10px] text-muted-foreground uppercase">Blur</Label>
                                             <Slider
                                                 min={0} max={100} step={1}
                                                 value={[presentation.videoStyle.shadowBlur]}
                                                 onValueChange={([val]) => updateVideoStyle({ shadowBlur: val })}
                                             />
                                         </div>
-                                        <div className="space-y-1">
-                                            <Label className="text-xs text-muted-foreground">Offset Y</Label>
+                                        <div className="space-y-1.5">
+                                            <Label className="text-[10px] text-muted-foreground uppercase">Offset</Label>
                                             <Slider
                                                 min={-50} max={50} step={1}
                                                 value={[presentation.videoStyle.shadowOffsetY]}
@@ -372,25 +395,23 @@ export function DesignPanel() {
                             )}
                         </div>
 
-                        {/* --- TRANSFORM / ROTATION --- */}
-                        <div className="space-y-3 pt-2 border-t border-border/40">
-                            <div className="space-y-1">
-                                <div className="flex items-center justify-between">
-                                    <Label>Rotation</Label>
-                                    <span className="text-xs font-mono text-muted-foreground">{presentation.videoStyle.rotation}°</span>
-                                </div>
-                                <Slider
-                                    min={-180} max={180} step={1}
-                                    value={[presentation.videoStyle.rotation]}
-                                    onValueChange={([val]) => updateVideoStyle({ rotation: val })}
-                                />
+                        {/* --- ROTATION --- */}
+                        <div className="space-y-3">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Rotation</Label>
+                                <span className="text-xs font-mono text-muted-foreground">{presentation.videoStyle.rotation}°</span>
                             </div>
+                            <Slider
+                                min={-180} max={180} step={1}
+                                value={[presentation.videoStyle.rotation]}
+                                onValueChange={([val]) => updateVideoStyle({ rotation: val })}
+                            />
                         </div>
 
                         {/* Container Padding */}
-                        <div className="space-y-3 pt-2 border-t border-border/40">
+                        <div className="space-y-3">
                             <div className="flex items-center justify-between">
-                                <Label>Container Padding</Label>
+                                <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Padding</Label>
                                 <Switch
                                     checked={presentation.videoPadding.enabled}
                                     onCheckedChange={(c) => updateVideoPadding({ enabled: c })}
@@ -398,19 +419,19 @@ export function DesignPanel() {
                             </div>
 
                             {presentation.videoPadding.enabled && (
-                                <div className="grid grid-cols-2 gap-2">
-                                    <div className="space-y-1">
-                                        <Label className="text-xs text-muted-foreground">Vertical</Label>
+                                <div className="grid grid-cols-2 gap-4 animate-in fade-in slide-in-from-top-1 duration-200">
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] text-muted-foreground uppercase">Vertical</Label>
                                         <Slider
                                             min={0}
                                             max={200}
                                             step={1}
-                                            value={[presentation.videoPadding.top]} // assuming uniform for now simple UI
+                                            value={[presentation.videoPadding.top]}
                                             onValueChange={([val]) => updateVideoPadding({ top: val, bottom: val, uniform: true })}
                                         />
                                     </div>
-                                    <div className="space-y-1">
-                                        <Label className="text-xs text-muted-foreground">Horizontal</Label>
+                                    <div className="space-y-1.5">
+                                        <Label className="text-[10px] text-muted-foreground uppercase">Horizontal</Label>
                                         <Slider
                                             min={0}
                                             max={200}
@@ -424,7 +445,6 @@ export function DesignPanel() {
                         </div>
                     </AccordionContent>
                 </AccordionItem>
-
             </Accordion>
         </div>
     );

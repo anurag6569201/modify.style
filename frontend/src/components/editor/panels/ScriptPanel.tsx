@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Wand2, Loader2, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 
+
 export function ScriptPanel() {
     const { toast } = useToast();
     const [script, setScript] = useState(
@@ -28,38 +29,47 @@ export function ScriptPanel() {
     };
 
     return (
-        <div className="space-y-6 p-4 h-full flex flex-col">
-            <div className="flex items-center justify-between pb-2 border-b border-border/50">
-                <Label className="font-semibold flex items-center gap-2">
-                    <FileText className="h-4 w-4" />
-                    Video Script
-                </Label>
-                <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={handleGenerateScript}
-                    disabled={isGeneratingScript}
-                    className="h-7 text-xs"
-                >
-                    {isGeneratingScript ? (
-                        <Loader2 className="mr-2 h-3 w-3 animate-spin" />
-                    ) : (
-                        <Wand2 className="mr-2 h-3 w-3" />
-                    )}
-                    Generate AI Script
-                </Button>
-            </div>
+        <div className="h-full flex flex-col p-2 space-y-4">
+            <div className="bg-card/40 backdrop-blur-sm rounded-xl border-none shadow-sm flex-1 flex flex-col space-y-4">
+                <div className="flex items-center justify-between pb-2 border-b border-border/10">
+                    <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
+                        <FileText className="h-3.5 w-3.5" />
+                        Video Script
+                    </Label>
+                    <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleGenerateScript}
+                        disabled={isGeneratingScript}
+                        className="h-7 text-xs bg-primary/10 text-primary border-primary/20 hover:bg-primary/20 hover:text-primary transition-all shadow-sm"
+                    >
+                        {isGeneratingScript ? (
+                            <Loader2 className="mr-2 h-3 w-3 animate-spin" />
+                        ) : (
+                            <Wand2 className="mr-2 h-3 w-3" />
+                        )}
+                        Generate Script
+                    </Button>
+                </div>
+                <hr className='pt-0 mt-0' />
+                <div className="flex flex-col " style={{ height: '100%', justifyContent: 'space-between' }}>
 
-            <div className="flex-1 flex flex-col space-y-2">
-                <Textarea
-                    value={script}
-                    onChange={(e) => setScript(e.target.value)}
-                    placeholder="Enter your video script here..."
-                    className="flex-1 resize-none font-mono text-sm leading-relaxed"
-                />
-                <p className="text-xs text-muted-foreground text-right">
-                    {script.split(" ").length} words • ~{Math.ceil(script.split(" ").length / 2.5)}s read time
-                </p>
+                    <div>
+                        <div className="absolute inset-0 bg-gradient-to-b from-transparent pointer-events-none rounded-md" style={{ height: '100%' }} />
+                        <Textarea
+                            value={script}
+                            onChange={(e) => setScript(e.target.value)}
+                            placeholder="Enter your video script here..."
+                            style={{ maxHeight: '320px', minHeight: '300px' }}
+                            className="flex-1 w-full h-full resize-none font-sans text-sm leading-relaxed bg-background/0 border-border/0 focus:border-primary/0 focus:bg-background/0 focus-visible:ring-0 focus-visible:ring-offset-0 transition-all p-0 rounded-md shadow-none"
+                        />
+                    </div>
+                </div>
+                <div className="flex justify-end items-center gap-2 text-[10px] text-muted-foreground font-mono bg-background/30 px-2 py-1 rounded-full self-end border border-border/10">
+                    <span>{script.split(" ").length} words</span>
+                    <span className="w-px h-2 bg-border/50" />
+                    <span>~{Math.ceil(script.split(" ").length / 2.5)}s read time</span>
+                </div>
             </div>
         </div>
     );

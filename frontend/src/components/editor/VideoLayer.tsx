@@ -108,15 +108,34 @@ export const VideoLayer: React.FC = () => {
 
     const handleLoadedMetadata = (e: React.SyntheticEvent<HTMLVideoElement>) => {
         const video = e.currentTarget;
+        let duration = video.duration;
         const width = video.videoWidth || videoConfig.width || 1920;
         const height = video.videoHeight || videoConfig.height || 1080;
 
-        editorStore.setVideo({
-            duration: video.duration || 0,
-            width,
-            height,
-            aspectRatio: width / height
-        });
+        // Fix for Chrome MediaRecorder Infinity duration bug
+        if (duration === Infinity) {
+            video.currentTime = 1e101;
+            video.ontimeupdate = () => {
+                video.ontimeupdate = null;
+                video.currentTime = 0;
+                duration = video.duration;
+
+                // Update store with corrected duration
+                editorStore.setVideo({
+                    duration: duration || 0,
+                    width,
+                    height,
+                    aspectRatio: width / height
+                });
+            };
+        } else {
+            editorStore.setVideo({
+                duration: duration || 0,
+                width,
+                height,
+                aspectRatio: width / height
+            });
+        }
 
         // Update canvas dimensions
         const canvas = canvasRef.current;
@@ -208,6 +227,23 @@ export const VideoLayer: React.FC = () => {
         };
     }, [playback.isPlaying, colorGrading, videoConfig.width, videoConfig.height, videoConfig.url, presentation.videoCrop]);
 
+    // Handle duration change explicitly
+    const handleDurationChange = (e: React.SyntheticEvent<HTMLVideoElement>) => {
+        const video = e.currentTarget;
+        const duration = video.duration;
+        // Ignore Infinity here, handled in loadedmetadata or timeupdate
+        if (duration > 0 && duration !== Infinity) {
+            const width = video.videoWidth || videoConfig.width || 1920;
+            const height = video.videoHeight || videoConfig.height || 1080;
+            editorStore.setVideo({
+                duration,
+                width,
+                height,
+                aspectRatio: width / height
+            });
+        }
+    };
+
     return (
         <div
             className="absolute inset-0 flex items-center justify-center pointer-events-none"
@@ -227,6 +263,7 @@ export const VideoLayer: React.FC = () => {
                         onTimeUpdate={handleTimeUpdate}
                         onLoadedMetadata={handleLoadedMetadata}
                         onLoadedData={handleLoadedMetadata}
+                        onDurationChange={handleDurationChange}
                         onEnded={() => editorStore.setPlayback({ isPlaying: false })}
                         playsInline
                         crossOrigin="anonymous"

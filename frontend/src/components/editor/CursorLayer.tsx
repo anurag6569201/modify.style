@@ -192,7 +192,7 @@ export const CursorLayer: React.FC = () => {
             const state = editorStore.getState();
             const time = state.playback.currentTime;
             const { width, height } = state.video;
-            
+
             // Use canvas dimensions for rendering
             const canvasWidth = canvas.width || width || 1920;
             const canvasHeight = canvas.height || height || 1080;
@@ -398,21 +398,21 @@ export const CursorLayer: React.FC = () => {
                 activeClicks.forEach(click => {
                     const timeSinceClick = time - click.timestamp;
                     const progress = Math.max(0, Math.min(1, (timeSinceClick - CLICK_DELAY) / ANIMATION_DURATION));
-                    
+
                     // Apply easing
                     const easedProgress = applyEasing(progress, state.effects.clickEasing);
-                    
+
                     // Apply force multiplier
                     const force = state.effects.clickForce;
-                    
+
                     const cx = click.x * canvasWidth;
                     const cy = click.y * canvasHeight;
-                    
+
                     // Get color based on click type
                     const baseColor = click.type === 'rightClick'
                         ? { r: 239, g: 68, b: 68 }
                         : { r: 59, g: 130, b: 246 };
-                    
+
                     // Render based on animation style
                     switch (state.effects.clickAnimationStyle) {
                         case 'ripple':
@@ -442,7 +442,7 @@ export const CursorLayer: React.FC = () => {
                 const sprites = cursorSpritesRef.current;
                 const sprite = sprites[cursorState.state] || sprites.normal;
 
-                if (sprite && sprite.complete) {
+                if (sprite && sprite.complete && sprite.naturalWidth > 0) {
                     const baseSize = 32;
                     const size = baseSize * state.cursor.size;
 
@@ -469,7 +469,7 @@ export const CursorLayer: React.FC = () => {
                             ctx.shadowColor = glow.color;
                             ctx.shadowBlur = glow.blur;
                             ctx.globalAlpha = glow.alpha;
-                            ctx.drawImage(sprite, cx - size/2, cy - size/2, size, size);
+                            ctx.drawImage(sprite, cx - size / 2, cy - size / 2, size, size);
                         });
 
                         ctx.globalAlpha = 1.0;
@@ -479,7 +479,7 @@ export const CursorLayer: React.FC = () => {
                     // Draw main cursor sprite
                     ctx.shadowColor = "rgba(0,0,0,0.3)";
                     ctx.shadowBlur = 2;
-                    ctx.drawImage(sprite, cx - size/2, cy - size/2, size, size);
+                    ctx.drawImage(sprite, cx - size / 2, cy - size / 2, size, size);
 
                     // Add velocity-based motion blur for fast movements
                     const speed = Math.sqrt(cursorState.velocity.x ** 2 + cursorState.velocity.y ** 2);
@@ -492,8 +492,8 @@ export const CursorLayer: React.FC = () => {
                         const blurY = Math.sin(angle) * blurOffset;
 
                         ctx.drawImage(sprite,
-                            cx - size/2 + blurX,
-                            cy - size/2 + blurY,
+                            cx - size / 2 + blurX,
+                            cy - size / 2 + blurY,
                             size, size
                         );
                         ctx.globalAlpha = 1.0;
@@ -506,8 +506,8 @@ export const CursorLayer: React.FC = () => {
                         ctx.shadowBlur = 15;
                         ctx.shadowColor = state.cursor.color;
                         ctx.drawImage(sprite,
-                            cx - size/2 * breathe,
-                            cy - size/2 * breathe,
+                            cx - size / 2 * breathe,
+                            cy - size / 2 * breathe,
                             size * breathe,
                             size * breathe
                         );

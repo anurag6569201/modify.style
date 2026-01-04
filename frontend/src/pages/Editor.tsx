@@ -11,6 +11,7 @@ import { editorStore, useEditorState } from "@/lib/editor/store";
 import { EditorPanel } from "@/components/editor/EditorPanel";
 import { TransitionEngine, TransitionType, easings } from "@/lib/effects/transitions";
 import { calculateOutputDimensions } from "@/lib/composition/aspectRatio";
+import { VideoControls } from "@/components/editor/VideoControls";
 
 
 
@@ -217,6 +218,33 @@ export default function Editor() {
       startTime: editorState.playback.currentTime,
       endTime: Math.min(editorState.playback.currentTime + 3, editorState.video.duration),
       animation: "fade" as const,
+      // Default Advanced Properties
+      rotation: 0,
+      scale: 1,
+      opacity: 1,
+      fontFamily: "Inter",
+      fontWeight: "normal",
+      fontStyle: "normal" as const,
+      textAlign: "center" as const,
+      lineHeight: 1.2,
+      letterSpacing: 0,
+      backgroundColor: "transparent",
+      padding: 0,
+      borderRadius: 0,
+      borderWidth: 0,
+      borderColor: "transparent",
+      shadowColor: "transparent",
+      shadowBlur: 0,
+      shadowOffsetX: 0,
+      shadowOffsetY: 0,
+      backdropBlur: 0,
+      textTransform: "none" as const,
+      gradient: {
+        enabled: false,
+        colors: [],
+        angle: 45
+      },
+      blendMode: "normal" as const
     };
     editorStore.setState({
       textOverlays: [...editorState.textOverlays, newOverlay]
@@ -327,64 +355,16 @@ export default function Editor() {
 
       <main className="flex-1">
         <div className="container py-6">
-          {/* Top Bar */}
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold">
-                {id === "new" ? "New Demo" : "Product Onboarding Demo"}
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Edit your demo video • {editorState.events.clicks.length} clicks • {editorState.events.markers.length} markers
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="text-xs text-muted-foreground hidden lg:flex items-center gap-1">
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Space</span>
-                <span>Play/Pause</span>
-                <span>•</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">←</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">→</span>
-                <span>Seek</span>
-                <span>•</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+←</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+→</span>
-                <span>Frame</span>
-                <span>•</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Ctrl+M</span>
-                <span>Marker</span>
-              </div>
-              <Button variant="hero" onClick={handleRender}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Render Video
-              </Button>
-            </div>
-          </div>
 
           {/* Split Layout */}
-          <div className="grid gap-6 lg:grid-cols-2">
+          <div className="grid gap-6 lg:grid-cols-2" >
             {/* Left - Video Preview */}
-            <div className="space-y-4">
-              <div className="overflow-hidden rounded-xl border border-border bg-card">
-                {/* Browser Chrome */}
-                <div className="flex items-center gap-3 border-b border-border/50 bg-secondary/30 px-4 py-3">
-                  <div className="flex gap-1.5">
-                    <div className="h-2.5 w-2.5 rounded-full bg-red-400/80" />
-                    <div className="h-2.5 w-2.5 rounded-full bg-yellow-400/80" />
-                    <div className="h-2.5 w-2.5 rounded-full bg-green-400/80" />
-                  </div>
-                  <div className="flex-1 text-center">
-                    <div className="inline-flex items-center gap-1.5 rounded bg-background/50 px-2 py-0.5 text-xs text-muted-foreground font-medium">
-                      <Video className="h-3 w-3" />
-                      Preview
-                    </div>
-                  </div>
-                  <div className="w-12" /> {/* Spacer for centering */}
-                </div>
-
+            <div className="space-y-4 h-[500px]" >
+              <div className="h-[500px] overflow-hidden rounded-xl border border-border bg-card" style={{display:'flex',justifyContent:'space-between',flexDirection:'column'}}>
                 {/* Video Preview */}
                 <div
                   ref={videoContainerRef}
-                  className="main_video_stream relative bg-black flex items-center justify-center overflow-hidden rounded-lg shadow-2xl border border-border/50"
+                  className="main_video_stream relative bg-black flex items-center justify-center overflow-hidden rounded-lg shadow-2xl border border-border/50 group"
                   style={{
                     isolation: 'isolate',
                     aspectRatio: editorState.presentation.outputWidth > 0 && editorState.presentation.outputHeight > 0
@@ -399,47 +379,6 @@ export default function Editor() {
                       <Stage />
                       <CameraDebugOverlay />
 
-                      {/* Text Overlays */}
-                      {editorState.textOverlays.map((overlay) => {
-                        const currentTime = editorState.playback.currentTime;
-                        const isVisible = currentTime >= overlay.startTime && currentTime <= overlay.endTime;
-                        if (!isVisible) return null;
-
-                        const progress = (currentTime - overlay.startTime) / (overlay.endTime - overlay.startTime);
-                        let opacity = 1;
-                        let translateY = 0;
-
-                        if (overlay.animation === "fade") {
-                          const fadeIn = Math.min(1, progress * 5);
-                          const fadeOut = Math.min(1, (1 - progress) * 5);
-                          opacity = Math.min(fadeIn, fadeOut);
-                        } else if (overlay.animation === "slide") {
-                          opacity = Math.min(1, progress * 3);
-                          translateY = (1 - progress) * 20;
-                        }
-
-                        return (
-                          <div
-                            key={overlay.id}
-                            className="absolute pointer-events-none z-50"
-                            style={{
-                              left: `${overlay.x * 100}%`,
-                              top: `${overlay.y * 100}%`,
-                              transform: `translate(-50%, -50%) translateY(${translateY}px)`,
-                              opacity,
-                              fontSize: `${overlay.fontSize}px`,
-                              color: overlay.color,
-                              fontWeight: 'bold',
-                              textShadow: '2px 2px 4px rgba(0,0,0,0.8)',
-                              transition: 'opacity 0.1s, transform 0.1s',
-                            }}
-                          >
-                            {overlay.text}
-                          </div>
-                        );
-                      })}
-
-
                     </>
                   ) : (
                     <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-hero shadow-glow">
@@ -448,214 +387,48 @@ export default function Editor() {
                   )}
                 </div>
 
-                {/* Playback Controls */}
-                <div className="flex flex-col gap-2 border-t border-border bg-secondary/30 p-4">
-                  {/* Progress Bar */}
-                  <div className="relative h-1.5 w-full cursor-pointer">
-                    <input
-                      type="range"
-                      min="0"
-                      max={editorState.video.duration || 100}
-                      value={editorState.playback.currentTime}
-                      onChange={handleSeek}
-                      className="absolute inset-0 z-10 w-full opacity-0 cursor-pointer"
-                    />
-                    <div className="absolute inset-0 overflow-hidden rounded-full bg-secondary">
-                      <div
-                        className="h-full bg-gradient-hero transition-all duration-100 ease-linear"
-                        style={{ width: `${(editorState.playback.currentTime / (editorState.video.duration || 1)) * 100}%` }}
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex items-center justify-between pt-2">
-                    <div className="flex items-center gap-4">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 hover:bg-white/10"
-                        onClick={togglePlay}
-                      >
-                        {editorState.playback.isPlaying ? (
-                          <Pause className="h-4 w-4" />
-                        ) : (
-                          <Play className="h-4 w-4" />
-                        )}
-                      </Button>
-
-                      <span className="text-sm font-medium text-muted-foreground w-24">
-                        {formatTime(editorState.playback.currentTime)} / {editorState.video.duration > 0 && isFinite(editorState.video.duration) ? formatTime(editorState.video.duration) : "--:--"}
-                      </span>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 hover:bg-white/10"
-                        onClick={toggleMute}
-                      >
-                        {editorState.playback.isMuted || editorState.playback.volume === 0 ? (
-                          <VolumeX className="h-4 w-4" />
-                        ) : (
-                          <Volume2 className="h-4 w-4" />
-                        )}
-                      </Button>
-                      {/* Volume Slider - using range input for simplicity for now, can upgrade to shadcn slider later */}
-                      <div className="w-20">
-                        <Slider
-                          defaultValue={[1]}
-                          max={1}
-                          step={0.1}
-                          value={[editorState.playback.isMuted ? 0 : editorState.playback.volume]}
-                          onValueChange={handleVolumeChange}
-                        />
-                      </div>
-                    </div>
-                  </div>
+                {/* New Video Controls Component */}
+                <div className="pt-2">
+                  <VideoControls
+                    isPlaying={editorState.playback.isPlaying}
+                    isMuted={editorState.playback.isMuted}
+                    volume={editorState.playback.volume}
+                    currentTime={editorState.playback.currentTime}
+                    duration={editorState.video.duration || 0}
+                    playbackSpeed={playbackSpeed}
+                    onPlayPause={togglePlay}
+                    onSeek={(time) => editorStore.setPlayback({ currentTime: time })}
+                    onVolumeChange={(vol) => editorStore.setPlayback({ volume: vol, isMuted: vol === 0 })}
+                    onToggleMute={toggleMute}
+                    onSpeedChange={setPlaybackSpeed}
+                    onFrameStep={(direction) => {
+                      const frameTime = 1 / 30;
+                      const newTime = direction === 'forward'
+                        ? editorState.playback.currentTime + frameTime
+                        : editorState.playback.currentTime - frameTime;
+                      editorStore.setPlayback({ currentTime: Math.max(0, Math.min(newTime, editorState.video.duration)) });
+                    }}
+                    onFullscreen={() => {
+                      if (videoContainerRef.current) {
+                        if (!document.fullscreenElement) {
+                          videoContainerRef.current.requestFullscreen();
+                        } else {
+                          document.exitFullscreen();
+                        }
+                      }
+                    }}
+                  />
                 </div>
               </div>
             </div>
 
             {/* Right - Control Panel */}
-            <div className="rounded-xl border border-border bg-card overflow-hidden h-[600px] lg:h-auto font-sans">
+            <div className="rounded-xl border border-border bg-card overflow-hidden font-sans h-[500px]">
               <EditorPanel />
             </div>
           </div>
 
-          {/* Advanced Timeline */}
           < div className="mt-6 rounded-xl border border-border bg-card" >
-            {/* Timeline Controls */}
-            < div className="flex items-center gap-2 border-b border-border bg-secondary/30 p-4 flex-wrap" >
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  const newMarker: TimelineEvent = {
-                    id: Date.now().toString(),
-                    type: 'marker',
-                    time: editorState.playback.currentTime,
-                    label: `Marker at ${formatTime(editorState.playback.currentTime)}`,
-                  };
-                  editorStore.setState({
-                    events: {
-                      ...editorState.events,
-                      markers: [...editorState.events.markers, newMarker],
-                    }
-                  });
-                  toast({
-                    title: "Marker added",
-                    description: `Added at ${formatTime(editorState.playback.currentTime)}`,
-                  });
-                }}
-                className="gap-2"
-              >
-                <Plus className="h-4 w-4" />
-                Add Marker
-              </Button>
-
-              {/* Frame Navigation */}
-              <div className="h-6 w-px bg-border" />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  const duration = editorState.video.duration || 0;
-                  if (duration <= 0) return;
-                  const frameTime = 1 / 30; // Assuming 30fps
-                  const newTime = Math.max(0, editorState.playback.currentTime - frameTime);
-                  if (isFinite(newTime)) {
-                    editorStore.setPlayback({ currentTime: newTime });
-                  }
-                }}
-                title="Previous Frame (←)"
-              >
-                <Minus className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => {
-                  const duration = editorState.video.duration || 0;
-                  if (duration <= 0) return;
-                  const frameTime = 1 / 30; // Assuming 30fps
-                  const newTime = Math.min(duration, editorState.playback.currentTime + frameTime);
-                  if (isFinite(newTime)) {
-                    editorStore.setPlayback({ currentTime: newTime });
-                  }
-                }}
-                title="Next Frame (→)"
-              >
-                <Plus className="h-4 w-4" />
-              </Button>
-
-              {/* Zoom Controls */}
-              <div className="h-6 w-px bg-border" />
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setTimelineZoom(Math.max(0.1, timelineZoom - 0.1))}
-                title="Zoom out"
-              >
-                <Search className="h-4 w-4" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setTimelineZoom(Math.min(5, timelineZoom + 0.1))}
-                title="Zoom in"
-              >
-                <ZoomIn className="h-4 w-4" />
-              </Button>
-
-              {/* Playback Speed */}
-              <div className="h-6 w-px bg-border" />
-              <div className="flex items-center gap-2">
-                <Label className="text-xs text-muted-foreground whitespace-nowrap">Speed:</Label>
-                <Select
-                  value={playbackSpeed.toString()}
-                  onValueChange={(value) => {
-                    const speed = parseFloat(value);
-                    setPlaybackSpeed(speed);
-                    // Note: Actual playback speed would need video element modification
-                    toast({
-                      title: "Playback speed",
-                      description: `Set to ${speed}x (requires video element support)`,
-                    });
-                  }}
-                >
-                  <SelectTrigger className="w-20 h-8">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="0.25">0.25x</SelectItem>
-                    <SelectItem value="0.5">0.5x</SelectItem>
-                    <SelectItem value="0.75">0.75x</SelectItem>
-                    <SelectItem value="1.0">1.0x</SelectItem>
-                    <SelectItem value="1.25">1.25x</SelectItem>
-                    <SelectItem value="1.5">1.5x</SelectItem>
-                    <SelectItem value="2.0">2.0x</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
-              <div className="ml-auto flex items-center gap-2">
-                <Minus className="h-4 w-4 text-muted-foreground" />
-                <Slider
-                  value={[timelineZoom]}
-                  min={0.1}
-                  max={5}
-                  step={0.1}
-                  onValueChange={(value) => setTimelineZoom(value[0])}
-                  className="w-24"
-                />
-                <Plus className="h-4 w-4 text-muted-foreground" />
-                <span className="text-xs text-muted-foreground ml-2 min-w-[3rem]">
-                  {Math.round(timelineZoom * 100)}%
-                </span>
-              </div>
-            </div >
-
             {/* Timeline Canvas */}
             < div className="relative p-6" >
               <div
@@ -999,6 +772,39 @@ export default function Editor() {
               </div>
             </div >
           </div >
+
+          {/* Top Bar */}
+          <div className="mb-6 flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl font-bold">
+                {id === "new" ? "New Demo" : "Product Onboarding Demo"}
+              </h1>
+              <p className="text-sm text-muted-foreground">
+                Edit your demo video • {editorState.events.clicks.length} clicks • {editorState.events.markers.length} markers
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <div className="text-xs text-muted-foreground hidden lg:flex items-center gap-1">
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Space</span>
+                <span>Play/Pause</span>
+                <span>•</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">←</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">→</span>
+                <span>Seek</span>
+                <span>•</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+←</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+→</span>
+                <span>Frame</span>
+                <span>•</span>
+                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Ctrl+M</span>
+                <span>Marker</span>
+              </div>
+              <Button variant="hero" onClick={handleRender}>
+                <Sparkles className="mr-2 h-4 w-4" />
+                Render Video
+              </Button>
+            </div>
+          </div>
         </div >
       </main >
     </div >

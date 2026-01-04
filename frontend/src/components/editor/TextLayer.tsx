@@ -15,7 +15,9 @@ export const TextLayer: React.FC = () => {
             {visibleOverlays.map(overlay => {
                 // Calculate animation state
                 let opacity = overlay.opacity;
-                let transform = `translate(-50%, -50%) rotate(${overlay.rotation}deg) scale(${overlay.scale})`;
+                let scale = overlay.scale;
+                let blur = 0;
+                let transform = `translate(-50%, -50%) rotate(${overlay.rotation}deg) scale(${scale})`;
 
                 // Animation Logic (Entrance/Exit)
                 const fadeInDuration = 0.5;
@@ -50,25 +52,40 @@ export const TextLayer: React.FC = () => {
                             opacity *= p;
                         } else if (overlay.animation === 'scale') {
                             const s = p;
-                            transform += ` scale(${s})`;
+                            // Re-apply scale with animation
+                            transform = `translate(-50%, -50%) rotate(${overlay.rotation}deg) scale(${overlay.scale * s})`;
                             opacity *= p;
                         } else if (overlay.animation === 'pop') {
-                            // Overshoot effect
                             const backOut = (t: number) => {
                                 const c1 = 1.70158;
                                 const c3 = c1 + 1;
                                 return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
                             }
                             const s = backOut(progress);
-                            transform += ` scale(${s})`;
+                            transform = `translate(-50%, -50%) rotate(${overlay.rotation}deg) scale(${overlay.scale * s})`;
+                            opacity *= p;
+                        } else if (overlay.animation === 'blur-in') {
+                            blur = (1 - p) * 10;
+                            opacity *= p;
+                        } else if (overlay.animation === 'glitch') {
+                            // Simple scramble effect simulation by opacity flicker
+                            if (Math.random() > 0.8) opacity = 0.5;
+                            const glitchOffset = (1 - p) * 10;
+                            if (timeActive < 0.2) transform += ` translate(${Math.random() * 5}px, ${Math.random() * 5}px)`;
+                        } else if (overlay.animation === 'spin-3d') {
+                            const deg = (1 - p) * 360;
+                            transform += ` rotateX(${deg}deg)`;
                             opacity *= p;
                         }
                     }
                     // Exit
                     else if (timeRemaining < fadeOutDuration) {
                         const progress = timeRemaining / fadeOutDuration;
-                        // Linear fade out for simplicity or same easing reversed
+                        // Linear fade out
                         opacity *= progress;
+                        if (overlay.animation === 'blur-in') {
+                            blur = (1 - progress) * 10;
+                        }
                     }
                 }
 
@@ -82,6 +99,16 @@ export const TextLayer: React.FC = () => {
                     displayedText = overlay.text.substring(0, charCount);
                 }
 
+                // CSS styles for gradient text
+                const gradientStyle = (overlay.gradient && overlay.gradient.enabled) ? {
+                    background: `linear-gradient(${overlay.gradient.angle}deg, ${overlay.gradient.colors[0]}, ${overlay.gradient.colors[1]})`,
+                    WebkitBackgroundClip: 'text',
+                    WebkitTextFillColor: 'transparent',
+                    backgroundClip: 'text',
+                    color: 'transparent'
+                } : {
+                    color: overlay.color
+                };
 
                 return (
                     <div
@@ -101,8 +128,11 @@ export const TextLayer: React.FC = () => {
                             textAlign: overlay.textAlign,
                             lineHeight: overlay.lineHeight,
                             letterSpacing: `${overlay.letterSpacing}px`,
-                            color: overlay.color,
+                            textTransform: overlay.textTransform,
                             whiteSpace: 'pre-wrap', // Preserve newlines
+
+                            // Gradient / Color
+                            ...gradientStyle,
 
                             // Box Styling
                             backgroundColor: overlay.backgroundColor,
@@ -112,16 +142,39 @@ export const TextLayer: React.FC = () => {
                             borderStyle: overlay.borderWidth > 0 ? 'solid' : 'none',
                             borderColor: overlay.borderColor,
 
+                            // Glassmorphism (Backdrop Blur)
+                            backdropFilter: overlay.backdropBlur && overlay.backdropBlur > 0
+                                ? `blur(${overlay.backdropBlur}px)`
+                                : undefined,
+
+                            // Blend Mode
+                            mixBlendMode: overlay.blendMode,
+
                             // Shadow
-                            textShadow: overlay.shadowBlur > 0 && overlay.backgroundColor === 'transparent'
-                                ? `${overlay.shadowOffsetX}px ${overlay.shadowOffsetY}px ${overlay.shadowBlur}px ${overlay.shadowColor}`
-                                : 'none',
-                            boxShadow: overlay.shadowBlur > 0 && overlay.backgroundColor !== 'transparent'
+                            // Note: Text shadow doesn't work well with transparent text (gradient). 
+                            // If gradient is enabled, we might want drop-shadow filter instead.
+                            textShadow: (!overlay.gradient?.enabled && overlay.shadowBlur > 0 && overlay.backgroundColor === 'transparent')
                                 ? `${overlay.shadowOffsetX}px ${overlay.shadowOffsetY}px ${overlay.shadowBlur}px ${overlay.shadowColor}`
                                 : 'none',
 
+                            boxShadow: (overlay.shadowBlur > 0 && overlay.backgroundColor !== 'transparent')
+                                ? `${overlay.shadowOffsetX}px ${overlay.shadowOffsetY}px ${overlay.shadowBlur}px ${overlay.shadowColor}`
+                                : 'none',
+
+                            // If gradient text and we want shadow, use filter drop-shadow
+                            filter: [
+                                blur > 0 ? `blur(${blur}px)` : null,
+                                (overlay.gradient?.enabled && overlay.shadowBlur > 0)
+                                    ? `drop-shadow(${overlay.shadowOffsetX}px ${overlay.shadowOffsetY}px ${overlay.shadowBlur}px ${overlay.shadowColor})`
+                                    : null
+                            ].filter(Boolean).join(' '),
+
                             // Optimization
                             willChange: 'transform, opacity',
+
+                            // 3D Transforms
+                            transformStyle: 'preserve-3d',
+                            perspective: '1000px',
                         }}
                     >
                         {displayedText}
