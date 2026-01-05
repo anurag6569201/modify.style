@@ -77,15 +77,33 @@ export const Stage: React.FC = () => {
                     const designRotation = currentState.presentation.videoStyle?.rotation || 0;
                     const totalRotation = rot + designRotation;
 
-                    stageRef.current.style.transform = `translate(${translateX}px, ${translateY}px) scale(${scale}) rotate(${totalRotation}deg)`;
+                    // Scale translation to match preview size
+                    // Camera logic works in native video pixels, so we must scale the translation
+                    // to match the current display size of the stage.
+                    const nativeWidth = currentState.video.width || 1920;
+                    const currentWidth = stageRef.current.offsetWidth || nativeWidth;
+                    const ratio = currentWidth / nativeWidth;
+
+                    const scaledX = translateX * ratio;
+                    const scaledY = translateY * ratio;
+
+                    stageRef.current.style.transform = `scale(${scale}) translate(${scaledX}px, ${scaledY}px) rotate(${totalRotation}deg)`;
 
                     // Apply Vignette (using mask or box-shadow on overlay? Stage has blur.)
                     // Actually, Stage doesn't have a vignette overlay yet.
                     // We can add it to the spotlight overlay or a new one.
                     // For now, let's just handle Blur and Transform.
-                    stageRef.current.style.filter = newCameraState.blur > 0
-                        ? `blur(${newCameraState.blur}px)`
-                        : 'none';
+                    // Construct CSS filter string from Color Grading + Camera Blur
+                    const { brightness, contrast, saturation, hue } = currentState.colorGrading;
+
+                    const filterParts = [];
+                    if (newCameraState.blur > 0) filterParts.push(`blur(${newCameraState.blur}px)`);
+                    if (brightness !== 0) filterParts.push(`brightness(${1 + brightness})`);
+                    if (contrast !== 0) filterParts.push(`contrast(${1 + contrast})`);
+                    if (saturation !== 0) filterParts.push(`saturate(${1 + saturation})`);
+                    if (hue !== 0) filterParts.push(`hue-rotate(${hue}deg)`);
+
+                    stageRef.current.style.filter = filterParts.length > 0 ? filterParts.join(' ') : 'none';
 
                     // Update Vignette Overlay if exists (we need to add it to JSX if we want it)
                     // Let's rely on Spotlight reference for now or adding a specific vignette element.
@@ -100,8 +118,15 @@ export const Stage: React.FC = () => {
 
                 // Update Vignette Overlay
                 if (vignetteRef.current) {
-                    // Vignette is 0 to 1 opacity
-                    vignetteRef.current.style.opacity = (newCameraState.transform.vignette || 0).toString();
+                    // Combine camera vignette and color grading vignette
+                    const cameraVignette = newCameraState.transform.vignette || 0;
+                    const gradingVignette = currentState.colorGrading.vignette || 0;
+                    // Use the maximum of the two or sum? Render.tsx uses colorGrading.vignette via FilterEngine.
+                    // Camera vignette is applied via ctx.fillRect overlay.
+                    // Let's combine them simply by summing and clamping or just maxing.
+                    // Since both result in a black overlay, max makes sense to prevent double darkening if logic overlaps.
+                    const totalVignette = Math.min(1, cameraVignette + gradingVignette);
+                    vignetteRef.current.style.opacity = totalVignette.toString();
                 }
             }
 
@@ -296,6 +321,16 @@ export const Stage: React.FC = () => {
                 }}
             >
                 <VideoLayer />
+                {/* Vignette Overlay */}
+                <div
+                    ref={vignetteRef}
+                    className="absolute inset-0 pointer-events-none z-20"
+                    style={{
+                        background: 'radial-gradient(circle, transparent 50%, black 150%)',
+                        opacity: 0,
+                        transition: 'opacity 0.1s ease',
+                    }}
+                />
             </div>
             <TextLayer />
         </div>
