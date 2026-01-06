@@ -112,7 +112,7 @@ export interface PresentationConfig {
 
 export interface TimelineEvent {
     id: string;
-    type: 'click' | 'marker';
+    type: 'click';
     time: number;
     label?: string;
 }
@@ -187,7 +187,6 @@ export interface EditorState {
         clicks: ClickData[];
         moves: MoveData[];
         effects: EffectEvent[];
-        markers: TimelineEvent[];
     };
     playback: PlaybackState;
 }
@@ -285,7 +284,6 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         clicks: [],
         moves: [],
         effects: [],
-        markers: [],
     },
     playback: {
         currentTime: 0,

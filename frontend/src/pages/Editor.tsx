@@ -26,6 +26,7 @@ import { Label } from "@/components/ui/label";
 import { Slider } from "@/components/ui/slider";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SegmentedControl } from "@/components/ui/segmented-control";
+import { Input } from "@/components/ui/input";
 import {
   Select,
   SelectContent,
@@ -62,8 +63,8 @@ import {
   Frame,
   Upload,
   X,
+  Repeat,
 } from "lucide-react";
-import { TimelineEvent } from "@/lib/editor/types";
 import { useToast } from "@/hooks/use-toast";
 
 const mockUser = {
@@ -107,7 +108,6 @@ export default function Editor() {
           clicks: clickData,
           moves: moveData,
           effects: capturedEffects,
-          markers: []
         }
       }));
     }
@@ -122,11 +122,24 @@ export default function Editor() {
   // Timeline State
   const [timelineZoom, setTimelineZoom] = useState(1);
   const [isDraggingTimeline, setIsDraggingTimeline] = useState(false);
+  const [timelineWindow, setTimelineWindow] = useState({ start: 0, end: 1 });
+  const [timelineHoverTime, setTimelineHoverTime] = useState<number | null>(null);
+  const [isSelectingRange, setIsSelectingRange] = useState(false);
+  const [selectionRange, setSelectionRange] = useState<{ start: number | null; end: number | null }>({ start: null, end: null });
+  const [snapEnabled, setSnapEnabled] = useState(true);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  
+  // Professional Timeline Editor State
+  const [selectedEffectId, setSelectedEffectId] = useState<string | null>(null);
+  const [draggingEffect, setDraggingEffect] = useState<{ id: string; startOffset: number } | null>(null);
+  const [resizingEffect, setResizingEffect] = useState<{ id: string; edge: 'left' | 'right'; startTime: number } | null>(null);
+  const [isLoopingEffect, setIsLoopingEffect] = useState(false);
+  const loopIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Editor UI State
   const [showColorGrading, setShowColorGrading] = useState(false);
   const [showTextEditor, setShowTextEditor] = useState(false);
+  const effectsSeededRef = useRef(false);
 
   // Helpers
   const formatTime = (time: number) => {
@@ -136,6 +149,81 @@ export default function Editor() {
     const minutes = Math.floor(time / 60);
     const seconds = Math.floor(time % 60);
     return `${minutes}:${seconds.toString().padStart(2, "0")}`;
+  };
+
+  const duration = editorState.video.duration || 0;
+  const visibleDuration = Math.max(0.1, timelineWindow.end - timelineWindow.start);
+
+  const clampTime = (t: number) => Math.max(0, Math.min(t, duration || 0));
+
+  const collectSnapPoints = useCallback(() => {
+    const points: number[] = [];
+    editorState.events.clicks.forEach(c => points.push(c.timestamp));
+    editorState.events.effects.forEach(e => {
+      const s = Number.isFinite(e.start) ? e.start : (e.timestamp ?? 0);
+      const en = Number.isFinite(e.end) ? e.end : s + 5;
+      points.push(s, en);
+    });
+    points.push(editorState.playback.currentTime);
+    return points.filter((p) => Number.isFinite(p));
+  }, [editorState.events.clicks, editorState.events.effects, editorState.playback.currentTime]);
+
+  const getSnappedTime = useCallback((time: number) => {
+    if (!snapEnabled || duration <= 0) return time;
+    const points = collectSnapPoints();
+    if (points.length === 0) return time;
+    const SNAP_TOLERANCE = Math.max(0.05, visibleDuration * 0.01); // scales with zoom
+    let closest = time;
+    let bestDelta = Number.MAX_VALUE;
+    points.forEach((p) => {
+      const delta = Math.abs(p - time);
+      if (delta < bestDelta && delta <= SNAP_TOLERANCE) {
+        bestDelta = delta;
+        closest = p;
+      }
+    });
+    return clampTime(closest);
+  }, [collectSnapPoints, duration, snapEnabled, visibleDuration]);
+
+  // Keep timeline window centered on playhead when zooming or as playhead moves
+  useEffect(() => {
+    if (duration <= 0) {
+      setTimelineWindow({ start: 0, end: 1 });
+      return;
+    }
+
+    const windowLength = Math.min(duration, Math.max(duration / timelineZoom, 1));
+    let start = editorState.playback.currentTime - windowLength / 2;
+    start = Math.max(0, Math.min(start, duration - windowLength));
+    const end = Math.min(duration, start + windowLength);
+
+    setTimelineWindow((prev) => {
+      if (Math.abs(prev.start - start) < 0.01 && Math.abs(prev.end - end) < 0.01) {
+        return prev;
+      }
+      return { start, end };
+    });
+  }, [duration, timelineZoom, editorState.playback.currentTime]);
+
+  const timeToPercent = (time: number) => {
+    if (duration <= 0) return 0;
+    const clamped = Math.max(timelineWindow.start, Math.min(time, timelineWindow.end));
+    return ((clamped - timelineWindow.start) / visibleDuration) * 100;
+  };
+
+  const percentToTime = (percent: number) => {
+    const normalized = Math.max(0, Math.min(percent, 100)) / 100;
+    return timelineWindow.start + normalized * visibleDuration;
+  };
+
+  const jumpToNextEvent = () => {
+    const points = collectSnapPoints().filter((p) => p > editorState.playback.currentTime + 0.001).sort((a, b) => a - b);
+    if (points.length > 0) editorStore.setPlayback({ currentTime: points[0] });
+  };
+
+  const jumpToPrevEvent = () => {
+    const points = collectSnapPoints().filter((p) => p < editorState.playback.currentTime - 0.001).sort((a, b) => b - a);
+    if (points.length > 0) editorStore.setPlayback({ currentTime: points[0] });
   };
 
   const togglePlay = () => {
@@ -266,6 +354,140 @@ export default function Editor() {
     });
   };
 
+  // --- Effect timeline helpers ---
+  const generateEffectId = () => {
+    const hasRandomUUID = typeof crypto !== "undefined" && typeof crypto.randomUUID === "function";
+    return `effect-${hasRandomUUID ? crypto.randomUUID() : Date.now()}`;
+  };
+
+  const deriveSpotlightEffectsFromClicks = useCallback(() => {
+    const duration = editorState.video.duration || 0;
+    if (!duration || editorState.events.clicks.length < 2) return [];
+
+    const sortedClicks = [...editorState.events.clicks].sort((a, b) => a.timestamp - b.timestamp);
+    const effects: Array<{
+      id: string;
+      type: 'spotlight';
+      start: number;
+      end: number;
+      zoom: number;
+      label: string;
+    }> = [];
+
+    const WINDOW = 3; // seconds between two clicks to trigger zoom
+    const ANTICIPATION = 0.15;
+    const EFFECT_DURATION = 5;
+
+    for (let i = 0; i < sortedClicks.length - 1; i++) {
+      const current = sortedClicks[i];
+      const next = sortedClicks[i + 1];
+      if (next.timestamp - current.timestamp <= WINDOW) {
+        const start = Math.max(0, current.timestamp - ANTICIPATION);
+        const end = Math.min(duration, start + EFFECT_DURATION);
+        effects.push({
+          id: generateEffectId(),
+          type: 'spotlight',
+          start,
+          end,
+          zoom: editorState.camera.zoomStrength,
+          label: 'Auto Zoom',
+        });
+        // Skip overlapping detection starting from next click to reduce duplicates
+        i++;
+      }
+    }
+
+    return effects;
+  }, [editorState.camera.zoomStrength, editorState.events.clicks, editorState.video.duration]);
+
+  useEffect(() => {
+    if (effectsSeededRef.current) return;
+    if (editorState.events.effects.length > 0) {
+      effectsSeededRef.current = true;
+      return;
+    }
+
+    if (editorState.events.effects.length === 0) {
+      const derived = deriveSpotlightEffectsFromClicks();
+      if (derived.length > 0) {
+        editorStore.setState(prev => ({
+          events: {
+            ...prev.events,
+            effects: derived,
+          },
+        }));
+        effectsSeededRef.current = true;
+      }
+    }
+  }, [deriveSpotlightEffectsFromClicks, editorState.events.effects.length]);
+
+  const addSpotlightEffect = () => {
+    const start = editorState.playback.currentTime;
+    const duration = editorState.video.duration || start + 5;
+    const end = Math.min(duration, start + 5);
+    const newEffect = {
+      id: generateEffectId(),
+      type: 'spotlight' as const,
+      start,
+      end,
+      zoom: editorState.camera.zoomStrength,
+      label: 'Zoom',
+      panX: 0,
+      panY: 0,
+      easing: 'ease-out' as const,
+      transitionSpeed: 1.0,
+    };
+    editorStore.setState(prev => ({
+      events: {
+        ...prev.events,
+        effects: [...prev.events.effects, newEffect],
+      },
+    }));
+  };
+
+  const updateEffect = (id: string, updates: Partial<{ 
+    start: number; 
+    end: number; 
+    zoom: number; 
+    label: string;
+    panX: number;
+    panY: number;
+    easing: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'bounce';
+    transitionSpeed: number;
+  }>) => {
+    const duration = editorState.video.duration || 0;
+    editorStore.setState(prev => ({
+      events: {
+        ...prev.events,
+        effects: prev.events.effects.map(effect => {
+          if (effect.id !== id) return effect;
+          const nextStartRaw = updates.start ?? effect.start;
+          const nextEndRaw = updates.end ?? effect.end;
+          const clampedStart = Math.max(0, Math.min(nextStartRaw, duration || nextStartRaw));
+          let clampedEnd = Math.max(0, Math.min(nextEndRaw, duration || nextEndRaw));
+          if (clampedEnd < clampedStart) {
+            clampedEnd = Math.min(duration || clampedStart + 0.1, clampedStart + 0.1);
+          }
+          return {
+            ...effect,
+            ...updates,
+            start: clampedStart,
+            end: clampedEnd,
+          };
+        }),
+      },
+    }));
+  };
+
+  const deleteEffect = (id: string) => {
+    editorStore.setState(prev => ({
+      events: {
+        ...prev.events,
+        effects: prev.events.effects.filter(effect => effect.id !== id),
+      },
+    }));
+  };
+
   // Keyboard shortcuts for timeline navigation
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
@@ -319,26 +541,12 @@ export default function Editor() {
           e.preventDefault();
           togglePlay();
           break;
-        case 'm':
-        case 'M':
-          if (e.ctrlKey || e.metaKey) {
+        case 'Delete':
+        case 'Backspace':
+          if (selectedEffectId) {
             e.preventDefault();
-            const newMarker: TimelineEvent = {
-              id: Date.now().toString(),
-              type: 'marker',
-              time: currentTime,
-              label: `Marker at ${formatTime(currentTime)}`,
-            };
-            editorStore.setState({
-              events: {
-                ...editorState.events,
-                markers: [...editorState.events.markers, newMarker],
-              }
-            });
-            toast({
-              title: "Marker added",
-              description: `Added at ${formatTime(currentTime)}`,
-            });
+            deleteEffect(selectedEffectId);
+            setSelectedEffectId(null);
           }
           break;
       }
@@ -346,7 +554,73 @@ export default function Editor() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [editorState.playback.currentTime, editorState.video.duration, editorState.events.markers]);
+  }, [editorState.playback.currentTime, editorState.video.duration, selectedEffectId, deleteEffect]);
+
+  // Auto-loop effect preview when selected
+  useEffect(() => {
+    // Clear any existing loop
+    if (loopIntervalRef.current) {
+      clearInterval(loopIntervalRef.current);
+      loopIntervalRef.current = null;
+    }
+
+    if (selectedEffectId) {
+      const effect = editorState.events.effects.find(e => e.id === selectedEffectId);
+      if (effect) {
+        const start = Number.isFinite(effect.start) ? effect.start : (effect.timestamp || 0);
+        const end = Number.isFinite(effect.end) ? effect.end : (start + 5);
+
+        // Jump to effect start and start playing
+        editorStore.setPlayback({ 
+          currentTime: start,
+          isPlaying: true 
+        });
+        setIsLoopingEffect(true);
+
+        // Set up loop check interval - monitors playback and loops when needed
+        loopIntervalRef.current = setInterval(() => {
+          const state = editorStore.getState();
+          const currentTime = state.playback.currentTime;
+          const isPlaying = state.playback.isPlaying;
+          
+          // Only loop if playing
+          if (isPlaying) {
+            // If we've reached or passed the end, loop back to start
+            if (currentTime >= end) {
+              editorStore.setPlayback({ currentTime: start });
+            } else if (currentTime < start) {
+              editorStore.setPlayback({ currentTime: start });
+            }
+          }
+        }, 100); // Check every 100ms for smooth looping
+
+        return () => {
+          if (loopIntervalRef.current) {
+            clearInterval(loopIntervalRef.current);
+            loopIntervalRef.current = null;
+          }
+          setIsLoopingEffect(false);
+        };
+      }
+    } else {
+      setIsLoopingEffect(false);
+      // Stop playback when effect is deselected
+      if (loopIntervalRef.current) {
+        clearInterval(loopIntervalRef.current);
+        loopIntervalRef.current = null;
+      }
+    }
+  }, [selectedEffectId, editorState.events.effects]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (loopIntervalRef.current) {
+        clearInterval(loopIntervalRef.current);
+        loopIntervalRef.current = null;
+      }
+    };
+  }, []);
 
 
   return (
@@ -424,354 +698,557 @@ export default function Editor() {
 
             {/* Right - Control Panel */}
             <div className="rounded-xl border border-border bg-card overflow-hidden font-sans h-[500px]">
-              <EditorPanel />
+              <EditorPanel 
+                selectedEffectId={selectedEffectId}
+                onEffectSelect={setSelectedEffectId}
+                isLoopingEffect={isLoopingEffect}
+              />
             </div>
           </div>
 
-          < div className="mt-6 rounded-xl border border-border bg-card" >
-            {/* Timeline Canvas */}
-            < div className="relative p-6" >
+          {/* Compact Timeline Design */}
+          <div className="mt-6 rounded-lg border border-border/40 bg-card shadow-sm overflow-hidden">
+            {/* Compact Header Bar */}
+            <div className="bg-background/50 border-b border-border/30 px-4 py-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
+                    <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                    <span className="text-xs font-medium text-foreground">
+                      {formatTime(editorState.playback.currentTime)} / {formatTime(duration)}
+                    </span>
+                    {selectedEffectId && (() => {
+                      const effect = editorState.events.effects.find(e => e.id === selectedEffectId);
+                      return effect ? (
+                        <span className="ml-2 inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/15 border border-purple-500/25 text-purple-400 text-[10px]">
+                          <Sparkles className="h-2.5 w-2.5" />
+                          {effect.label || "Zoom Effect"}
+                        </span>
+                      ) : null;
+                    })()}
+                  </div>
+                  
+                  <div className="h-4 w-px bg-border/40" />
+                  
+                  <div className="flex items-center gap-1.5">
+                    <ZoomIn className="h-3 w-3 text-muted-foreground" />
+                    <Slider
+                      className="w-24"
+                      min={1}
+                      max={6}
+                      step={0.1}
+                      value={[timelineZoom]}
+                      onValueChange={([val]) => setTimelineZoom(val)}
+                    />
+                    <span className="text-[10px] font-mono bg-background px-1.5 py-0.5 rounded border border-border/40 min-w-[2.5rem] text-center">
+                      {timelineZoom.toFixed(1)}x
+                    </span>
+                    <Button 
+                      size="icon" 
+                      variant="ghost" 
+                      className="h-6 w-6" 
+                      onClick={() => setTimelineZoom((z) => Math.min(6, z + 0.2))}
+                    >
+                      <Plus className="h-3 w-3" />
+                    </Button>
+                    <Button 
+                      size="icon" 
+                      variant="ghost" 
+                      className="h-6 w-6" 
+                      onClick={() => setTimelineZoom((z) => Math.max(1, z - 0.2))}
+                    >
+                      <Minus className="h-3 w-3" />
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      variant="ghost" 
+                      className="h-6 text-[10px] px-2"
+                      onClick={() => setTimelineZoom(1)}
+                    >
+                      Fit
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {/* Add Effect Button */}
+                  <Button
+                    size="sm"
+                    variant="default"
+                    className="h-6 text-[10px] px-2 bg-purple-500 hover:bg-purple-600"
+                    onClick={() => {
+                      addSpotlightEffect();
+                      toast({
+                        title: "Effect added",
+                        description: "New zoom effect created at current time",
+                      });
+                    }}
+                    disabled={duration <= 0}
+                  >
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    Add Effect
+                  </Button>
+
+                  {/* Delete Selected Effect Button */}
+                  {selectedEffectId && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 text-[10px] px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
+                      onClick={() => {
+                        deleteEffect(selectedEffectId);
+                        setSelectedEffectId(null);
+                        toast({
+                          title: "Effect deleted",
+                          description: "Effect has been removed",
+                        });
+                      }}
+                    >
+                      <Trash2 className="h-3 w-3 mr-1" />
+                      Delete
+                    </Button>
+                  )}
+
+                  <div className="h-4 w-px bg-border/40" />
+
+                  <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-background/60 border border-border/30">
+                    <Switch
+                      checked={snapEnabled}
+                      onCheckedChange={setSnapEnabled}
+                      className="scale-75"
+                    />
+                    <span className="text-[10px] font-medium">Snap</span>
+                  </div>
+                  
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    className="h-6 text-[10px] px-2"
+                    onClick={jumpToPrevEvent}
+                  >
+                    ←
+                  </Button>
+                  <Button 
+                    size="sm" 
+                    variant="ghost" 
+                    className="h-6 text-[10px] px-2"
+                    onClick={jumpToNextEvent}
+                  >
+                    →
+                  </Button>
+                  
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-6 text-[10px] px-2"
+                    disabled={!selectionRange.start || !selectionRange.end}
+                    onClick={() => {
+                      if (!selectionRange.start || !selectionRange.end) return;
+                      const start = Math.min(selectionRange.start, selectionRange.end);
+                      const end = Math.max(selectionRange.start, selectionRange.end);
+                      const windowLength = Math.max(0.1, end - start);
+                      setTimelineWindow({
+                        start: Math.max(0, start - windowLength * 0.05),
+                        end: Math.min(duration || end, end + windowLength * 0.05),
+                      });
+                    }}
+                  >
+                    Zoom
+                  </Button>
+                </div>
+              </div>
+            </div>
+
+            {/* Timeline Canvas - Compact Design */}
+            <div className="relative bg-background">
+              {/* Mini Navigation Bar */}
+              {duration > 0 && (
+                <div className="px-4 py-1.5 border-b border-border/30 bg-background/40">
+                  <div className="relative h-2 rounded-full bg-secondary/30 overflow-hidden">
+                    {/* Effect indicators on minimap */}
+                    {editorState.events.effects.map((effect) => {
+                      const s = Number.isFinite(effect.start) ? effect.start : (effect.timestamp ?? 0);
+                      const en = Number.isFinite(effect.end) ? effect.end : s + 5;
+                      const left = Math.max(0, Math.min(100, (s / duration) * 100));
+                      const width = Math.max(0.5, Math.min(100, ((en - s) / duration) * 100));
+                      return (
+                        <div
+                          key={`nav-effect-${effect.id}`}
+                          className="absolute top-0 bottom-0 bg-purple-500/50 rounded-full"
+                          style={{ left: `${left}%`, width: `${width}%` }}
+                        />
+                      );
+                    })}
+                    {/* Visible window indicator */}
+                    <div
+                      className="absolute top-0 bottom-0 border border-primary/60 bg-primary/8 rounded-full"
+                      style={{
+                        left: `${Math.max(0, Math.min(100, (timelineWindow.start / duration) * 100))}%`,
+                        width: `${Math.max(2, Math.min(100, (visibleDuration / duration) * 100))}%`,
+                      }}
+                    />
+                    {/* Playhead on minimap */}
+                    <div
+                      className="absolute top-0 bottom-0 w-0.5 bg-primary z-10"
+                      style={{ left: `${Math.max(0, Math.min(100, (editorState.playback.currentTime / duration) * 100))}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+
               <div
-                className={`relative h-48 rounded-lg border border-border bg-secondary/20 cursor-pointer overflow-hidden ${isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab'}`}
+                className={`relative h-[200px] cursor-pointer overflow-x-hidden overflow-y-auto ${isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab'}`}
                 onMouseDown={(e) => {
-                  setIsDraggingTimeline(true);
-                  const duration = editorState.video.duration || 0;
+                  if (e.shiftKey) {
+                    setIsSelectingRange(true);
+                  } else {
+                    setIsDraggingTimeline(true);
+                  }
                   if (duration <= 0 || !isFinite(duration)) return;
 
                   const rect = e.currentTarget.getBoundingClientRect();
                   const x = e.clientX - rect.left;
                   const width = rect.width;
-                  const clickTime = (x / width) * duration;
-                  const clampedTime = Math.max(0, Math.min(clickTime, duration));
-                  if (isFinite(clampedTime) && !isNaN(clampedTime)) {
-                    editorStore.setPlayback({ currentTime: clampedTime });
+                  const clickTime = percentToTime((x / width) * 100);
+                  const finalTime = getSnappedTime(clickTime);
+                  if (isFinite(finalTime) && !isNaN(finalTime)) {
+                    editorStore.setPlayback({ currentTime: finalTime });
+                  }
+                  if (e.shiftKey) {
+                    setSelectionRange({ start: finalTime, end: finalTime });
                   }
                 }}
                 onMouseMove={(e) => {
-                  if (isDraggingTimeline) {
-                    const duration = editorState.video.duration || 0;
-                    if (duration <= 0 || !isFinite(duration)) return;
+                  const rect = e.currentTarget.getBoundingClientRect();
+                  const x = e.clientX - rect.left;
+                  const width = rect.width;
+                  const hoverTime = percentToTime((x / width) * 100);
+                  setTimelineHoverTime(hoverTime);
 
-                    const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const width = rect.width;
-                    const clickTime = (x / width) * duration;
-                    const clampedTime = Math.max(0, Math.min(clickTime, duration));
-                    if (isFinite(clampedTime) && !isNaN(clampedTime)) {
-                      editorStore.setPlayback({ currentTime: clampedTime });
+                  if (isSelectingRange) {
+                    const snapped = getSnappedTime(hoverTime);
+                    setSelectionRange((prev) => ({
+                      start: prev.start ?? snapped,
+                      end: snapped,
+                    }));
+                  } else if (isDraggingTimeline) {
+                    if (duration <= 0 || !isFinite(duration)) return;
+                    const snapped = getSnappedTime(hoverTime);
+                    if (isFinite(snapped) && !isNaN(snapped)) {
+                      editorStore.setPlayback({ currentTime: snapped });
                     }
                   }
                 }}
-                onMouseUp={() => setIsDraggingTimeline(false)}
-                onMouseLeave={() => setIsDraggingTimeline(false)}
+                onMouseUp={() => {
+                  setIsDraggingTimeline(false);
+                  setIsSelectingRange(false);
+                }}
+                onMouseLeave={() => {
+                  setIsDraggingTimeline(false);
+                  setIsSelectingRange(false);
+                  setTimelineHoverTime(null);
+                }}
                 onClick={(e) => {
-                  if (!isDraggingTimeline) {
-                    const duration = editorState.video.duration || 0;
+                  if (!isDraggingTimeline && !isSelectingRange && !draggingEffect && !resizingEffect) {
                     if (duration <= 0 || !isFinite(duration)) return;
 
                     const rect = e.currentTarget.getBoundingClientRect();
                     const x = e.clientX - rect.left;
                     const width = rect.width;
-                    const clickTime = (x / width) * duration;
-                    const clampedTime = Math.max(0, Math.min(clickTime, duration));
-                    if (isFinite(clampedTime) && !isNaN(clampedTime)) {
-                      editorStore.setPlayback({ currentTime: clampedTime });
+                    const clickTime = percentToTime((x / width) * 100);
+                    const finalTime = getSnappedTime(clickTime);
+                    if (isFinite(finalTime) && !isNaN(finalTime)) {
+                      editorStore.setPlayback({ currentTime: finalTime });
+                      setSelectedEffectId(null); // Deselect on timeline click
                     }
                   }
                 }}
               >
-                {/* Time Ruler - Enhanced */}
-                <div className="absolute top-0 left-0 right-0 h-8 border-b border-border bg-secondary/50 flex items-center px-2">
-                  {(() => {
-                    const duration = editorState.video.duration || 0;
-                    if (duration <= 0 || !isFinite(duration)) {
-                      return (
-                        <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
-                          No video loaded
-                        </div>
-                      );
-                    }
+                {/* Compact Time Ruler */}
+                <div className="sticky top-0 z-40 bg-background/95 border-b border-border/40">
+                  <div className="relative h-8 flex items-end px-3 pb-1">
+                    {(() => {
+                      if (duration <= 0 || !isFinite(duration)) {
+                        return (
+                          <div className="absolute inset-0 flex items-center justify-center text-xs text-muted-foreground">
+                            <Clock className="h-3 w-3 mr-1.5" />
+                            No video loaded
+                          </div>
+                        );
+                      }
 
-                    // Dynamic interval based on zoom
-                    const baseInterval = 5;
-                    const interval = baseInterval / timelineZoom;
-                    const maxMarkers = Math.min(Math.ceil(duration / interval) + 1, 200);
-                    const safeLength = Math.max(1, Math.min(maxMarkers, 200));
+                      const baseInterval = 5;
+                      const interval = Math.max(0.5, baseInterval / timelineZoom);
+                      const maxMarkers = Math.ceil(visibleDuration / interval) + 2;
 
-                    return Array.from({ length: safeLength }).map((_, i) => {
-                      const time = (i * interval);
-                      if (time > duration) return null;
-                      const position = (time / duration) * 100;
-                      const isMajorTick = i % Math.ceil(5 / interval) === 0;
+                      return Array.from({ length: maxMarkers }).map((_, i) => {
+                        const time = timelineWindow.start + i * interval;
+                        if (time > timelineWindow.end + interval) return null;
+                        const position = timeToPercent(time);
+                        const isMajorTick = i % Math.ceil(5 / interval) === 0;
 
-                      return (
-                        <div
-                          key={i}
-                          className="absolute top-0 bottom-0 flex flex-col items-center pointer-events-none"
-                          style={{ left: `${position}%` }}
-                        >
-                          <div className={`w-px bg-border ${isMajorTick ? 'h-3' : 'h-1.5'}`} />
-                          {isMajorTick && (
-                            <span className="text-[10px] text-muted-foreground mt-0.5 font-medium">
-                              {formatTime(time)}
-                            </span>
-                          )}
-                        </div>
-                      );
-                    });
-                  })()}
+                        return (
+                          <div
+                            key={i}
+                            className="absolute bottom-0 flex flex-col items-center pointer-events-none"
+                            style={{ left: `${position}%` }}
+                          >
+                            <div className={`w-[1px] ${isMajorTick ? 'h-4 bg-primary/50' : 'h-2 bg-border/50'}`} />
+                            {isMajorTick && (
+                              <span className="text-[10px] font-medium text-foreground mt-0.5 bg-background/95 px-1 py-0.5 rounded border border-border/30">
+                                {formatTime(time)}
+                              </span>
+                            )}
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
                 </div>
 
-                {/* Waveform-like Visualization */}
-                {editorState.video.duration > 0 && editorState.events.clicks.length > 0 && (
-                  <div className="absolute top-8 left-0 right-0 h-12 pointer-events-none">
-                    {Array.from({ length: Math.min(100, Math.floor(editorState.video.duration * 2)) }).map((_, i) => {
-                      const time = (i / 2);
-                      if (time > editorState.video.duration) return null;
-                      const position = (time / editorState.video.duration) * 100;
-
-                      // Check if there's a click near this time
-                      const hasClick = editorState.events.clicks.some(
-                        click => Math.abs(click.timestamp - time) < 0.1
-                      );
-
-                      const height = hasClick ? 8 : Math.random() * 3 + 1;
-
-                      return (
-                        <div
-                          key={i}
-                          className="absolute bottom-0 w-px bg-primary/20"
-                          style={{
-                            left: `${position}%`,
-                            height: `${height}px`,
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Playback Position Indicator - Enhanced */}
-                {editorState.video.duration > 0 && (
-                  <>
+                {/* Compact Timeline Tracks */}
+                <div className="relative" style={{ minHeight: '120px' }}>
+                  {/* Playback Position Indicator */}
+                  {editorState.video.duration > 0 && (
                     <div
-                      className="absolute top-8 bottom-0 w-0.5 bg-primary z-30 pointer-events-none shadow-lg"
+                      className="absolute top-0 bottom-0 w-[1.5px] bg-primary z-50 pointer-events-none"
                       style={{
-                        left: `${Math.min(100, Math.max(0, (editorState.playback.currentTime / editorState.video.duration) * 100))}%`,
+                        left: `${timeToPercent(editorState.playback.currentTime)}%`,
                       }}
                     >
-                      <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-4 h-4 rounded-full bg-primary border-2 border-background shadow-md" />
-                      <div className="absolute -top-2 left-1/2 -translate-x-1/2 text-[9px] text-primary font-bold bg-background px-1 rounded whitespace-nowrap">
-                        {formatTime(editorState.playback.currentTime)}
-                      </div>
+                      <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-primary border-2 border-background shadow-md" />
                     </div>
-                    {/* Time indicator line */}
+                  )}
+
+                  {/* Selection Range Overlay */}
+                  {selectionRange.start !== null && selectionRange.end !== null && (
                     <div
-                      className="absolute top-8 bottom-0 w-px bg-primary/30 z-25 pointer-events-none"
+                      className="absolute top-0 bottom-0 bg-primary/8 border-l border-r border-primary/40 pointer-events-none z-40"
                       style={{
-                        left: `${Math.min(100, Math.max(0, (editorState.playback.currentTime / editorState.video.duration) * 100))}%`,
+                        left: `${timeToPercent(Math.min(selectionRange.start, selectionRange.end))}%`,
+                        width: `${Math.max(1, timeToPercent(Math.max(selectionRange.start, selectionRange.end)) - timeToPercent(Math.min(selectionRange.start, selectionRange.end)))}%`,
                       }}
                     />
-                  </>
-                )}
+                  )}
 
-                {/* Click Events - Enhanced */}
-                {editorState.video.duration > 0 && (
-                  <div className="absolute top-20 left-0 right-0 bottom-0">
-                    {editorState.events.clicks.map((click, index) => {
-                      const position = Math.min(100, Math.max(0, (click.timestamp / editorState.video.duration) * 100));
-                      return (
-                        <div
-                          key={`click-${index}`}
-                          className="absolute top-1/2 -translate-y-1/2 z-10 cursor-pointer group"
-                          style={{ left: `${position}%` }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const timestamp = click.timestamp;
-                            if (isFinite(timestamp) && !isNaN(timestamp) && timestamp >= 0) {
-                              editorStore.setPlayback({ currentTime: timestamp });
-                            }
-                          }}
-                        >
-                          <div className="w-2 h-2 rounded-full bg-blue-500 border-2 border-background hover:scale-150 transition-transform shadow-md" />
-                          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-1.5 py-0.5 bg-blue-500 text-white text-[9px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity">
-                            {formatTime(click.timestamp)}
-                          </div>
+                  {/* Track Container */}
+                  <div className="space-y-0.5 pt-1">
+                    {/* Effects Track - Two Layer Style */}
+                    <div className="relative h-16 bg-secondary/20 border border-border/40 rounded overflow-hidden group">
+                      {/* Track Header */}
+                      <div className="absolute left-0 top-0 bottom-0 w-20 bg-secondary/30 border-r border-border/40 flex items-center justify-center z-10">
+                        <div className="flex items-center gap-0.5">
+                          <Sparkles className="h-3 w-3 text-purple-400" />
+                          <span className="text-[10px] font-medium text-foreground">Effects</span>
+                          <span className="text-[8px] text-muted-foreground">({editorState.events.effects.length})</span>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Markers - Enhanced */}
-                {editorState.video.duration > 0 && (
-                  <div className="absolute top-20 left-0 right-0 bottom-0">
-                    {editorState.events.markers.map((marker) => {
-                      const position = Math.min(100, Math.max(0, (marker.time / editorState.video.duration) * 100));
-                      return (
-                        <div
-                          key={marker.id}
-                          className="absolute top-0 bottom-0 flex flex-col items-center z-15 group"
-                          style={{ left: `${position}%` }}
-                        >
-                          <div className="w-0.5 h-full bg-yellow-500/50" />
-                          <div className="absolute top-0 -translate-y-1/2 w-3 h-3 rounded-full bg-yellow-500 border-2 border-background cursor-pointer hover:scale-150 transition-transform shadow-md"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              const markerTime = marker.time;
-                              if (isFinite(markerTime) && !isNaN(markerTime) && markerTime >= 0) {
-                                editorStore.setPlayback({ currentTime: markerTime });
-                              }
-                            }}
-                            title={marker.label || `Marker at ${formatTime(marker.time)}`}
-                          />
-                          {marker.label && (
-                            <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 px-1.5 py-0.5 bg-yellow-500 text-white text-[9px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity max-w-[120px] truncate">
-                              {marker.label}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Video Progress Bar - Enhanced */}
-                {editorState.video.duration > 0 && (
-                  <div className="absolute top-20 left-0 right-0 h-3 bg-primary/10 rounded-sm overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-primary/60 to-primary/40 transition-all duration-100"
-                      style={{ width: `${Math.min(100, Math.max(0, (editorState.playback.currentTime / editorState.video.duration) * 100))}%` }}
-                    />
-                  </div>
-                )}
-
-                {/* Empty State */}
-                {editorState.events.clicks.length === 0 && editorState.events.markers.length === 0 && (
-                  <div className="absolute inset-0 flex items-center justify-center text-muted-foreground pointer-events-none">
-                    <div className="text-center">
-                      <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                      <p className="text-sm">No events yet. Click on timeline to scrub.</p>
-                      <p className="text-xs mt-1">Click events and markers will appear here</p>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Events List */}
-              <div className="mt-4 space-y-2 max-h-64 overflow-y-auto">
-                {/* Clicks */}
-                {editorState.events.clicks.length > 0 && (
-                  <div className="space-y-1">
-                    <Label className="text-xs font-semibold text-muted-foreground uppercase">Clicks ({editorState.events.clicks.length})</Label>
-                    {editorState.events.clicks.slice(0, 10).map((click, index) => (
-                      <div
-                        key={`click-list-${index}`}
-                        className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors cursor-pointer group"
-                        onClick={() => editorStore.setPlayback({ currentTime: click.timestamp })}
-                      >
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-blue-500/20">
-                          <MousePointer2 className="h-3 w-3 text-blue-500" />
-                        </div>
-                        <div className="flex-1 text-sm">
-                          <div className="font-medium">Click #{index + 1}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {formatTime(click.timestamp)} • ({Math.round(click.x * 100)}%, {Math.round(click.y * 100)}%)
-                          </div>
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 opacity-0 group-hover:opacity-100"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            const timestamp = click.timestamp;
-                            if (isFinite(timestamp) && !isNaN(timestamp) && timestamp >= 0) {
-                              editorStore.setPlayback({ currentTime: timestamp });
-                            }
-                          }}
-                        >
-                          <Play className="h-3 w-3" />
-                        </Button>
                       </div>
-                    ))}
-                    {editorState.events.clicks.length > 10 && (
-                      <p className="text-xs text-muted-foreground text-center py-2">
-                        +{editorState.events.clicks.length - 10} more clicks
-                      </p>
+                      
+                      {/* Track Content Area */}
+                      <div 
+                        className="absolute left-20 right-0 top-0 bottom-0"
+                        onMouseMove={(e) => {
+                          if (draggingEffect || resizingEffect) {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const x = e.clientX - rect.left;
+                            const width = rect.width;
+                            const percent = (x / width) * 100;
+                            const time = percentToTime(percent);
+                            const snappedTime = getSnappedTime(time);
+                            
+                            if (draggingEffect) {
+                              const effect = editorState.events.effects.find(e => e.id === draggingEffect.id);
+                              if (effect) {
+                                const start = Number.isFinite(effect.start) ? effect.start : (effect.timestamp ?? 0);
+                                const end = Number.isFinite(effect.end) ? effect.end : start + 5;
+                                const effectDuration = end - start;
+                                const newStart = clampTime(snappedTime - draggingEffect.startOffset);
+                                const newEnd = clampTime(newStart + effectDuration);
+                                updateEffect(draggingEffect.id, { start: newStart, end: newEnd });
+                              }
+                            } else if (resizingEffect) {
+                              const effect = editorState.events.effects.find(e => e.id === resizingEffect.id);
+                              if (effect) {
+                                const start = Number.isFinite(effect.start) ? effect.start : (effect.timestamp ?? 0);
+                                const end = Number.isFinite(effect.end) ? effect.end : start + 5;
+                                if (resizingEffect.edge === 'left') {
+                                  const newStart = clampTime(Math.min(snappedTime, end - 0.5));
+                                  updateEffect(resizingEffect.id, { start: newStart });
+                                } else {
+                                  const newEnd = clampTime(Math.max(snappedTime, start + 0.5));
+                                  updateEffect(resizingEffect.id, { end: newEnd });
+                                }
+                              }
+                            }
+                          }
+                        }}
+                        onMouseUp={() => {
+                          setDraggingEffect(null);
+                          setResizingEffect(null);
+                        }}
+                        onMouseLeave={() => {
+                          setDraggingEffect(null);
+                          setResizingEffect(null);
+                        }}
+                      >
+                        {/* Row Divider */}
+                        <div className="absolute left-0 right-0 top-1/2 h-[1px] bg-border/30 z-0" />
+                        
+                        {editorState.events.effects.map((effect, index) => {
+                          const startSeconds = Number.isFinite(effect.start) ? effect.start : (effect.timestamp ?? 0);
+                          const endSeconds = Number.isFinite(effect.end) ? effect.end : startSeconds + 5;
+                          const startPercent = timeToPercent(startSeconds);
+                          const endPercent = timeToPercent(endSeconds);
+                          const width = Math.max(4, endPercent - startPercent);
+                          const isSelected = selectedEffectId === effect.id;
+                          
+                          // Alternate between top and bottom row
+                          const rowIndex = index % 2;
+                          const isTopRow = rowIndex === 0;
+                          
+                          return (
+                            <div
+                              key={effect.id}
+                              className={`absolute rounded border cursor-move transition-all group ${
+                                isSelected 
+                                  ? 'bg-purple-500 border-purple-400 shadow-md ring-1 ring-purple-400/40 z-20' 
+                                  : draggingEffect?.id === effect.id
+                                  ? 'bg-purple-500/90 border-purple-400 shadow-md z-20 opacity-90'
+                                  : resizingEffect?.id === effect.id
+                                  ? 'bg-purple-500/90 border-purple-400 shadow-md z-20'
+                                  : 'bg-purple-500/80 border-purple-500/40 hover:border-purple-400 hover:shadow-sm z-10'
+                              }`}
+                              style={{ 
+                                left: `${startPercent}%`, 
+                                width: `${width}%`,
+                                minWidth: '60px',
+                                top: isTopRow ? '2px' : '50%',
+                                bottom: isTopRow ? '50%' : '2px',
+                                height: 'calc(50% - 4px)'
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedEffectId(effect.id);
+                                editorStore.setPlayback({ currentTime: startSeconds });
+                              }}
+                              onMouseDown={(e) => {
+                                e.stopPropagation();
+                                const rect = e.currentTarget.getBoundingClientRect();
+                                const clickX = e.clientX - rect.left;
+                                const effectWidth = rect.width;
+                                
+                                // Check if clicking on resize handle (first/last 8px)
+                                if (clickX < 8) {
+                                  setResizingEffect({ id: effect.id, edge: 'left', startTime: startSeconds });
+                                } else if (clickX > effectWidth - 8) {
+                                  setResizingEffect({ id: effect.id, edge: 'right', startTime: endSeconds });
+                                } else {
+                                  // Calculate time offset within the effect
+                                  const effectDuration = endSeconds - startSeconds;
+                                  const clickPercent = clickX / effectWidth;
+                                  const timeOffset = effectDuration * clickPercent;
+                                  setDraggingEffect({ 
+                                    id: effect.id, 
+                                    startOffset: timeOffset
+                                  });
+                                }
+                              }}
+                            >
+                              {/* Resize Handles */}
+                              <div className={`absolute left-0 top-0 bottom-0 w-2 rounded-l transition-all ${
+                                resizingEffect?.id === effect.id && resizingEffect.edge === 'left'
+                                  ? 'bg-white/50 cursor-ew-resize'
+                                  : 'bg-white/15 hover:bg-white/30 cursor-ew-resize'
+                              }`} />
+                              <div className={`absolute right-0 top-0 bottom-0 w-2 rounded-r transition-all ${
+                                resizingEffect?.id === effect.id && resizingEffect.edge === 'right'
+                                  ? 'bg-white/50 cursor-ew-resize'
+                                  : 'bg-white/15 hover:bg-white/30 cursor-ew-resize'
+                              }`} />
+                              
+                              {/* Content */}
+                              <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
+                                <Sparkles className="h-2.5 w-2.5 text-white flex-shrink-0" />
+                                <span className="text-[10px] font-medium text-white truncate ml-1">
+                                  {effect.label || "Zoom"}
+                                </span>
+                                <span className="text-[8px] text-white/70 ml-auto font-mono bg-white/10 px-1 py-0.5 rounded">
+                                  {formatTime(startSeconds)}→{formatTime(endSeconds)}
+                                </span>
+                              </div>
+                              
+                              {/* Selection Indicator */}
+                              {isSelected && (
+                                <div className={`absolute ${isTopRow ? '-top-0.5' : '-bottom-0.5'} left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-purple-300 border border-background shadow-sm`} />
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {/* Clicks Track */}
+                    {editorState.events.clicks.length > 0 && (
+                      <div className="relative h-5 bg-secondary/20 border border-border/40 rounded overflow-hidden">
+                        <div className="absolute left-0 top-0 bottom-0 w-20 bg-secondary/30 border-r border-border/40 flex items-center justify-center">
+                          <div className="flex items-center gap-0.5">
+                            <MousePointer2 className="h-3 w-3 text-blue-400" />
+                            <span className="text-[10px] font-medium text-foreground">Clicks</span>
+                            <span className="text-[8px] text-muted-foreground">({editorState.events.clicks.length})</span>
+                          </div>
+                        </div>
+                        <div className="absolute left-20 right-0 top-0 bottom-0 px-1.5 flex items-center">
+                          {editorState.events.clicks.map((click, index) => {
+                            const position = timeToPercent(click.timestamp);
+                            return (
+                              <div
+                                key={`click-${index}`}
+                                className="absolute flex items-center group cursor-pointer"
+                                style={{ left: `${position}%` }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  editorStore.setPlayback({ currentTime: click.timestamp });
+                                }}
+                              >
+                                <div className="w-2 h-2 rounded-full bg-blue-500 border border-background shadow-sm hover:scale-125 transition-transform" />
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 px-1 py-0.5 bg-blue-500 text-white text-[8px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity shadow-md">
+                                  {formatTime(click.timestamp)}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
                     )}
                   </div>
-                )}
 
-                {/* Markers */}
-                {editorState.events.markers.length > 0 && (
-                  <div className="space-y-1 mt-4">
-                    <Label className="text-xs font-semibold text-muted-foreground uppercase">Markers ({editorState.events.markers.length})</Label>
-                    {editorState.events.markers.map((marker) => (
-                      <div
-                        key={marker.id}
-                        className="flex items-center gap-3 rounded-lg border border-border bg-secondary/30 p-2 hover:bg-secondary/50 transition-colors cursor-pointer group"
-                        onClick={() => editorStore.setPlayback({ currentTime: marker.time })}
-                      >
-                        <div className="flex h-6 w-6 items-center justify-center rounded-full bg-yellow-500/20">
-                          <Clock className="h-3 w-3 text-yellow-500" />
-                        </div>
-                        <input
-                          type="text"
-                          value={marker.label || ''}
-                          onChange={(e) => {
-                            editorStore.setState({
-                              events: {
-                                ...editorState.events,
-                                markers: editorState.events.markers.map(m =>
-                                  m.id === marker.id ? { ...m, label: e.target.value } : m
-                                ),
-                              }
-                            });
-                          }}
-                          onClick={(e) => e.stopPropagation()}
-                          placeholder="Marker label"
-                          className="flex-1 bg-transparent text-sm outline-none"
-                        />
-                        <div className="text-xs text-muted-foreground">
-                          {formatTime(marker.time)}
-                        </div>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-6 w-6 opacity-0 group-hover:opacity-100 text-destructive hover:text-destructive"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            editorStore.setState({
-                              events: {
-                                ...editorState.events,
-                                markers: editorState.events.markers.filter(m => m.id !== marker.id),
-                              }
-                            });
-                            toast({
-                              title: "Marker deleted",
-                              description: "Marker has been removed",
-                            });
-                          }}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                        </Button>
+                  {/* Hover Time Indicator */}
+                  {timelineHoverTime !== null && duration > 0 && (
+                    <div
+                      className="absolute top-0 bottom-0 w-[1px] bg-primary/30 z-45 pointer-events-none"
+                      style={{ left: `${timeToPercent(timelineHoverTime)}%` }}
+                    >
+                      <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] font-medium text-foreground bg-background/95 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-md border border-border/40 whitespace-nowrap">
+                        {formatTime(timelineHoverTime)}
                       </div>
-                    ))}
-                  </div>
-                )}
+                    </div>
+                  )}
 
-                {/* Empty State */}
-                {editorState.events.clicks.length === 0 && editorState.events.markers.length === 0 && (
-                  <div className="flex flex-col items-center justify-center py-8 text-center border border-dashed rounded-lg">
-                    <Clock className="h-8 w-8 text-muted-foreground mb-2" />
-                    <p className="text-sm text-muted-foreground">No events recorded</p>
-                    <p className="text-xs text-muted-foreground mt-1">Click "Add Marker" to mark important moments</p>
-                  </div>
-                )}
+                  {/* Empty State */}
+                  {editorState.events.clicks.length === 0 && editorState.events.effects.length === 0 && (
+                    <div className="absolute inset-0 flex items-center justify-center text-muted-foreground pointer-events-none">
+                      <div className="text-center">
+                        <Clock className="h-5 w-5 mx-auto mb-1.5 opacity-40" />
+                        <p className="text-xs">Timeline Ready</p>
+                        <p className="text-[10px] mt-0.5 opacity-70">Events will appear here</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
               </div>
-            </div >
-          </div >
+
+            </div>
+          </div>
 
           {/* Top Bar */}
           <div className="mb-6 flex items-center justify-between">
@@ -780,7 +1257,7 @@ export default function Editor() {
                 {id === "new" ? "New Demo" : "Product Onboarding Demo"}
               </h1>
               <p className="text-sm text-muted-foreground">
-                Edit your demo video • {editorState.events.clicks.length} clicks • {editorState.events.markers.length} markers
+                Edit your demo video • {editorState.events.clicks.length} clicks
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -795,9 +1272,6 @@ export default function Editor() {
                 <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+←</span>
                 <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+→</span>
                 <span>Frame</span>
-                <span>•</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Ctrl+M</span>
-                <span>Marker</span>
               </div>
               <Button variant="hero" onClick={handleRender}>
                 <Sparkles className="mr-2 h-4 w-4" />

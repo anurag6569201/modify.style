@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { DesignPanel } from './panels/DesignPanel';
 import { CameraPanel } from './panels/CameraPanel';
 import { CursorPanel } from './panels/CursorPanel';
@@ -6,6 +6,7 @@ import { EffectsPanel } from './panels/EffectsPanel';
 import { ScriptPanel } from './panels/ScriptPanel';
 import { VoicePanel } from './panels/VoicePanel';
 import { TextPanel } from './panels/TextPanel';
+import { TimelinePanel } from './panels/TimelinePanel';
 import {
     Palette,
     Video,
@@ -14,12 +15,13 @@ import {
     FileText,
     Mic2,
     Type,
-    LayoutTemplate
+    LayoutTemplate,
+    Clock
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
-type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'cursor' | 'effects';
+type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'cursor' | 'effects' | 'timeline';
 
 interface SidebarItemProps {
     id: TabId;
@@ -53,8 +55,21 @@ const SidebarItem = ({ id, icon: Icon, label, isActive, onClick }: SidebarItemPr
     </Button>
 );
 
-export function EditorPanel() {
+interface EditorPanelProps {
+    selectedEffectId?: string | null;
+    onEffectSelect?: (id: string | null) => void;
+    isLoopingEffect?: boolean;
+}
+
+export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect }: EditorPanelProps = {}) {
     const [activeTab, setActiveTab] = useState<TabId>('script');
+
+    // Switch to camera tab when effect is selected
+    useEffect(() => {
+        if (selectedEffectId) {
+            setActiveTab('camera');
+        }
+    }, [selectedEffectId]);
 
     const renderPanel = () => {
         switch (activeTab) {
@@ -62,9 +77,10 @@ export function EditorPanel() {
             case 'voice': return <VoicePanel />;
             case 'design': return <DesignPanel />;
             case 'text': return <TextPanel />;
-            case 'camera': return <CameraPanel />;
+            case 'camera': return <CameraPanel selectedEffectId={selectedEffectId} onEffectSelect={onEffectSelect} isLoopingEffect={isLoopingEffect} />;
             case 'cursor': return <CursorPanel />;
             case 'effects': return <EffectsPanel />;
+            case 'timeline': return <TimelinePanel />;
             default: return <ScriptPanel />;
         }
     };
@@ -83,6 +99,8 @@ export function EditorPanel() {
                     <SidebarItem id="camera" icon={Video} label="Camera" isActive={activeTab === 'camera'} onClick={setActiveTab} />
                     <SidebarItem id="cursor" icon={MousePointer2} label="Cursor" isActive={activeTab === 'cursor'} onClick={setActiveTab} />
                     <SidebarItem id="effects" icon={Sparkles} label="Effects" isActive={activeTab === 'effects'} onClick={setActiveTab} />
+                    <div className="w-8 h-[1px] bg-border/40 my-2" />
+                    <SidebarItem id="timeline" icon={Clock} label="Timeline" isActive={activeTab === 'timeline'} onClick={setActiveTab} />
                 </div>
             </div>
 
@@ -99,9 +117,10 @@ export function EditorPanel() {
                             {activeTab === 'voice' && 'Generate and manage AI voiceovers'}
                             {activeTab === 'design' && 'Canvas layout and background'}
                             {activeTab === 'text' && 'Add text overlays and titles'}
-                            {activeTab === 'camera' && 'Control camera movement and zoom'}
+                            {activeTab === 'camera' && (selectedEffectId ? 'Editing selected zoom effect' : 'Control camera movement and zoom')}
                             {activeTab === 'cursor' && 'Customize mouse cursor appearance'}
                             {activeTab === 'effects' && 'Apply visual effects and filters'}
+                            {activeTab === 'timeline' && ''}
                         </p>
                     </div>
                 </div>

@@ -737,9 +737,45 @@ export interface MoveData {
 }
 
 export interface EffectEvent {
-  type: string;
-  timestamp: number;
-  [key: string]: any;
+  id: string;
+  type: 'spotlight' | 'zoom' | string;
+  /**
+   * Start time of the effect on the timeline (seconds).
+   */
+  start: number;
+  /**
+   * End time of the effect on the timeline (seconds).
+   */
+  end: number;
+  /**
+   * Optional zoom level/intensity for spotlight/zoom effects.
+   */
+  zoom?: number;
+  /**
+   * Horizontal pan offset (-1 to 1, where 0 is center, -1 is left, 1 is right)
+   */
+  panX?: number;
+  /**
+   * Vertical pan offset (-1 to 1, where 0 is center, -1 is up, 1 is down)
+   */
+  panY?: number;
+  /**
+   * Transition easing type
+   */
+  easing?: 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'bounce';
+  /**
+   * Transition speed multiplier (0.5 = slow, 2.0 = fast)
+   */
+  transitionSpeed?: number;
+  /**
+   * Optional user-facing label.
+   */
+  label?: string;
+  /**
+   * Backwards compatibility: keep timestamp/payload if coming from older recordings.
+   */
+  timestamp?: number;
+  metadata?: Record<string, any>;
 }
 
 interface RecordingMarker {

@@ -233,36 +233,53 @@ export const updateCameraSystem = (
     };
 
     // --- DETECT SPOTLIGHT WINDOWS ---
-    let inSpotlight = false;
+    // Priority 1: explicit effect events from timeline
+    const spotlightEffect = effects.find((effect) => {
+        const start = Number.isFinite(effect.start) ? effect.start : (effect.timestamp ?? 0);
+        const end = Number.isFinite(effect.end)
+            ? effect.end
+            : start + (effect.metadata?.duration ?? CAMERA_CONFIG.SPOTLIGHT_DURATION);
+        return time >= start && time <= end;
+    });
 
-    for (let i = 0; i < clicks.length; i++) {
-        const c1 = clicks[i];
-        let isClusterStart = false;
+    // Fallback: infer spotlight windows from click clusters (legacy auto detection)
+    let inferredSpotlight = false;
 
-        for (let j = i + 1; j < clicks.length; j++) {
-            const c2 = clicks[j];
-            if (c2.timestamp - c1.timestamp <= CAMERA_CONFIG.SPOTLIGHT_TRIGGER_WINDOW) {
-                isClusterStart = true;
-                break;
-            } else {
-                break;
+    if (!spotlightEffect) {
+        for (let i = 0; i < clicks.length; i++) {
+            const c1 = clicks[i];
+            let isClusterStart = false;
+
+            for (let j = i + 1; j < clicks.length; j++) {
+                const c2 = clicks[j];
+                if (c2.timestamp - c1.timestamp <= CAMERA_CONFIG.SPOTLIGHT_TRIGGER_WINDOW) {
+                    isClusterStart = true;
+                    break;
+                } else {
+                    break;
+                }
             }
-        }
 
-        if (isClusterStart) {
-            const start = c1.timestamp - CAMERA_CONFIG.SPOTLIGHT_ANTICIPATION;
-            const end = start + CAMERA_CONFIG.SPOTLIGHT_DURATION;
+            if (isClusterStart) {
+                const start = c1.timestamp - CAMERA_CONFIG.SPOTLIGHT_ANTICIPATION;
+                const end = start + CAMERA_CONFIG.SPOTLIGHT_DURATION;
 
-            if (time >= start && time <= end) {
-                inSpotlight = true;
-                break;
+                if (time >= start && time <= end) {
+                    inferredSpotlight = true;
+                    break;
+                }
             }
         }
     }
 
+    const inSpotlight = Boolean(spotlightEffect) || inferredSpotlight;
+
     // Track transition state
     const transitionStartTime = (inSpotlight !== state.lastSpotlightState) ? time : state.transitionStartTime;
-    const transitionProgress = Math.min(1, (time - transitionStartTime) / CAMERA_CONFIG.TRANSITION_DURATION);
+    // Use effect's transition speed or default to 1.0 (normal speed)
+    const transitionSpeed = spotlightEffect?.transitionSpeed ?? 1.0;
+    const adjustedTransitionDuration = CAMERA_CONFIG.TRANSITION_DURATION / transitionSpeed;
+    const transitionProgress = Math.min(1, (time - transitionStartTime) / adjustedTransitionDuration);
 
     // --- DETERMINE TARGET STATE ---
     let targetScale = CAMERA_CONFIG.ZOOM_IDLE;
@@ -271,15 +288,41 @@ export const updateCameraSystem = (
     let targetRotation = 0;
     let mode: CameraMode = CameraMode.IDLE;
 
+    // If an explicit effect is active, use its zoom or fallback to configured strength
+    const spotlightZoomStrength = spotlightEffect?.zoom ?? ZOOM_STRENGTH;
+    const effectPanX = spotlightEffect?.panX ?? 0;
+    const effectPanY = spotlightEffect?.panY ?? 0;
+
     if (inSpotlight && smoothedCursor) {
         mode = CameraMode.SPOTLIGHT;
 
-        // Smooth zoom transition
-        const zoomProgress = easeOutCubic(transitionProgress);
+        // Use effect's easing or default to easeOutCubic
+        let zoomProgress = transitionProgress;
+        const easing = spotlightEffect?.easing ?? 'ease-out';
+        switch (easing) {
+            case 'linear':
+                zoomProgress = transitionProgress;
+                break;
+            case 'ease-in':
+                zoomProgress = transitionProgress * transitionProgress;
+                break;
+            case 'ease-out':
+                zoomProgress = easeOutCubic(transitionProgress);
+                break;
+            case 'ease-in-out':
+                zoomProgress = transitionProgress < 0.5
+                    ? 2 * transitionProgress * transitionProgress
+                    : 1 - Math.pow(-2 * transitionProgress + 2, 2) / 2;
+                break;
+            case 'bounce':
+                zoomProgress = 1 - Math.pow(1 - transitionProgress, 3);
+                break;
+        }
+
         // Map zoomStrength (1-5) to actual scale. 
         // If config.zoomStrength is e.g. 2.5, that's the target zoom.
         // We blend from IDLE (1.0) to target.
-        targetScale = CAMERA_CONFIG.ZOOM_IDLE + (ZOOM_STRENGTH - CAMERA_CONFIG.ZOOM_IDLE) * zoomProgress;
+        targetScale = CAMERA_CONFIG.ZOOM_IDLE + (spotlightZoomStrength - CAMERA_CONFIG.ZOOM_IDLE) * zoomProgress;
 
         const centerX = viewport.width / 2;
         const centerY = viewport.height / 2;
@@ -307,10 +350,17 @@ export const updateCameraSystem = (
 
         const edgeAvoidance = { x: pushX, y: pushY };
 
-        const focusX = cursorX + lookaheadX;
-        const focusY = cursorY + lookaheadY;
+        // Apply effect panning: panX/panY are -1 to 1, where 0 is center
+        // Convert to pixel offset (max offset is half viewport when zoomed)
+        const maxPanOffsetX = (viewport.width * targetScale - viewport.width) / 2;
+        const maxPanOffsetY = (viewport.height * targetScale - viewport.height) / 2;
+        const effectPanOffsetX = effectPanX * maxPanOffsetX;
+        const effectPanOffsetY = effectPanY * maxPanOffsetY;
 
-        // Calculate camera offset with edge avoidance
+        const focusX = cursorX + lookaheadX + effectPanOffsetX;
+        const focusY = cursorY + lookaheadY + effectPanOffsetY;
+
+        // Calculate camera offset with edge avoidance and effect panning
         targetTranslateX = (centerX - focusX) + edgeAvoidance.x;
         targetTranslateY = (centerY - focusY) + edgeAvoidance.y;
 
