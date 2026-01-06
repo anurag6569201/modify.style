@@ -20,12 +20,20 @@ export interface FilterConfig {
 
 export class FilterEngine {
   private ctx: CanvasRenderingContext2D;
-  private width: number;
-  private height: number;
+  public readonly width: number;
+  public readonly height: number;
   private tempCanvas: HTMLCanvasElement;
   private tempCtx: CanvasRenderingContext2D;
 
   constructor(ctx: CanvasRenderingContext2D, width: number, height: number) {
+    // Validate inputs
+    if (!ctx) {
+      throw new Error('FilterEngine: Canvas context is required');
+    }
+    if (!isFinite(width) || !isFinite(height) || width <= 0 || height <= 0) {
+      throw new Error(`FilterEngine: Invalid dimensions (${width}x${height})`);
+    }
+    
     this.ctx = ctx;
     this.width = width;
     this.height = height;
@@ -33,52 +41,119 @@ export class FilterEngine {
     this.tempCanvas = document.createElement('canvas');
     this.tempCanvas.width = width;
     this.tempCanvas.height = height;
-    this.tempCtx = this.tempCanvas.getContext('2d')!;
+    const tempCtx = this.tempCanvas.getContext('2d');
+    if (!tempCtx) {
+      throw new Error('FilterEngine: Failed to create temporary canvas context');
+    }
+    this.tempCtx = tempCtx;
   }
 
   applyFilters(
     image: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement,
     config: FilterConfig
   ): void {
-    // Draw image to temp canvas
-    this.tempCtx.drawImage(image, 0, 0, this.width, this.height);
-    
-    // Get image data
-    const imageData = this.tempCtx.getImageData(0, 0, this.width, this.height);
-    const data = imageData.data;
+    try {
+      // Validate image
+      if (!image) {
+        console.error('FilterEngine: Image is null or undefined');
+        return;
+      }
 
-    // Apply pixel-level filters
-    if (config.brightness !== undefined || config.contrast !== undefined || 
-        config.saturation !== undefined || config.hue !== undefined ||
-        config.grayscale !== undefined || config.sepia !== undefined ||
-        config.invert !== undefined || config.colorize !== undefined) {
-      this.applyColorFilters(data, config);
-    }
+      // Check if image is a video element and if it's ready
+      if (image instanceof HTMLVideoElement) {
+        if (image.readyState < 2) {
+          // Video not ready, skip filtering
+          return;
+        }
+        // Validate video dimensions
+        if (image.videoWidth <= 0 || image.videoHeight <= 0) {
+          return;
+        }
+      }
 
-    if (config.noise !== undefined && config.noise > 0) {
-      this.applyNoise(data, config.noise);
-    }
+      // Draw image to temp canvas
+      try {
+        this.tempCtx.drawImage(image, 0, 0, this.width, this.height);
+      } catch (drawError) {
+        console.error('FilterEngine: Error drawing image to temp canvas', drawError);
+        return;
+      }
+      
+      // Get image data
+      let imageData: ImageData;
+      try {
+        imageData = this.tempCtx.getImageData(0, 0, this.width, this.height);
+      } catch (imageDataError) {
+        console.error('FilterEngine: Error getting image data', imageDataError);
+        return;
+      }
+      
+      const data = imageData.data;
 
-    // Put modified data back
-    this.tempCtx.putImageData(imageData, 0, 0);
+      // Validate image data
+      if (!data || data.length === 0) {
+        console.error('FilterEngine: Invalid image data');
+        return;
+      }
 
-    // Apply canvas-level filters
-    this.ctx.save();
-    
-    if (config.blur !== undefined && config.blur > 0) {
-      this.ctx.filter = `blur(${config.blur}px)`;
-    }
-    
-    if (config.vignette !== undefined && config.vignette > 0) {
-      this.applyVignette(config.vignette);
-    }
+      // Apply pixel-level filters
+      if (config.brightness !== undefined || config.contrast !== undefined || 
+          config.saturation !== undefined || config.hue !== undefined ||
+          config.grayscale !== undefined || config.sepia !== undefined ||
+          config.invert !== undefined || config.colorize !== undefined) {
+        try {
+          this.applyColorFilters(data, config);
+        } catch (filterError) {
+          console.error('FilterEngine: Error applying color filters', filterError);
+          // Continue with other filters even if color filters fail
+        }
+      }
 
-    this.ctx.drawImage(this.tempCanvas, 0, 0);
-    this.ctx.restore();
+      if (config.noise !== undefined && config.noise > 0) {
+        try {
+          this.applyNoise(data, config.noise);
+        } catch (noiseError) {
+          console.error('FilterEngine: Error applying noise', noiseError);
+        }
+      }
 
-    // Apply sharpen if needed
-    if (config.sharpen !== undefined && config.sharpen > 0) {
-      this.applySharpen(config.sharpen);
+      // Put modified data back
+      try {
+        this.tempCtx.putImageData(imageData, 0, 0);
+      } catch (putError) {
+        console.error('FilterEngine: Error putting image data', putError);
+        return;
+      }
+
+      // Apply canvas-level filters
+      this.ctx.save();
+      
+      try {
+        if (config.blur !== undefined && config.blur > 0 && isFinite(config.blur)) {
+          this.ctx.filter = `blur(${Math.max(0, Math.min(20, config.blur))}px)`;
+        }
+        
+        if (config.vignette !== undefined && config.vignette > 0 && isFinite(config.vignette)) {
+          this.applyVignette(Math.max(0, Math.min(1, config.vignette)));
+        }
+
+        this.ctx.drawImage(this.tempCanvas, 0, 0);
+      } catch (drawError) {
+        console.error('FilterEngine: Error drawing filtered image', drawError);
+      } finally {
+        this.ctx.restore();
+      }
+
+      // Apply sharpen if needed
+      if (config.sharpen !== undefined && config.sharpen > 0 && isFinite(config.sharpen)) {
+        try {
+          this.applySharpen(Math.max(0, Math.min(1, config.sharpen)));
+        } catch (sharpenError) {
+          console.error('FilterEngine: Error applying sharpen', sharpenError);
+        }
+      }
+    } catch (error) {
+      console.error('FilterEngine: Unexpected error in applyFilters', error);
     }
   }
 
@@ -182,51 +257,95 @@ export class FilterEngine {
   }
 
   private applyVignette(amount: number): void {
-    const gradient = this.ctx.createRadialGradient(
-      this.width / 2, this.height / 2, 0,
-      this.width / 2, this.height / 2, Math.max(this.width, this.height) / 2
-    );
-    gradient.addColorStop(0, `rgba(0, 0, 0, 0)`);
-    gradient.addColorStop(1, `rgba(0, 0, 0, ${amount})`);
-    
-    this.ctx.fillStyle = gradient;
-    this.ctx.fillRect(0, 0, this.width, this.height);
+    try {
+      if (!isFinite(amount) || amount <= 0) return;
+      
+      const centerX = this.width / 2;
+      const centerY = this.height / 2;
+      const radius = Math.max(this.width, this.height) / 2;
+      
+      if (!isFinite(centerX) || !isFinite(centerY) || !isFinite(radius) || radius <= 0) {
+        return;
+      }
+      
+      const gradient = this.ctx.createRadialGradient(
+        centerX, centerY, 0,
+        centerX, centerY, radius
+      );
+      gradient.addColorStop(0, `rgba(0, 0, 0, 0)`);
+      gradient.addColorStop(1, `rgba(0, 0, 0, ${Math.max(0, Math.min(1, amount))})`);
+      
+      this.ctx.fillStyle = gradient;
+      this.ctx.fillRect(0, 0, this.width, this.height);
+    } catch (error) {
+      console.error('FilterEngine: Error applying vignette', error);
+    }
   }
 
   private applySharpen(amount: number): void {
-    // Simple sharpen using convolution (simplified)
-    const imageData = this.ctx.getImageData(0, 0, this.width, this.height);
-    const data = imageData.data;
-    const tempData = new Uint8ClampedArray(data);
+    try {
+      if (!isFinite(amount) || amount <= 0) return;
+      
+      // Validate dimensions
+      if (this.width <= 1 || this.height <= 1) {
+        return; // Need at least 2x2 for convolution
+      }
+      
+      // Simple sharpen using convolution (simplified)
+      let imageData: ImageData;
+      try {
+        imageData = this.ctx.getImageData(0, 0, this.width, this.height);
+      } catch (error) {
+        console.error('FilterEngine: Error getting image data for sharpen', error);
+        return;
+      }
+      
+      const data = imageData.data;
+      const tempData = new Uint8ClampedArray(data);
 
-    const kernel = [
-      0, -amount, 0,
-      -amount, 1 + 4 * amount, -amount,
-      0, -amount, 0
-    ];
+      const kernel = [
+        0, -amount, 0,
+        -amount, 1 + 4 * amount, -amount,
+        0, -amount, 0
+      ];
 
-    for (let y = 1; y < this.height - 1; y++) {
-      for (let x = 1; x < this.width - 1; x++) {
-        let r = 0, g = 0, b = 0;
-        
-        for (let ky = -1; ky <= 1; ky++) {
-          for (let kx = -1; kx <= 1; kx++) {
-            const idx = ((y + ky) * this.width + (x + kx)) * 4;
-            const k = kernel[(ky + 1) * 3 + (kx + 1)];
-            r += tempData[idx] * k;
-            g += tempData[idx + 1] * k;
-            b += tempData[idx + 2] * k;
+      // Only process inner pixels (skip border)
+      const maxY = Math.max(1, this.height - 1);
+      const maxX = Math.max(1, this.width - 1);
+      
+      for (let y = 1; y < maxY; y++) {
+        for (let x = 1; x < maxX; x++) {
+          let r = 0, g = 0, b = 0;
+          
+          for (let ky = -1; ky <= 1; ky++) {
+            for (let kx = -1; kx <= 1; kx++) {
+              const idx = ((y + ky) * this.width + (x + kx)) * 4;
+              if (idx >= 0 && idx + 2 < data.length) {
+                const k = kernel[(ky + 1) * 3 + (kx + 1)];
+                r += tempData[idx] * k;
+                g += tempData[idx + 1] * k;
+                b += tempData[idx + 2] * k;
+              }
+            }
+          }
+          
+          const idx = (y * this.width + x) * 4;
+          if (idx >= 0 && idx + 2 < data.length) {
+            data[idx] = Math.max(0, Math.min(255, r));
+            data[idx + 1] = Math.max(0, Math.min(255, g));
+            data[idx + 2] = Math.max(0, Math.min(255, b));
           }
         }
-        
-        const idx = (y * this.width + x) * 4;
-        data[idx] = Math.max(0, Math.min(255, r));
-        data[idx + 1] = Math.max(0, Math.min(255, g));
-        data[idx + 2] = Math.max(0, Math.min(255, b));
       }
-    }
 
-    this.ctx.putImageData(imageData, 0, 0);
+      try {
+        this.ctx.putImageData(imageData, 0, 0);
+      } catch (error) {
+        console.error('FilterEngine: Error putting image data after sharpen', error);
+      }
+    } catch (error) {
+      console.error('FilterEngine: Unexpected error in applySharpen', error);
+    }
   }
 }
 

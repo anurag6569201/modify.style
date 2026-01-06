@@ -417,24 +417,6 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
             {/* Controls Group */}
             <div className="space-y-1 bg-card/40 backdrop-blur-sm p-4 rounded-xl border-none shadow-sm">
 
-                {/* Zoom Control */}
-                <div className="space-y-3 pb-4 border-b border-border/10">
-                    <div className="flex items-center justify-between">
-                        <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                            <ZoomIn className="h-3.5 w-3.5" />
-                            Zoom Level
-                        </Label>
-                        <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">{camera.zoomStrength.toFixed(1)}x</span>
-                    </div>
-                    <Slider
-                        min={1}
-                        max={5}
-                        step={0.1}
-                        value={[camera.zoomStrength]}
-                        onValueChange={([val]) => updateCamera({ zoomStrength: val })}
-                    />
-                </div>
-
                 {/* Speed Control */}
                 <div className="space-y-3 py-4 border-b border-border/10">
                     <div className="flex items-center justify-between">

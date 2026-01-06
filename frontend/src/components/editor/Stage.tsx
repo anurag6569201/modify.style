@@ -27,114 +27,190 @@ export const Stage: React.FC = () => {
         if (showRawVideo) {
             // Reset transform to show raw video
             if (stageRef.current) {
-                stageRef.current.style.transform = 'translate(0px, 0px) scale(1) rotate(0deg)';
-                stageRef.current.style.filter = 'none';
+                try {
+                    stageRef.current.style.transform = 'translate(0px, 0px) scale(1) rotate(0deg)';
+                    stageRef.current.style.filter = 'none';
+                } catch (error) {
+                    console.error('Error resetting stage transform:', error);
+                }
             }
             return;
         }
 
         let lastTime = performance.now();
+        let consecutiveErrors = 0;
+        const MAX_CONSECUTIVE_ERRORS = 10;
 
         const animate = (timestamp: number) => {
-            const dt = (timestamp - lastTime) / 1000;
-            lastTime = timestamp;
+            try {
+                const dt = (timestamp - lastTime) / 1000;
+                lastTime = timestamp;
 
-            // -----------------------------------------------------
-            // CAMERA LOGIC
-            // -----------------------------------------------------
-            const currentState = editorStore.getState();
-            const videoTime = currentState.playback.currentTime;
-            const { width, height } = currentState.video;
+                // Clamp dt to avoid huge jumps if lag (max 100ms)
+                const clampedDt = Math.min(Math.max(0, dt), 0.1);
 
-            // Only run if we have valid dimensions
-            if (width > 0 && height > 0) {
-                const newCameraState = updateCameraSystem(
-                    cameraStateRef.current,
-                    videoTime,
-                    // Clamp dt to avoid huge jumps if lag (max 100ms)
-                    Math.min(dt, 0.1),
-                    currentState.events.clicks,
-                    currentState.events.moves,
-                    currentState.events.effects || [],
-                    { width, height },
-                    currentState.video.duration || 0,
-                    {
-                        zoomStrength: currentState.camera.zoomStrength,
-                        speed: currentState.camera.speed,
-                        padding: currentState.camera.padding
+                // -----------------------------------------------------
+                // CAMERA LOGIC
+                // -----------------------------------------------------
+                const currentState = editorStore.getState();
+                const videoTime = currentState.playback.currentTime;
+                const { width, height } = currentState.video;
+
+                // Validate state
+                if (!isFinite(videoTime) || isNaN(videoTime) || videoTime < 0) {
+                    requestRef.current = requestAnimationFrame(animate);
+                    return;
+                }
+
+                // Only run if we have valid dimensions
+                if (width > 0 && height > 0 && isFinite(width) && isFinite(height)) {
+                    try {
+                        const newCameraState = updateCameraSystem(
+                            cameraStateRef.current,
+                            videoTime,
+                            clampedDt,
+                            currentState.events.clicks,
+                            currentState.events.moves,
+                            currentState.events.effects || [],
+                            { width, height },
+                            currentState.video.duration || 0,
+                            {
+                                zoomStrength: currentState.camera.zoomStrength,
+                                speed: currentState.camera.speed,
+                                padding: currentState.camera.padding
+                            }
+                        );
+
+                        cameraStateRef.current = newCameraState;
+
+                        // Apply Transform
+                        if (stageRef.current) {
+                            try {
+                                const { scale, translateX, translateY, rotation, vignette } = newCameraState.transform;
+                                // Apply to Stage Content
+                                // Add rotation (banking)
+                                const rot = rotation || 0;
+                                // Add Design Rotation
+                                const designRotation = currentState.presentation.videoStyle?.rotation || 0;
+                                const totalRotation = rot + designRotation;
+
+                                // Validate values
+                                if (!isFinite(scale) || !isFinite(translateX) || !isFinite(translateY) || !isFinite(totalRotation)) {
+                                    throw new Error('Invalid transform values');
+                                }
+
+                                // Scale translation to match preview size
+                                // Camera logic works in native video pixels, so we must scale the translation
+                                // to match the current display size of the stage.
+                                const nativeWidth = currentState.video.width || 1920;
+                                const currentWidth = stageRef.current.offsetWidth || nativeWidth;
+                                
+                                if (!isFinite(nativeWidth) || !isFinite(currentWidth) || nativeWidth <= 0 || currentWidth <= 0) {
+                                    throw new Error('Invalid width values');
+                                }
+                                
+                                const ratio = currentWidth / nativeWidth;
+
+                                if (!isFinite(ratio)) {
+                                    throw new Error('Invalid ratio');
+                                }
+
+                                const scaledX = translateX * ratio;
+                                const scaledY = translateY * ratio;
+
+                                if (!isFinite(scaledX) || !isFinite(scaledY)) {
+                                    throw new Error('Invalid scaled translation values');
+                                }
+
+                                stageRef.current.style.transform = `scale(${scale}) translate(${scaledX}px, ${scaledY}px) rotate(${totalRotation}deg)`;
+
+                                // Construct CSS filter string from Color Grading + Camera Blur
+                                const { brightness, contrast, saturation, hue } = currentState.colorGrading;
+
+                                const filterParts = [];
+                                if (newCameraState.blur > 0 && isFinite(newCameraState.blur)) {
+                                    filterParts.push(`blur(${Math.max(0, Math.min(20, newCameraState.blur))}px)`);
+                                }
+                                if (isFinite(brightness) && brightness !== 0) {
+                                    filterParts.push(`brightness(${1 + brightness})`);
+                                }
+                                if (isFinite(contrast) && contrast !== 0) {
+                                    filterParts.push(`contrast(${1 + contrast})`);
+                                }
+                                if (isFinite(saturation) && saturation !== 0) {
+                                    filterParts.push(`saturate(${1 + saturation})`);
+                                }
+                                if (isFinite(hue) && hue !== 0) {
+                                    filterParts.push(`hue-rotate(${hue}deg)`);
+                                }
+
+                                stageRef.current.style.filter = filterParts.length > 0 ? filterParts.join(' ') : 'none';
+                            } catch (transformError) {
+                                console.error('Error applying stage transform:', transformError);
+                                consecutiveErrors++;
+                            }
+
+                            // Update Spotlight Overlay
+                            if (spotlightRef.current) {
+                                try {
+                                    spotlightRef.current.style.opacity = newCameraState.spotlight ? '1' : '0';
+                                } catch (error) {
+                                    console.error('Error updating spotlight:', error);
+                                }
+                            }
+
+                            // Update Vignette Overlay
+                            if (vignetteRef.current) {
+                                try {
+                                    // Combine camera vignette and color grading vignette
+                                    const cameraVignette = newCameraState.transform.vignette || 0;
+                                    const gradingVignette = currentState.colorGrading.vignette || 0;
+                                    const totalVignette = Math.min(1, Math.max(0, cameraVignette + gradingVignette));
+                                    if (isFinite(totalVignette)) {
+                                        vignetteRef.current.style.opacity = totalVignette.toString();
+                                    }
+                                } catch (error) {
+                                    console.error('Error updating vignette:', error);
+                                }
+                            }
+                        }
+
+                        consecutiveErrors = 0; // Reset on success
+                    } catch (cameraError) {
+                        consecutiveErrors++;
+                        console.error('Error in camera system update:', cameraError);
+                        
+                        // Stop animation if too many errors
+                        if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                            console.error('Too many camera errors, stopping animation');
+                            return;
+                        }
                     }
-                );
-
-                cameraStateRef.current = newCameraState;
-
-                // Apply Transform
-                if (stageRef.current) {
-                    const { scale, translateX, translateY, rotation, vignette } = newCameraState.transform;
-                    // Apply to Stage Content
-                    // Add rotation (banking)
-                    const rot = rotation || 0;
-                    // Add Design Rotation
-                    const designRotation = currentState.presentation.videoStyle?.rotation || 0;
-                    const totalRotation = rot + designRotation;
-
-                    // Scale translation to match preview size
-                    // Camera logic works in native video pixels, so we must scale the translation
-                    // to match the current display size of the stage.
-                    const nativeWidth = currentState.video.width || 1920;
-                    const currentWidth = stageRef.current.offsetWidth || nativeWidth;
-                    const ratio = currentWidth / nativeWidth;
-
-                    const scaledX = translateX * ratio;
-                    const scaledY = translateY * ratio;
-
-                    stageRef.current.style.transform = `scale(${scale}) translate(${scaledX}px, ${scaledY}px) rotate(${totalRotation}deg)`;
-
-                    // Apply Vignette (using mask or box-shadow on overlay? Stage has blur.)
-                    // Actually, Stage doesn't have a vignette overlay yet.
-                    // We can add it to the spotlight overlay or a new one.
-                    // For now, let's just handle Blur and Transform.
-                    // Construct CSS filter string from Color Grading + Camera Blur
-                    const { brightness, contrast, saturation, hue } = currentState.colorGrading;
-
-                    const filterParts = [];
-                    if (newCameraState.blur > 0) filterParts.push(`blur(${newCameraState.blur}px)`);
-                    if (brightness !== 0) filterParts.push(`brightness(${1 + brightness})`);
-                    if (contrast !== 0) filterParts.push(`contrast(${1 + contrast})`);
-                    if (saturation !== 0) filterParts.push(`saturate(${1 + saturation})`);
-                    if (hue !== 0) filterParts.push(`hue-rotate(${hue}deg)`);
-
-                    stageRef.current.style.filter = filterParts.length > 0 ? filterParts.join(' ') : 'none';
-
-                    // Update Vignette Overlay if exists (we need to add it to JSX if we want it)
-                    // Let's rely on Spotlight reference for now or adding a specific vignette element.
-                    // But wait, the user asked for "God level". I should add the Vignette Overlay to the JSX.
-
                 }
 
-                // Update Spotlight Overlay
-                if (spotlightRef.current) {
-                    spotlightRef.current.style.opacity = newCameraState.spotlight ? '1' : '0';
+                requestRef.current = requestAnimationFrame(animate);
+            } catch (error) {
+                consecutiveErrors++;
+                console.error('Error in animation loop:', error);
+                
+                // Stop animation if too many errors
+                if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
+                    console.error('Too many animation errors, stopping animation');
+                    return;
                 }
-
-                // Update Vignette Overlay
-                if (vignetteRef.current) {
-                    // Combine camera vignette and color grading vignette
-                    const cameraVignette = newCameraState.transform.vignette || 0;
-                    const gradingVignette = currentState.colorGrading.vignette || 0;
-                    // Use the maximum of the two or sum? Render.tsx uses colorGrading.vignette via FilterEngine.
-                    // Camera vignette is applied via ctx.fillRect overlay.
-                    // Let's combine them simply by summing and clamping or just maxing.
-                    // Since both result in a black overlay, max makes sense to prevent double darkening if logic overlaps.
-                    const totalVignette = Math.min(1, cameraVignette + gradingVignette);
-                    vignetteRef.current.style.opacity = totalVignette.toString();
-                }
+                
+                // Try to continue
+                requestRef.current = requestAnimationFrame(animate);
             }
-
-            requestRef.current = requestAnimationFrame(animate);
         };
 
         requestRef.current = requestAnimationFrame(animate);
-        return () => cancelAnimationFrame(requestRef.current!);
+        return () => {
+            if (requestRef.current) {
+                cancelAnimationFrame(requestRef.current);
+                requestRef.current = undefined;
+            }
+        };
     }, [showRawVideo, state.effects.clickRipple, state.camera, state.playback.currentTime]);
 
     // Calculate output dimensions based on aspect ratio preset
