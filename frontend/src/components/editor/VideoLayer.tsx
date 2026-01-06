@@ -1,6 +1,5 @@
 import React, { useEffect, useRef } from 'react';
 import { useEditorState, editorStore } from '@/lib/editor/store';
-import { CursorLayer } from './CursorLayer';
 import { FilterEngine } from '@/lib/effects/filters';
 
 export const VideoLayer: React.FC = () => {
@@ -442,7 +441,6 @@ export const VideoLayer: React.FC = () => {
                                 boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
                             }}
                         />
-                        <CursorLayer />
                     </div>
                 </>
             )}

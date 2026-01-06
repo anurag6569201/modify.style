@@ -27,6 +27,26 @@ export interface CursorConfig {
     completePath: boolean; // Enable complete path capture and visualization
 }
 
+export interface ClickEffectConfig {
+    enabled: boolean;
+    animationStyle: 'ripple' | 'orb' | 'pulse' | 'ring' | 'splash' | 'particles' | 'glow' | 'shockwave' | 'trail' | 'burst' | 
+                   'neon-burst' | 'glitch' | 'cyber-pulse' | 'implosion' | 'magnetic' | 'hologram' | 'shock-blur' | 
+                   'liquid' | 'time-freeze' | 'depth-pop' | 'heat-ripple' | 'none';
+    size: number; // 0.5 to 3.0
+    color: string; // Hex color
+    secondaryColor?: string; // Secondary color for gradients
+    force: number; // 0.0 to 1.5 - strength/intensity multiplier
+    easing: 'linear' | 'ease-out' | 'ease-in-out' | 'bounce' | 'elastic' | 'spring';
+    emphasis: boolean; // Double click emphasis
+    particleCount?: number; // Number of particles (for particle effects)
+    glowIntensity?: number; // Glow intensity (0-1)
+    trailLength?: number; // Trail length in frames
+    animationDuration?: number; // Custom animation duration
+    glitchIntensity?: number; // Glitch RGB split intensity (0-1)
+    blurStrength?: number; // Blur strength for shock-blur (0-20)
+    distortionStrength?: number; // Distortion strength for liquid/heat (0-1)
+}
+
 export interface EffectsConfig {
     clickRipple: boolean;
     clickSize: number;
@@ -36,6 +56,8 @@ export interface EffectsConfig {
     clickAnimationStyle: 'ripple' | 'orb' | 'pulse' | 'ring' | 'splash' | 'none';
     clickForce: number; // 0.0 to 1.0 - strength/intensity multiplier
     clickEasing: 'linear' | 'ease-out' | 'ease-in-out' | 'bounce' | 'elastic';
+    // Per-click effect configurations (keyed by click timestamp)
+    clickEffects: Record<string, ClickEffectConfig>;
 }
 
 export type AspectRatioPreset = 'native' | '16:9' | '9:16' | '1:1' | '4:3' | '21:9' | 'custom';
@@ -224,6 +246,7 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         clickAnimationStyle: 'ripple',
         clickForce: 1.0,
         clickEasing: 'ease-out',
+        clickEffects: {}, // Per-click effect configurations
     },
     presentation: {
         aspectRatio: 'native',

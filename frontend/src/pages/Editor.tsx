@@ -140,6 +140,7 @@ export default function Editor() {
   // Professional Timeline Editor State
   const [selectedEffectId, setSelectedEffectId] = useState<string | null>(null);
   const [selectedTextLayerId, setSelectedTextLayerId] = useState<string | null>(null);
+  const [selectedClickIndex, setSelectedClickIndex] = useState<number | null>(null);
   const [draggingEffect, setDraggingEffect] = useState<{ id: string; startOffset: number } | null>(null);
   const [draggingTextLayer, setDraggingTextLayer] = useState<{ id: string; startOffset: number } | null>(null);
   const [resizingEffect, setResizingEffect] = useState<{ id: string; edge: 'left' | 'right'; startTime: number } | null>(null);
@@ -717,6 +718,8 @@ export default function Editor() {
                 selectedEffectId={selectedEffectId}
                 onEffectSelect={setSelectedEffectId}
                 isLoopingEffect={isLoopingEffect}
+                selectedClickIndex={selectedClickIndex}
+                onClickSelect={setSelectedClickIndex}
               />
             </div>
           </div>
@@ -986,6 +989,7 @@ export default function Editor() {
                       editorStore.setPlayback({ currentTime: finalTime });
                       setSelectedEffectId(null); // Deselect on timeline click
                       setSelectedTextLayerId(null); // Deselect text layer on timeline click
+                      setSelectedClickIndex(null); // Deselect click on timeline click
                     }
                   }
                 }}
@@ -1175,11 +1179,13 @@ export default function Editor() {
                                 bottom: isTopRow ? '50%' : '2px',
                                 height: 'calc(50% - 4px)'
                               }}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setSelectedEffectId(effect.id);
-                                editorStore.setPlayback({ currentTime: startSeconds });
-                              }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedEffectId(effect.id);
+                                  setSelectedClickIndex(null);
+                                  setSelectedTextLayerId(null);
+                                  editorStore.setPlayback({ currentTime: startSeconds });
+                                }}
                               onMouseDown={(e) => {
                                 e.stopPropagation();
                                 const rect = e.currentTarget.getBoundingClientRect();
@@ -1328,6 +1334,7 @@ export default function Editor() {
                                   e.stopPropagation();
                                   setSelectedTextLayerId(textLayer.id);
                                   setSelectedEffectId(null);
+                                  setSelectedClickIndex(null);
                                   editorStore.setPlayback({ currentTime: textLayer.startTime });
                                 }}
                                 onMouseDown={(e) => {
@@ -1400,19 +1407,41 @@ export default function Editor() {
                         <div className="absolute left-20 right-0 top-0 bottom-0 px-1.5 flex items-center">
                           {editorState.events.clicks.map((click, index) => {
                             const position = timeToPercent(click.timestamp);
+                            const isSelected = selectedClickIndex === index;
+                            const clickKey = `${click.timestamp}`;
+                            const hasEffect = editorState.effects.clickEffects[clickKey]?.enabled || false;
+                            
                             return (
                               <div
                                 key={`click-${index}`}
-                                className="absolute flex items-center group cursor-pointer"
+                                className={`absolute flex items-center group cursor-pointer ${isSelected ? 'z-30' : ''}`}
                                 style={{ left: `${position}%` }}
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  editorStore.setPlayback({ currentTime: click.timestamp });
+                                  if (selectedClickIndex === index) {
+                                    // Deselect if clicking the same click
+                                    setSelectedClickIndex(null);
+                                    setSelectedEffectId(null);
+                                    setSelectedTextLayerId(null);
+                                  } else {
+                                    // Select this click
+                                    setSelectedClickIndex(index);
+                                    setSelectedEffectId(null);
+                                    setSelectedTextLayerId(null);
+                                    editorStore.setPlayback({ currentTime: click.timestamp });
+                                  }
                                 }}
                               >
-                                <div className="w-2 h-2 rounded-full bg-blue-500 border border-background shadow-sm hover:scale-125 transition-transform" />
-                                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 px-1 py-0.5 bg-blue-500 text-white text-[8px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity shadow-md">
+                                <div className={`w-2 h-2 rounded-full border border-background shadow-sm hover:scale-125 transition-transform ${
+                                  isSelected 
+                                    ? 'bg-blue-400 ring-2 ring-blue-300 ring-offset-1 scale-125' 
+                                    : hasEffect
+                                    ? 'bg-blue-500 ring-1 ring-blue-400'
+                                    : 'bg-blue-500'
+                                }`} />
+                                <div className="absolute top-full left-1/2 -translate-x-1/2 mt-0.5 px-1 py-0.5 bg-blue-500 text-white text-[8px] rounded opacity-0 group-hover:opacity-100 pointer-events-none whitespace-nowrap transition-opacity shadow-md z-50">
                                   {formatTime(click.timestamp)}
+                                  {hasEffect && ' • ⚡'}
                                 </div>
                               </div>
                             );

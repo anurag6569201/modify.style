@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { DesignPanel } from './panels/DesignPanel';
 import { CameraPanel } from './panels/CameraPanel';
-import { CursorPanel } from './panels/CursorPanel';
 import { EffectsPanel } from './panels/EffectsPanel';
+import { InteractionEffectsPanel } from './panels/InteractionEffectsPanel';
 import { ScriptPanel } from './panels/ScriptPanel';
 import { VoicePanel } from './panels/VoicePanel';
 import { TextPanel } from './panels/TextPanel';
@@ -10,7 +10,6 @@ import { TimelinePanel } from './panels/TimelinePanel';
 import {
     Palette,
     Video,
-    MousePointer2,
     Sparkles,
     FileText,
     Mic2,
@@ -21,7 +20,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
-type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'cursor' | 'effects' | 'timeline';
+type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'effects' | 'timeline';
 
 interface SidebarItemProps {
     id: TabId;
@@ -59,9 +58,11 @@ interface EditorPanelProps {
     selectedEffectId?: string | null;
     onEffectSelect?: (id: string | null) => void;
     isLoopingEffect?: boolean;
+    selectedClickIndex?: number | null;
+    onClickSelect?: (index: number | null) => void;
 }
 
-export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect }: EditorPanelProps = {}) {
+export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect, selectedClickIndex, onClickSelect }: EditorPanelProps = {}) {
     const [activeTab, setActiveTab] = useState<TabId>('script');
 
     // Switch to camera tab when effect is selected
@@ -71,14 +72,30 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
         }
     }, [selectedEffectId]);
 
+    // Switch to effects tab when click is selected
+    useEffect(() => {
+        if (selectedClickIndex !== null && selectedClickIndex !== undefined) {
+            setActiveTab('effects');
+        }
+    }, [selectedClickIndex]);
+
     const renderPanel = () => {
+        // Show InteractionEffectsPanel when a click is selected, regardless of tab
+        if (selectedClickIndex !== null && selectedClickIndex !== undefined) {
+            return (
+                <InteractionEffectsPanel 
+                    selectedClickIndex={selectedClickIndex}
+                    onDeselectClick={() => onClickSelect?.(null)}
+                />
+            );
+        }
+
         switch (activeTab) {
             case 'script': return <ScriptPanel />;
             case 'voice': return <VoicePanel />;
             case 'design': return <DesignPanel />;
             case 'text': return <TextPanel />;
             case 'camera': return <CameraPanel selectedEffectId={selectedEffectId} onEffectSelect={onEffectSelect} isLoopingEffect={isLoopingEffect} />;
-            case 'cursor': return <CursorPanel />;
             case 'effects': return <EffectsPanel />;
             case 'timeline': return <TimelinePanel />;
             default: return <ScriptPanel />;
@@ -97,7 +114,6 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                     <SidebarItem id="design" icon={Palette} label="Design" isActive={activeTab === 'design'} onClick={setActiveTab} />
                     <SidebarItem id="text" icon={Type} label="Text" isActive={activeTab === 'text'} onClick={setActiveTab} />
                     <SidebarItem id="camera" icon={Video} label="Camera" isActive={activeTab === 'camera'} onClick={setActiveTab} />
-                    <SidebarItem id="cursor" icon={MousePointer2} label="Cursor" isActive={activeTab === 'cursor'} onClick={setActiveTab} />
                     <SidebarItem id="effects" icon={Sparkles} label="Effects" isActive={activeTab === 'effects'} onClick={setActiveTab} />
                     <div className="w-8 h-[1px] bg-border/40 my-2" />
                     <SidebarItem id="timeline" icon={Clock} label="Timeline" isActive={activeTab === 'timeline'} onClick={setActiveTab} />
@@ -110,17 +126,17 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                 <div className="h-16 border-b border-white/5 flex items-center px-2 bg-card/10 backdrop-blur-sm sticky top-0 z-20">
                     <div>
                         <h2 className="text-lg font-bold tracking-tight bg-gradient-to-r from-foreground to-foreground/60 bg-clip-text text-transparent capitalize">
-                            {activeTab}
+                            {selectedClickIndex !== null && selectedClickIndex !== undefined ? 'Interaction Effects' : activeTab}
                         </h2>
                         <p className="text-xs text-muted-foreground/80 font-medium">
-                            {activeTab === 'script' && 'Edit and refining your script'}
-                            {activeTab === 'voice' && 'Generate and manage AI voiceovers'}
-                            {activeTab === 'design' && 'Canvas layout and background'}
-                            {activeTab === 'text' && 'Add text overlays and titles'}
-                            {activeTab === 'camera' && (selectedEffectId ? 'Editing selected zoom effect' : 'Control camera movement and zoom')}
-                            {activeTab === 'cursor' && 'Customize mouse cursor appearance'}
-                            {activeTab === 'effects' && 'Apply visual effects and filters'}
-                            {activeTab === 'timeline' && ''}
+                            {selectedClickIndex !== null && selectedClickIndex !== undefined && 'Configure click effect properties'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'script' && 'Edit and refining your script'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'voice' && 'Generate and manage AI voiceovers'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'design' && 'Canvas layout and background'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'text' && 'Add text overlays and titles'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'camera' && (selectedEffectId ? 'Editing selected zoom effect' : 'Control camera movement and zoom')}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'effects' && 'Apply visual effects and filters'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'timeline' && ''}
                         </p>
                     </div>
                 </div>

@@ -3,6 +3,7 @@ import { useEditorState, editorStore } from '@/lib/editor/store';
 import { VideoLayer } from './VideoLayer';
 import { BackgroundLayer } from './BackgroundLayer';
 import { TextLayer } from './TextLayer';
+import { ClickEffectsLayer } from './ClickEffectsLayer';
 import { updateCameraSystem, getInitialCameraState } from '@/lib/composition/camera';
 import { calculateOutputDimensions, calculateVideoTransform } from '@/lib/composition/aspectRatio';
 
@@ -397,6 +398,8 @@ export const Stage: React.FC = () => {
                 }}
             >
                 <VideoLayer />
+                {/* Click Effects Layer */}
+                <ClickEffectsLayer />
                 {/* Vignette Overlay */}
                 <div
                     ref={vignetteRef}
