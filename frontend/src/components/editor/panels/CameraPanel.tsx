@@ -62,30 +62,12 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
     };
 
     return (
-        <div className="space-y-6 p-4 pb-20">
+        <div className="space-y-6 ">
             {/* Selected Effect Editor */}
             {selectedEffect && (
-                <div className="bg-gradient-to-br from-purple-500/20 via-purple-500/10 to-transparent border-2 border-purple-500/30 rounded-xl p-4 shadow-lg">
+                <div className="bg-card/40 backdrop-blur-sm rounded-xl p-4 border-none shadow-sm">
                     <div className="flex items-center justify-between mb-4">
-                        <div className="flex items-center gap-3">
-                            <div className="p-2 rounded-lg bg-purple-500/20 border border-purple-500/30">
-                                <Sparkles className="h-5 w-5 text-purple-400" />
-                            </div>
-                            <div>
-                                <div className="flex items-center gap-2">
-                                    <h3 className="text-sm font-semibold text-purple-300">Editing Effect</h3>
-                                    {isLoopingEffect && (
-                                        <div className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-purple-500/20 border border-purple-500/30">
-                                            <Repeat className="h-3 w-3 text-purple-400 animate-spin" />
-                                            <span className="text-[10px] text-purple-300 font-medium">Looping</span>
-                                        </div>
-                                    )}
-                                </div>
-                                <p className="text-xs text-purple-400/70">
-                                    {isLoopingEffect ? 'Effect is playing in loop • See changes in real-time' : 'Modify zoom effect properties'}
-                                </p>
-                            </div>
-                        </div>
+                        
                         <div className="flex items-center gap-2">
                             <Button
                                 variant="outline"
@@ -148,19 +130,19 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                     <div className="space-y-4">
                         {/* Effect Label */}
                         <div className="space-y-2">
-                            <Label className="text-xs font-medium text-purple-300">Effect Name</Label>
+                            <Label className="text-xs font-medium text-muted-foreground">Effect Name</Label>
                             <Input
                                 value={selectedEffect.label || ''}
                                 onChange={(e) => updateEffect(selectedEffect.id, { label: e.target.value })}
                                 placeholder="Enter effect name..."
-                                className="bg-background/50 border-purple-500/30 focus:border-purple-500/50"
+                                className="bg-background/50 border-border/40 focus:border-border"
                             />
                         </div>
 
                         {/* Time Range */}
                         <div className="grid grid-cols-2 gap-3">
                             <div className="space-y-2">
-                                <Label className="text-xs font-medium text-purple-300 flex items-center gap-1">
+                                <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
                                     <Clock className="h-3 w-3" />
                                     Start Time
                                 </Label>
@@ -176,12 +158,12 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                             updateEffect(selectedEffect.id, { start, end: Math.max(end, start + 0.5) });
                                         }
                                     }}
-                                    className="bg-background/50 border-purple-500/30 focus:border-purple-500/50"
+                                    className="bg-background/50 border-border/40 focus:border-border"
                                 />
-                                <p className="text-[10px] text-purple-400/60">{formatTime(Number(selectedEffect.start || selectedEffect.timestamp || 0))}</p>
+                                <p className="text-[10px] text-muted-foreground/60">{formatTime(Number(selectedEffect.start || selectedEffect.timestamp || 0))}</p>
                             </div>
                             <div className="space-y-2">
-                                <Label className="text-xs font-medium text-purple-300 flex items-center gap-1">
+                                <Label className="text-xs font-medium text-muted-foreground flex items-center gap-1">
                                     <Clock className="h-3 w-3" />
                                     End Time
                                 </Label>
@@ -197,17 +179,17 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                             updateEffect(selectedEffect.id, { end: Math.max(end, start + 0.5) });
                                         }
                                     }}
-                                    className="bg-background/50 border-purple-500/30 focus:border-purple-500/50"
+                                    className="bg-background/50 border-border/40 focus:border-border"
                                 />
-                                <p className="text-[10px] text-purple-400/60">{formatTime(Number(selectedEffect.end || (Number(selectedEffect.start || selectedEffect.timestamp || 0) + 5)))}</p>
+                                <p className="text-[10px] text-muted-foreground/60">{formatTime(Number(selectedEffect.end || (Number(selectedEffect.start || selectedEffect.timestamp || 0) + 5)))}</p>
                             </div>
                         </div>
 
                         {/* Duration Display */}
-                        <div className="bg-background/30 rounded-lg p-2 border border-purple-500/20">
+                        <div className="bg-background/30 rounded-lg p-2 border border-border/20">
                             <div className="flex items-center justify-between text-xs">
-                                <span className="text-purple-400/70">Duration</span>
-                                <span className="font-mono text-purple-300">
+                                <span className="text-muted-foreground/70">Duration</span>
+                                <span className="font-mono text-foreground">
                                     {(
                                         Number(selectedEffect.end || (Number(selectedEffect.start || selectedEffect.timestamp || 0) + 5)) - 
                                         Number(selectedEffect.start || selectedEffect.timestamp || 0)
@@ -217,13 +199,13 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                         </div>
 
                         {/* Zoom Level for This Effect */}
-                        <div className="space-y-3 pt-2 border-t border-purple-500/20">
+                        <div className="space-y-3 pt-2 border-t border-border/10">
                             <div className="flex items-center justify-between">
-                                <Label className="flex items-center gap-2 text-xs font-medium text-purple-300 uppercase tracking-wider">
+                                <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                                     <ZoomIn className="h-3.5 w-3.5" />
                                     Zoom Level (This Effect)
                                 </Label>
-                                <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-purple-500/30 text-purple-300">
+                                <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30 text-foreground">
                                     {(selectedEffect.zoom ?? camera.zoomStrength).toFixed(1)}x
                                 </span>
                             </div>
@@ -233,16 +215,15 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                 step={0.1}
                                 value={[selectedEffect.zoom ?? camera.zoomStrength]}
                                 onValueChange={([val]) => updateEffect(selectedEffect.id, { zoom: val })}
-                                className="[&_[role=slider]]:bg-purple-500"
                             />
-                            <p className="text-[10px] text-purple-400/60">
+                            <p className="text-[10px] text-muted-foreground/60">
                                 This zoom level applies only to this effect. Global camera settings below affect non-effect moments.
                             </p>
                         </div>
 
                         {/* Panning Controls */}
-                        <div className="space-y-4 pt-2 border-t border-purple-500/20">
-                            <Label className="flex items-center gap-2 text-xs font-medium text-purple-300 uppercase tracking-wider">
+                        <div className="space-y-4 pt-2 border-t border-border/10">
+                            <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                                 <Move className="h-3.5 w-3.5" />
                                 Pan Position
                             </Label>
@@ -250,50 +231,50 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                             {/* Horizontal Pan */}
                             <div className="space-y-2">
                                 <div className="flex items-center justify-between">
-                                    <Label className="flex items-center gap-1.5 text-xs text-purple-300">
+                                    <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                         <ArrowLeftRight className="h-3 w-3" />
                                         Horizontal Shift
                                     </Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-purple-500/30 text-purple-300">
+                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30 text-foreground">
                                         {(selectedEffect.panX ?? 0).toFixed(2)}
                                     </span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-purple-400/70 w-8">Left</span>
+                                    <span className="text-[10px] text-muted-foreground/70 w-8">Left</span>
                                     <Slider
                                         min={-1}
                                         max={1}
                                         step={0.05}
                                         value={[selectedEffect.panX ?? 0]}
                                         onValueChange={([val]) => updateEffect(selectedEffect.id, { panX: val })}
-                                        className="flex-1 [&_[role=slider]]:bg-purple-500"
+                                        className="flex-1"
                                     />
-                                    <span className="text-[10px] text-purple-400/70 w-8 text-right">Right</span>
+                                    <span className="text-[10px] text-muted-foreground/70 w-8 text-right">Right</span>
                                 </div>
                             </div>
 
                             {/* Vertical Pan */}
                             <div className="space-y-2">
                                 <div className="flex items-center justify-between">
-                                    <Label className="flex items-center gap-1.5 text-xs text-purple-300">
+                                    <Label className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                         <ArrowUpDown className="h-3 w-3" />
                                         Vertical Shift
                                     </Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-purple-500/30 text-purple-300">
+                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30 text-foreground">
                                         {(selectedEffect.panY ?? 0).toFixed(2)}
                                     </span>
                                 </div>
                                 <div className="flex items-center gap-2">
-                                    <span className="text-[10px] text-purple-400/70 w-8">Up</span>
+                                    <span className="text-[10px] text-muted-foreground/70 w-8">Up</span>
                                     <Slider
                                         min={-1}
                                         max={1}
                                         step={0.05}
                                         value={[selectedEffect.panY ?? 0]}
                                         onValueChange={([val]) => updateEffect(selectedEffect.id, { panY: val })}
-                                        className="flex-1 [&_[role=slider]]:bg-purple-500"
+                                        className="flex-1"
                                     />
-                                    <span className="text-[10px] text-purple-400/70 w-8 text-right">Down</span>
+                                    <span className="text-[10px] text-muted-foreground/70 w-8 text-right">Down</span>
                                 </div>
                             </div>
 
@@ -302,7 +283,7 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    className="h-7 text-[10px] bg-background/30 hover:bg-background/50 border-purple-500/20"
+                                    className="h-7 text-[10px] bg-background/30 hover:bg-background/50 border-border/20"
                                     onClick={() => updateEffect(selectedEffect.id, { panX: 0, panY: 0 })}
                                 >
                                     Center
@@ -310,7 +291,7 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    className="h-7 text-[10px] bg-background/30 hover:bg-background/50 border-purple-500/20"
+                                    className="h-7 text-[10px] bg-background/30 hover:bg-background/50 border-border/20"
                                     onClick={() => updateEffect(selectedEffect.id, { panX: -0.5, panY: 0 })}
                                 >
                                     Left
@@ -318,27 +299,27 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                 <Button
                                     variant="outline"
                                     size="sm"
-                                    className="h-7 text-[10px] bg-background/30 hover:bg-background/50 border-purple-500/20"
+                                    className="h-7 text-[10px] bg-background/30 hover:bg-background/50 border-border/20"
                                     onClick={() => updateEffect(selectedEffect.id, { panX: 0.5, panY: 0 })}
                                 >
                                     Right
                                 </Button>
                             </div>
-                            <p className="text-[10px] text-purple-400/60">
+                            <p className="text-[10px] text-muted-foreground/60">
                                 Adjust where the zoom focuses. -1 = full left/up, 0 = center, 1 = full right/down.
                             </p>
                         </div>
 
                         {/* Transition Settings */}
-                        <div className="space-y-3 pt-2 border-t border-purple-500/20">
-                            <Label className="flex items-center gap-2 text-xs font-medium text-purple-300 uppercase tracking-wider">
+                        <div className="space-y-3 pt-2 border-t border-border/10">
+                            <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                                 <Gauge className="h-3.5 w-3.5" />
                                 Transition Settings
                             </Label>
                             
                             {/* Easing Type */}
                             <div className="space-y-2">
-                                <Label className="text-xs text-purple-300">Easing Curve</Label>
+                                <Label className="text-xs text-muted-foreground">Easing Curve</Label>
                                 <div className="grid grid-cols-3 gap-2">
                                     {(['linear', 'ease-in', 'ease-out', 'ease-in-out', 'bounce'] as const).map((easeType) => (
                                         <Button
@@ -347,8 +328,8 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                             size="sm"
                                             className={`h-8 text-[10px] capitalize transition-all ${
                                                 (selectedEffect.easing ?? 'ease-out') === easeType
-                                                    ? 'bg-purple-500/20 border-purple-500/50 text-purple-300'
-                                                    : 'bg-background/30 hover:bg-background/50 border-purple-500/20'
+                                                    ? 'bg-primary text-primary-foreground border-primary shadow-md hover:bg-primary/90'
+                                                    : 'bg-background/30 hover:bg-background/50 border-border/20 text-muted-foreground hover:text-foreground'
                                             }`}
                                             onClick={() => updateEffect(selectedEffect.id, { easing: easeType })}
                                         >
@@ -361,8 +342,8 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                             {/* Transition Speed */}
                             <div className="space-y-2">
                                 <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-purple-300">Transition Speed</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-purple-500/30 text-purple-300">
+                                    <Label className="text-xs text-muted-foreground">Transition Speed</Label>
+                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30 text-foreground">
                                         {(selectedEffect.transitionSpeed ?? 1.0).toFixed(1)}x
                                     </span>
                                 </div>
@@ -372,9 +353,8 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                                     step={0.25}
                                     value={[selectedEffect.transitionSpeed ?? 1.0]}
                                     onValueChange={([val]) => updateEffect(selectedEffect.id, { transitionSpeed: val })}
-                                    className="[&_[role=slider]]:bg-purple-500"
                                 />
-                                <p className="text-[10px] text-purple-400/60">
+                                <p className="text-[10px] text-muted-foreground/60">
                                     How fast the zoom transitions in/out. Lower = slower, smoother. Higher = faster, snappier.
                                 </p>
                             </div>
@@ -384,7 +364,8 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
             )}
 
             {/* Mode Selection */}
-            <div className="space-y-3 bg-card/40 backdrop-blur-sm p-4 rounded-xl border-none shadow-sm">
+            {!selectedEffect && (
+                <div className="space-y-3 bg-card/40 backdrop-blur-sm p-4 rounded-xl border-none shadow-sm">
                 <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
                     <Video className="h-3.5 w-3.5" />
                     Camera Mode
@@ -413,9 +394,11 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                     </p>
                 </div>
             </div>
+            )}
 
             {/* Controls Group */}
-            <div className="space-y-1 bg-card/40 backdrop-blur-sm p-4 rounded-xl border-none shadow-sm">
+            {!selectedEffect && (
+                <div className="space-y-1 bg-card/40 backdrop-blur-sm p-4 rounded-xl border-none shadow-sm">
 
                 {/* Speed Control */}
                 <div className="space-y-3 py-4 border-b border-border/10">
@@ -460,6 +443,7 @@ export function CameraPanel({ selectedEffectId, onEffectSelect, isLoopingEffect 
                     </div>
                 </div>
             </div>
+            )}
         </div>
     );
 }

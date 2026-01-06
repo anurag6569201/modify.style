@@ -17,7 +17,7 @@ export function EffectsPanel() {
     };
 
     return (
-        <div className="space-y-6 p-4 pb-20">
+        <div className="space-y-6 ">
 
             <div className="space-y-4 bg-card/40 backdrop-blur-sm p-4 rounded-xl border-none shadow-sm">
                 <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
