@@ -35,6 +35,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Play,
   Pause,
   Wand2,
@@ -64,6 +70,8 @@ import {
   Upload,
   X,
   Repeat,
+  Type,
+  ChevronDown,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
@@ -131,8 +139,11 @@ export default function Editor() {
   
   // Professional Timeline Editor State
   const [selectedEffectId, setSelectedEffectId] = useState<string | null>(null);
+  const [selectedTextLayerId, setSelectedTextLayerId] = useState<string | null>(null);
   const [draggingEffect, setDraggingEffect] = useState<{ id: string; startOffset: number } | null>(null);
+  const [draggingTextLayer, setDraggingTextLayer] = useState<{ id: string; startOffset: number } | null>(null);
   const [resizingEffect, setResizingEffect] = useState<{ id: string; edge: 'left' | 'right'; startTime: number } | null>(null);
+  const [resizingTextLayer, setResizingTextLayer] = useState<{ id: string; edge: 'left' | 'right'; startTime: number } | null>(null);
   const [isLoopingEffect, setIsLoopingEffect] = useState(false);
   const loopIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -547,6 +558,10 @@ export default function Editor() {
             e.preventDefault();
             deleteEffect(selectedEffectId);
             setSelectedEffectId(null);
+          } else if (selectedTextLayerId) {
+            e.preventDefault();
+            deleteTextOverlay(selectedTextLayerId);
+            setSelectedTextLayerId(null);
           }
           break;
       }
@@ -554,7 +569,7 @@ export default function Editor() {
 
     window.addEventListener('keydown', handleKeyPress);
     return () => window.removeEventListener('keydown', handleKeyPress);
-  }, [editorState.playback.currentTime, editorState.video.duration, selectedEffectId, deleteEffect]);
+  }, [editorState.playback.currentTime, editorState.video.duration, selectedEffectId, selectedTextLayerId, deleteEffect, deleteTextOverlay]);
 
   // Auto-loop effect preview when selected
   useEffect(() => {
@@ -771,37 +786,72 @@ export default function Editor() {
                 </div>
 
                 <div className="flex items-center gap-2">
-                  {/* Add Effect Button */}
-                  <Button
-                    size="sm"
-                    variant="default"
-                    className="h-6 text-[10px] px-2 bg-purple-500 hover:bg-purple-600"
-                    onClick={() => {
-                      addSpotlightEffect();
-                      toast({
-                        title: "Effect added",
-                        description: "New zoom effect created at current time",
-                      });
-                    }}
-                    disabled={duration <= 0}
-                  >
-                    <Sparkles className="h-3 w-3 mr-1" />
-                    Add Effect
-                  </Button>
+                  {/* Add Effect Button with Dropdown */}
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        size="sm"
+                        variant="default"
+                        className="h-6 text-[10px] px-2 bg-purple-500 hover:bg-purple-600"
+                        disabled={duration <= 0}
+                      >
+                        <Sparkles className="h-3 w-3 mr-1" />
+                        Add Effect
+                        <ChevronDown className="h-3 w-3 ml-1" />
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-40">
+                      <DropdownMenuItem
+                        onClick={() => {
+                          addSpotlightEffect();
+                          toast({
+                            title: "Effect added",
+                            description: "New zoom effect created at current time",
+                          });
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <ZoomIn className="h-3.5 w-3.5 mr-2" />
+                        Zoom In
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        onClick={() => {
+                          addTextOverlay();
+                          toast({
+                            title: "Text layer added",
+                            description: "New text layer created at current time",
+                          });
+                        }}
+                        className="cursor-pointer"
+                      >
+                        <Type className="h-3.5 w-3.5 mr-2" />
+                        Text
+                      </DropdownMenuItem>
+                    </DropdownMenuContent>
+                  </DropdownMenu>
 
-                  {/* Delete Selected Effect Button */}
-                  {selectedEffectId && (
+                  {/* Delete Selected Effect/Text Layer Button */}
+                  {(selectedEffectId || selectedTextLayerId) && (
                     <Button
                       size="sm"
                       variant="ghost"
                       className="h-6 text-[10px] px-2 text-destructive hover:text-destructive hover:bg-destructive/10"
                       onClick={() => {
-                        deleteEffect(selectedEffectId);
-                        setSelectedEffectId(null);
-                        toast({
-                          title: "Effect deleted",
-                          description: "Effect has been removed",
-                        });
+                        if (selectedEffectId) {
+                          deleteEffect(selectedEffectId);
+                          setSelectedEffectId(null);
+                          toast({
+                            title: "Effect deleted",
+                            description: "Effect has been removed",
+                          });
+                        } else if (selectedTextLayerId) {
+                          deleteTextOverlay(selectedTextLayerId);
+                          setSelectedTextLayerId(null);
+                          toast({
+                            title: "Text layer deleted",
+                            description: "Text layer has been removed",
+                          });
+                        }
                       }}
                     >
                       <Trash2 className="h-3 w-3 mr-1" />
@@ -861,40 +911,6 @@ export default function Editor() {
 
             {/* Timeline Canvas - Compact Design */}
             <div className="relative bg-background">
-              {/* Mini Navigation Bar */}
-              {duration > 0 && (
-                <div className="px-4 py-1.5 border-b border-border/30 bg-background/40">
-                  <div className="relative h-2 rounded-full bg-secondary/30 overflow-hidden">
-                    {/* Effect indicators on minimap */}
-                    {editorState.events.effects.map((effect) => {
-                      const s = Number.isFinite(effect.start) ? effect.start : (effect.timestamp ?? 0);
-                      const en = Number.isFinite(effect.end) ? effect.end : s + 5;
-                      const left = Math.max(0, Math.min(100, (s / duration) * 100));
-                      const width = Math.max(0.5, Math.min(100, ((en - s) / duration) * 100));
-                      return (
-                        <div
-                          key={`nav-effect-${effect.id}`}
-                          className="absolute top-0 bottom-0 bg-purple-500/50 rounded-full"
-                          style={{ left: `${left}%`, width: `${width}%` }}
-                        />
-                      );
-                    })}
-                    {/* Visible window indicator */}
-                    <div
-                      className="absolute top-0 bottom-0 border border-primary/60 bg-primary/8 rounded-full"
-                      style={{
-                        left: `${Math.max(0, Math.min(100, (timelineWindow.start / duration) * 100))}%`,
-                        width: `${Math.max(2, Math.min(100, (visibleDuration / duration) * 100))}%`,
-                      }}
-                    />
-                    {/* Playhead on minimap */}
-                    <div
-                      className="absolute top-0 bottom-0 w-0.5 bg-primary z-10"
-                      style={{ left: `${Math.max(0, Math.min(100, (editorState.playback.currentTime / duration) * 100))}%` }}
-                    />
-                  </div>
-                </div>
-              )}
 
               <div
                 className={`relative h-[200px] cursor-pointer overflow-x-hidden overflow-y-auto ${isDraggingTimeline ? 'cursor-grabbing' : 'cursor-grab'}`}
@@ -907,8 +923,10 @@ export default function Editor() {
                   if (duration <= 0 || !isFinite(duration)) return;
 
                   const rect = e.currentTarget.getBoundingClientRect();
-                  const x = e.clientX - rect.left;
-                  const width = rect.width;
+                  const HEADER_WIDTH = 80; // w-20 = 80px
+                  const x = e.clientX - rect.left - HEADER_WIDTH;
+                  const width = rect.width - HEADER_WIDTH;
+                  if (x < 0) return; // Clicked on header area
                   const clickTime = percentToTime((x / width) * 100);
                   const finalTime = getSnappedTime(clickTime);
                   if (isFinite(finalTime) && !isNaN(finalTime)) {
@@ -920,8 +938,13 @@ export default function Editor() {
                 }}
                 onMouseMove={(e) => {
                   const rect = e.currentTarget.getBoundingClientRect();
-                  const x = e.clientX - rect.left;
-                  const width = rect.width;
+                  const HEADER_WIDTH = 80; // w-20 = 80px
+                  const x = e.clientX - rect.left - HEADER_WIDTH;
+                  const width = rect.width - HEADER_WIDTH;
+                  if (x < 0) {
+                    setTimelineHoverTime(null);
+                    return;
+                  }
                   const hoverTime = percentToTime((x / width) * 100);
                   setTimelineHoverTime(hoverTime);
 
@@ -949,24 +972,27 @@ export default function Editor() {
                   setTimelineHoverTime(null);
                 }}
                 onClick={(e) => {
-                  if (!isDraggingTimeline && !isSelectingRange && !draggingEffect && !resizingEffect) {
+                  if (!isDraggingTimeline && !isSelectingRange && !draggingEffect && !resizingEffect && !draggingTextLayer && !resizingTextLayer) {
                     if (duration <= 0 || !isFinite(duration)) return;
 
                     const rect = e.currentTarget.getBoundingClientRect();
-                    const x = e.clientX - rect.left;
-                    const width = rect.width;
+                    const HEADER_WIDTH = 80; // w-20 = 80px
+                    const x = e.clientX - rect.left - HEADER_WIDTH;
+                    const width = rect.width - HEADER_WIDTH;
+                    if (x < 0) return; // Clicked on header area
                     const clickTime = percentToTime((x / width) * 100);
                     const finalTime = getSnappedTime(clickTime);
                     if (isFinite(finalTime) && !isNaN(finalTime)) {
                       editorStore.setPlayback({ currentTime: finalTime });
                       setSelectedEffectId(null); // Deselect on timeline click
+                      setSelectedTextLayerId(null); // Deselect text layer on timeline click
                     }
                   }
                 }}
               >
                 {/* Compact Time Ruler */}
                 <div className="sticky top-0 z-40 bg-background/95 border-b border-border/40">
-                  <div className="relative h-8 flex items-end px-3 pb-1">
+                  <div className="relative h-8 flex items-end pr-3 pb-1">
                     {(() => {
                       if (duration <= 0 || !isFinite(duration)) {
                         return (
@@ -991,7 +1017,7 @@ export default function Editor() {
                           <div
                             key={i}
                             className="absolute bottom-0 flex flex-col items-center pointer-events-none"
-                            style={{ left: `${position}%` }}
+                            style={{ left: `calc(65px + ${position}%)` }}
                           >
                             <div className={`w-[1px] ${isMajorTick ? 'h-4 bg-primary/50' : 'h-2 bg-border/50'}`} />
                             {isMajorTick && (
@@ -1013,7 +1039,7 @@ export default function Editor() {
                     <div
                       className="absolute top-0 bottom-0 w-[1.5px] bg-primary z-50 pointer-events-none"
                       style={{
-                        left: `${timeToPercent(editorState.playback.currentTime)}%`,
+                        left: `calc(80px + ${timeToPercent(editorState.playback.currentTime)}%)`,
                       }}
                     >
                       <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-primary border-2 border-background shadow-md" />
@@ -1025,7 +1051,7 @@ export default function Editor() {
                     <div
                       className="absolute top-0 bottom-0 bg-primary/8 border-l border-r border-primary/40 pointer-events-none z-40"
                       style={{
-                        left: `${timeToPercent(Math.min(selectionRange.start, selectionRange.end))}%`,
+                        left: `calc(80px + ${timeToPercent(Math.min(selectionRange.start, selectionRange.end))}%)`,
                         width: `${Math.max(1, timeToPercent(Math.max(selectionRange.start, selectionRange.end)) - timeToPercent(Math.min(selectionRange.start, selectionRange.end)))}%`,
                       }}
                     />
@@ -1048,7 +1074,7 @@ export default function Editor() {
                       <div 
                         className="absolute left-20 right-0 top-0 bottom-0"
                         onMouseMove={(e) => {
-                          if (draggingEffect || resizingEffect) {
+                          if (draggingEffect || resizingEffect || draggingTextLayer || resizingTextLayer) {
                             const rect = e.currentTarget.getBoundingClientRect();
                             const x = e.clientX - rect.left;
                             const width = rect.width;
@@ -1079,16 +1105,39 @@ export default function Editor() {
                                   updateEffect(resizingEffect.id, { end: newEnd });
                                 }
                               }
+                            } else if (draggingTextLayer) {
+                              const textLayer = editorState.textOverlays.find(t => t.id === draggingTextLayer.id);
+                              if (textLayer) {
+                                const layerDuration = textLayer.endTime - textLayer.startTime;
+                                const newStart = clampTime(snappedTime - draggingTextLayer.startOffset);
+                                const newEnd = clampTime(newStart + layerDuration);
+                                updateTextOverlay(draggingTextLayer.id, { startTime: newStart, endTime: newEnd });
+                              }
+                            } else if (resizingTextLayer) {
+                              const textLayer = editorState.textOverlays.find(t => t.id === resizingTextLayer.id);
+                              if (textLayer) {
+                                if (resizingTextLayer.edge === 'left') {
+                                  const newStart = clampTime(Math.min(snappedTime, textLayer.endTime - 0.5));
+                                  updateTextOverlay(resizingTextLayer.id, { startTime: newStart });
+                                } else {
+                                  const newEnd = clampTime(Math.max(snappedTime, textLayer.startTime + 0.5));
+                                  updateTextOverlay(resizingTextLayer.id, { endTime: newEnd });
+                                }
+                              }
                             }
                           }
                         }}
                         onMouseUp={() => {
                           setDraggingEffect(null);
                           setResizingEffect(null);
+                          setDraggingTextLayer(null);
+                          setResizingTextLayer(null);
                         }}
                         onMouseLeave={() => {
                           setDraggingEffect(null);
                           setResizingEffect(null);
+                          setDraggingTextLayer(null);
+                          setResizingTextLayer(null);
                         }}
                       >
                         {/* Row Divider */}
@@ -1187,6 +1236,157 @@ export default function Editor() {
                       </div>
                     </div>
 
+                    {/* Text Layers Track */}
+                    {editorState.textOverlays.length > 0 && (
+                      <div className="relative h-16 bg-secondary/20 border border-border/40 rounded overflow-hidden group">
+                        {/* Track Header */}
+                        <div className="absolute left-0 top-0 bottom-0 w-20 bg-secondary/30 border-r border-border/40 flex items-center justify-center z-10">
+                          <div className="flex items-center gap-0.5">
+                            <Type className="h-3 w-3 text-green-400" />
+                            <span className="text-[10px] font-medium text-foreground">Text</span>
+                            <span className="text-[8px] text-muted-foreground">({editorState.textOverlays.length})</span>
+                          </div>
+                        </div>
+                        
+                        {/* Track Content Area */}
+                        <div 
+                          className="absolute left-20 right-0 top-0 bottom-0"
+                          onMouseMove={(e) => {
+                            if (draggingTextLayer || resizingTextLayer) {
+                              const rect = e.currentTarget.getBoundingClientRect();
+                              const x = e.clientX - rect.left;
+                              const width = rect.width;
+                              const percent = (x / width) * 100;
+                              const time = percentToTime(percent);
+                              const snappedTime = getSnappedTime(time);
+                              
+                              if (draggingTextLayer) {
+                                const textLayer = editorState.textOverlays.find(t => t.id === draggingTextLayer.id);
+                                if (textLayer) {
+                                  const layerDuration = textLayer.endTime - textLayer.startTime;
+                                  const newStart = clampTime(snappedTime - draggingTextLayer.startOffset);
+                                  const newEnd = clampTime(newStart + layerDuration);
+                                  updateTextOverlay(draggingTextLayer.id, { startTime: newStart, endTime: newEnd });
+                                }
+                              } else if (resizingTextLayer) {
+                                const textLayer = editorState.textOverlays.find(t => t.id === resizingTextLayer.id);
+                                if (textLayer) {
+                                  if (resizingTextLayer.edge === 'left') {
+                                    const newStart = clampTime(Math.min(snappedTime, textLayer.endTime - 0.5));
+                                    updateTextOverlay(resizingTextLayer.id, { startTime: newStart });
+                                  } else {
+                                    const newEnd = clampTime(Math.max(snappedTime, textLayer.startTime + 0.5));
+                                    updateTextOverlay(resizingTextLayer.id, { endTime: newEnd });
+                                  }
+                                }
+                              }
+                            }
+                          }}
+                          onMouseUp={() => {
+                            setDraggingTextLayer(null);
+                            setResizingTextLayer(null);
+                          }}
+                          onMouseLeave={() => {
+                            setDraggingTextLayer(null);
+                            setResizingTextLayer(null);
+                          }}
+                        >
+                          {/* Row Divider */}
+                          <div className="absolute left-0 right-0 top-1/2 h-[1px] bg-border/30 z-0" />
+                          
+                          {editorState.textOverlays.map((textLayer, index) => {
+                            const startPercent = timeToPercent(textLayer.startTime);
+                            const endPercent = timeToPercent(textLayer.endTime);
+                            const width = Math.max(4, endPercent - startPercent);
+                            const isSelected = selectedTextLayerId === textLayer.id;
+                            
+                            // Alternate between top and bottom row
+                            const rowIndex = index % 2;
+                            const isTopRow = rowIndex === 0;
+                            
+                            return (
+                              <div
+                                key={textLayer.id}
+                                className={`absolute rounded border cursor-move transition-all group ${
+                                  isSelected 
+                                    ? 'bg-green-500 border-green-400 shadow-md ring-1 ring-green-400/40 z-20' 
+                                    : draggingTextLayer?.id === textLayer.id
+                                    ? 'bg-green-500/90 border-green-400 shadow-md z-20 opacity-90'
+                                    : resizingTextLayer?.id === textLayer.id
+                                    ? 'bg-green-500/90 border-green-400 shadow-md z-20'
+                                    : 'bg-green-500/80 border-green-500/40 hover:border-green-400 hover:shadow-sm z-10'
+                                }`}
+                                style={{ 
+                                  left: `${startPercent}%`, 
+                                  width: `${width}%`,
+                                  minWidth: '60px',
+                                  top: isTopRow ? '2px' : '50%',
+                                  bottom: isTopRow ? '50%' : '2px',
+                                  height: 'calc(50% - 4px)'
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedTextLayerId(textLayer.id);
+                                  setSelectedEffectId(null);
+                                  editorStore.setPlayback({ currentTime: textLayer.startTime });
+                                }}
+                                onMouseDown={(e) => {
+                                  e.stopPropagation();
+                                  const rect = e.currentTarget.getBoundingClientRect();
+                                  const clickX = e.clientX - rect.left;
+                                  const layerWidth = rect.width;
+                                  
+                                  // Check if clicking on resize handle (first/last 8px)
+                                  if (clickX < 8) {
+                                    setResizingTextLayer({ id: textLayer.id, edge: 'left', startTime: textLayer.startTime });
+                                  } else if (clickX > layerWidth - 8) {
+                                    setResizingTextLayer({ id: textLayer.id, edge: 'right', startTime: textLayer.endTime });
+                                  } else {
+                                    // Calculate time offset within the layer
+                                    const layerDuration = textLayer.endTime - textLayer.startTime;
+                                    const clickPercent = clickX / layerWidth;
+                                    const timeOffset = layerDuration * clickPercent;
+                                    setDraggingTextLayer({ 
+                                      id: textLayer.id, 
+                                      startOffset: timeOffset
+                                    });
+                                  }
+                                }}
+                              >
+                                {/* Resize Handles */}
+                                <div className={`absolute left-0 top-0 bottom-0 w-2 rounded-l transition-all ${
+                                  resizingTextLayer?.id === textLayer.id && resizingTextLayer.edge === 'left'
+                                    ? 'bg-white/50 cursor-ew-resize'
+                                    : 'bg-white/15 hover:bg-white/30 cursor-ew-resize'
+                                }`} />
+                                <div className={`absolute right-0 top-0 bottom-0 w-2 rounded-r transition-all ${
+                                  resizingTextLayer?.id === textLayer.id && resizingTextLayer.edge === 'right'
+                                    ? 'bg-white/50 cursor-ew-resize'
+                                    : 'bg-white/15 hover:bg-white/30 cursor-ew-resize'
+                                }`} />
+                                
+                                {/* Content */}
+                                <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
+                                  <Type className="h-2.5 w-2.5 text-white flex-shrink-0" />
+                                  <span className="text-[10px] font-medium text-white truncate ml-1">
+                                    {textLayer.text || "Text"}
+                                  </span>
+                                  <span className="text-[8px] text-white/70 ml-auto font-mono bg-white/10 px-1 py-0.5 rounded">
+                                    {formatTime(textLayer.startTime)}→{formatTime(textLayer.endTime)}
+                                  </span>
+                                </div>
+                                
+                                {/* Selection Indicator */}
+                                {isSelected && (
+                                  <div className={`absolute ${isTopRow ? '-top-0.5' : '-bottom-0.5'} left-1/2 -translate-x-1/2 w-1.5 h-1.5 rounded-full bg-green-300 border border-background shadow-sm`} />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Clicks Track */}
                     {editorState.events.clicks.length > 0 && (
                       <div className="relative h-5 bg-secondary/20 border border-border/40 rounded overflow-hidden">
@@ -1226,7 +1426,7 @@ export default function Editor() {
                   {timelineHoverTime !== null && duration > 0 && (
                     <div
                       className="absolute top-0 bottom-0 w-[1px] bg-primary/30 z-45 pointer-events-none"
-                      style={{ left: `${timeToPercent(timelineHoverTime)}%` }}
+                      style={{ left: `calc(80px + ${timeToPercent(timelineHoverTime)}%)` }}
                     >
                       <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] font-medium text-foreground bg-background/95 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-md border border-border/40 whitespace-nowrap">
                         {formatTime(timelineHoverTime)}
@@ -1235,7 +1435,7 @@ export default function Editor() {
                   )}
 
                   {/* Empty State */}
-                  {editorState.events.clicks.length === 0 && editorState.events.effects.length === 0 && (
+                  {editorState.events.clicks.length === 0 && editorState.events.effects.length === 0 && editorState.textOverlays.length === 0 && (
                     <div className="absolute inset-0 flex items-center justify-center text-muted-foreground pointer-events-none">
                       <div className="text-center">
                         <Clock className="h-5 w-5 mx-auto mb-1.5 opacity-40" />

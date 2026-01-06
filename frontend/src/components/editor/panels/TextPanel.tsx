@@ -14,7 +14,6 @@ import {
     SelectValue,
 } from '@/components/ui/select';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
@@ -42,6 +41,7 @@ const ANIMATION_TYPES = [
 
 export function TextPanel() {
     const { textOverlays, playback, video } = useEditorState();
+    const [selectedLayerId, setSelectedLayerId] = React.useState<string | null>(null);
 
     const addTextOverlay = () => {
         const newOverlay = {
@@ -122,7 +122,7 @@ export function TextPanel() {
             </div>
 
             <ScrollArea className="flex-1">
-                <div className="p-4 space-y-4">
+                <div className="p-4 space-y-3">
                     {textOverlays.length === 0 ? (
                         <div className="flex flex-col items-center justify-center py-12 text-center space-y-3 opacity-60">
                             <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
@@ -133,36 +133,58 @@ export function TextPanel() {
                             </p>
                         </div>
                     ) : (
-                        <Accordion type="single" collapsible className="space-y-3">
-                            {textOverlays.map((overlay) => (
-                                <AccordionItem key={overlay.id} value={overlay.id} className="border-none bg-card/40 backdrop-blur-sm shadow-sm rounded-xl overflow-hidden transition-all data-[state=open]:ring-1 data-[state=open]:ring-primary/20 data-[state=open]:shadow-md">
-                                    <AccordionTrigger className="px-4 py-3 hover:no-underline hover:bg-muted/30 transition-colors">
-                                        <div className="flex items-center gap-3 text-sm max-w-full overflow-hidden w-full">
-                                            <div className="h-6 w-6 rounded bg-primary/10 flex items-center justify-center shrink-0">
-                                                <Type className="h-3.5 w-3.5 text-primary" />
+                        <div className="space-y-3">
+                            {textOverlays.map((overlay) => {
+                                const isSelected = selectedLayerId === overlay.id;
+                                return (
+                                    <div 
+                                        key={overlay.id} 
+                                        className={`rounded-xl border transition-all ${
+                                            isSelected 
+                                                ? 'border-primary/40 bg-card/60 shadow-lg ring-1 ring-primary/20' 
+                                                : 'border-border/40 bg-card/40 hover:border-border/60 hover:shadow-md'
+                                        }`}
+                                    >
+                                        {/* Layer Header */}
+                                        <div 
+                                            className="px-4 py-3 flex items-center gap-3 cursor-pointer hover:bg-muted/20 transition-colors rounded-t-xl"
+                                            onClick={() => setSelectedLayerId(isSelected ? null : overlay.id)}
+                                        >
+                                            <div className={`h-6 w-6 rounded flex items-center justify-center shrink-0 ${
+                                                isSelected ? 'bg-primary/20' : 'bg-primary/10'
+                                            }`}>
+                                                <Type className={`h-3.5 w-3.5 ${isSelected ? 'text-primary' : 'text-primary/70'}`} />
                                             </div>
-                                            <span className="truncate font-medium flex-1 text-left opacity-90">{overlay.text}</span>
+                                            <span className="truncate font-medium flex-1 text-sm">{overlay.text || 'Untitled Layer'}</span>
+                                            <Button
+                                                variant="ghost"
+                                                size="icon"
+                                                className="h-6 w-6 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    deleteTextOverlay(overlay.id);
+                                                    if (selectedLayerId === overlay.id) {
+                                                        setSelectedLayerId(null);
+                                                    }
+                                                }}
+                                            >
+                                                <Trash2 className="h-3.5 w-3.5" />
+                                            </Button>
                                         </div>
-                                    </AccordionTrigger>
-                                    <AccordionContent className="p-0 border-t border-border/10">
-                                        <div className="p-4 space-y-5">
-                                            {/* Main Text Content */}
-                                            <div className="flex gap-2">
-                                                <Textarea
-                                                    value={overlay.text}
-                                                    onChange={(e) => updateTextOverlay(overlay.id, { text: e.target.value })}
-                                                    className="resize-none h-20 text-sm bg-background/50 border-border/40 focus:bg-background"
-                                                    placeholder="Enter text..."
-                                                />
-                                                <Button
-                                                    variant="ghost"
-                                                    size="icon"
-                                                    className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10 self-start"
-                                                    onClick={() => deleteTextOverlay(overlay.id)}
-                                                >
-                                                    <Trash2 className="h-4 w-4" />
-                                                </Button>
-                                            </div>
+
+                                        {/* Layer Content */}
+                                        {isSelected && (
+                                            <div className="p-4 space-y-5 border-t border-border/10 animate-in fade-in slide-in-from-top-2">
+                                                {/* Main Text Content */}
+                                                <div className="space-y-2">
+                                                    <Label className="text-xs text-muted-foreground uppercase">Text Content</Label>
+                                                    <Textarea
+                                                        value={overlay.text}
+                                                        onChange={(e) => updateTextOverlay(overlay.id, { text: e.target.value })}
+                                                        className="resize-none h-20 text-sm bg-background/50 border-border/40 focus:bg-background"
+                                                        placeholder="Enter text..."
+                                                    />
+                                                </div>
 
                                             <Tabs defaultValue="style" className="w-full">
                                                 <TabsList className="w-full grid grid-cols-4 h-8 bg-background/40 p-0.5 rounded-lg border border-border/10">
@@ -512,10 +534,11 @@ export function TextPanel() {
 
                                             </Tabs>
                                         </div>
-                                    </AccordionContent>
-                                </AccordionItem>
-                            ))}
-                        </Accordion>
+                                    )}
+                                </div>
+                            );
+                            })}
+                        </div>
                     )}
                 </div>
             </ScrollArea>
