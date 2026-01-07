@@ -802,7 +802,7 @@ const CAMERA_CONFIG = {
 
   // Animation timing
   ZOOM_TRANSITION_MS: 300,      // Smooth zoom transitions
-  PAN_TRANSITION_MS: 200,       // Quick pan movements
+  PAN_TRANSITION_MS: 100,       // Quick pan movements
   EASE_FUNCTION: 'cubic-bezier(0.4, 0, 0.2, 1)', // Smooth ease
 
   // Auto-zoom behavior
@@ -816,8 +816,8 @@ const CAMERA_CONFIG = {
 
   // Smart detection
   ACTIVITY_ZONES: {
-    CENTER: { radius: 0.3, zoom: 1.0 },      // Center zone - no zoom
-    MIDDLE: { radius: 0.6, zoom: 1.3 },      // Middle zone - slight zoom
+    CENTER: { radius: 0.6, zoom: 1.0 },      // Center zone - no zoom
+    MIDDLE: { radius: 1.0, zoom: 1.6 },      // Middle zone - slight zoom
     EDGE: { radius: 1.0, zoom: 1.6 },        // Edge zone - more zoom
   },
 
@@ -851,7 +851,7 @@ export default function Recorder() {
     return saved !== null ? saved === "true" : false; // Default to false (canvas with effects)
   });
   const [showSettings, setShowSettings] = useState(false);
-  const [showPreview, setShowPreview] = useState(true);
+  const [showPreview, setShowPreview] = useState(false);
   const [markers, setMarkers] = useState<RecordingMarker[]>([]);
   const [micLevel, setMicLevel] = useState(0);
   const [estimatedSize, setEstimatedSize] = useState(0);
