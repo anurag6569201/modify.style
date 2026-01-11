@@ -57,6 +57,8 @@ export function VideoControls({
     const [isScrubbing, setIsScrubbing] = useState(false);
     const progressBarRef = useRef<HTMLDivElement>(null);
 
+    const [hoverTime, setHoverTime] = useState<number | null>(null);
+
     const formatTime = (time: number) => {
         if (!isFinite(time) || isNaN(time)) return "--:--";
         if (time < 0) return "0:00";
@@ -74,9 +76,21 @@ export function VideoControls({
         onSeek(newTime);
     };
 
+    const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
+        if (!progressBarRef.current) return;
+        const rect = progressBarRef.current.getBoundingClientRect();
+        const x = Math.max(0, Math.min(e.clientX - rect.left, rect.width));
+        const percentage = x / rect.width;
+        setHoverTime(percentage * duration);
+    };
+
+    const handleMouseLeave = () => {
+        setHoverTime(null);
+    };
+
     useEffect(() => {
         const handleMouseUp = () => setIsScrubbing(false);
-        const handleMouseMove = (e: MouseEvent) => {
+        const handleGlobalMouseMove = (e: MouseEvent) => {
             if (isScrubbing) {
                 handleSeek(e);
             }
@@ -84,12 +98,12 @@ export function VideoControls({
 
         if (isScrubbing) {
             document.addEventListener("mouseup", handleMouseUp);
-            document.addEventListener("mousemove", handleMouseMove);
+            document.addEventListener("mousemove", handleGlobalMouseMove);
         }
 
         return () => {
             document.removeEventListener("mouseup", handleMouseUp);
-            document.removeEventListener("mousemove", handleMouseMove);
+            document.removeEventListener("mousemove", handleGlobalMouseMove);
         };
     }, [isScrubbing, duration, onSeek]);
 
@@ -106,18 +120,43 @@ export function VideoControls({
                     setIsScrubbing(true);
                     handleSeek(e);
                 }}
+                onMouseMove={handleMouseMove}
+                onMouseLeave={handleMouseLeave}
             >
                 <div
                     className="absolute inset-y-0 left-0 bg-primary/20 group-hover:bg-primary/30 transition-colors"
                     style={{ width: '100%' }}
                 />
+
+                {/* Hover Indicator (Ghost Bar) */}
+                {hoverTime !== null && (
+                    <div
+                        className="absolute inset-y-0 left-0 bg-primary/20 transition-all duration-75"
+                        style={{ width: `${(hoverTime / duration) * 100}%` }}
+                    />
+                )}
+
+                {/* Main Progress Bar */}
                 <div
                     className="absolute inset-y-0 left-0 bg-gradient-to-r from-primary to-purple-500 origin-left"
                     style={{ width: `${(currentTime / duration) * 100}%` }}
                 />
+
+                {/* Hover Playhead & Tooltip */}
+                {hoverTime !== null && (
+                    <div
+                        className="absolute top-0 w-0.5 h-full bg-white/50 z-10 pointer-events-none"
+                        style={{ left: `${(hoverTime / duration) * 100}%` }}
+                    >
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 px-2 py-1 bg-black/80 text-white text-[10px] font-mono rounded border border-white/10 whitespace-nowrap opacity-0 group-hover:opacity-100 transition-opacity">
+                            {formatTime(hoverTime)}
+                        </div>
+                    </div>
+                )}
+
                 {/* Scrubber Knob */}
                 <div
-                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-md scale-0 group-hover:scale-100 transition-transform cursor-grab active:cursor-grabbing"
+                    className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 w-4 h-4 bg-white rounded-full shadow-md scale-0 group-hover:scale-100 transition-transform cursor-grab active:cursor-grabbing z-20"
                     style={{ left: `${(currentTime / duration) * 100}%` }}
                 />
             </div>
@@ -169,7 +208,7 @@ export function VideoControls({
                 {/* Right: Volume, Speed, Fullscreen */}
                 <div className="flex items-center gap-2">
                     {/* Volume Group */}
-                    <div className="flex items-center gap-2 mr-2 group/volume">
+                    <div className="flex items-center mr-2 group/volume">
                         <Button
                             variant="ghost"
                             size="icon"
@@ -193,34 +232,7 @@ export function VideoControls({
                         </div>
                     </div>
 
-                    <div className="w-px h-4 bg-border/50 mx-1" />
-
-                    {/* Playback Speed */}
-                    <Popover>
-                        <PopoverTrigger asChild>
-                            <Button
-                                variant="ghost"
-                                size="sm"
-                                className="h-8 gap-1.5 px-2 font-mono text-xs hover:bg-primary/10 hover:text-primary"
-                            >
-                                {playbackSpeed}x
-                                <Settings className="h-3 w-3 opacity-50" />
-                            </Button>
-                        </PopoverTrigger>
-                        <PopoverContent className="w-32 p-1" side="top">
-                            {[0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
-                                <Button
-                                    key={speed}
-                                    variant={playbackSpeed === speed ? "secondary" : "ghost"}
-                                    size="sm"
-                                    onClick={() => onSpeedChange(speed)}
-                                    className="w-full justify-start h-8 text-xs font-mono"
-                                >
-                                    {speed}x
-                                </Button>
-                            ))}
-                        </PopoverContent>
-                    </Popover>
+                    <div className="w-px h-4 bg-border/50" />
 
                     {/* Fullscreen */}
                     <Button

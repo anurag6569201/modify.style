@@ -243,36 +243,7 @@ export const updateCameraSystem = (
     });
 
     // Fallback: infer spotlight windows from click clusters (legacy auto detection)
-    let inferredSpotlight = false;
-
-    if (!spotlightEffect) {
-        for (let i = 0; i < clicks.length; i++) {
-            const c1 = clicks[i];
-            let isClusterStart = false;
-
-            for (let j = i + 1; j < clicks.length; j++) {
-                const c2 = clicks[j];
-                if (c2.timestamp - c1.timestamp <= CAMERA_CONFIG.SPOTLIGHT_TRIGGER_WINDOW) {
-                    isClusterStart = true;
-                    break;
-                } else {
-                    break;
-                }
-            }
-
-            if (isClusterStart) {
-                const start = c1.timestamp - CAMERA_CONFIG.SPOTLIGHT_ANTICIPATION;
-                const end = start + CAMERA_CONFIG.SPOTLIGHT_DURATION;
-
-                if (time >= start && time <= end) {
-                    inferredSpotlight = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    const inSpotlight = Boolean(spotlightEffect) || inferredSpotlight;
+    const inSpotlight = Boolean(spotlightEffect);
 
     // Track transition state
     const transitionStartTime = (inSpotlight !== state.lastSpotlightState) ? time : state.transitionStartTime;

@@ -1021,7 +1021,7 @@ export default function Editor() {
                           <div
                             key={i}
                             className="absolute bottom-0 flex flex-col items-center pointer-events-none"
-                            style={{ left: `calc(65px + ${position}%)` }}
+                            style={{ left: `calc(65px + ${position} * (100% - 65px) / 100)` }}
                           >
                             <div className={`w-[1px] ${isMajorTick ? 'h-4 bg-primary/50' : 'h-2 bg-border/50'}`} />
                             {isMajorTick && (
@@ -1043,7 +1043,7 @@ export default function Editor() {
                     <div
                       className="absolute top-0 bottom-0 w-[1.5px] bg-primary z-50 pointer-events-none"
                       style={{
-                        left: `calc(80px + ${timeToPercent(editorState.playback.currentTime)}%)`,
+                        left: `calc(80px + ${timeToPercent(editorState.playback.currentTime)} * (100% - 80px) / 100)`,
                       }}
                     >
                       <div className="absolute -top-0.5 left-1/2 -translate-x-1/2 w-3 h-3 rounded-full bg-primary border-2 border-background shadow-md" />
@@ -1055,8 +1055,8 @@ export default function Editor() {
                     <div
                       className="absolute top-0 bottom-0 bg-primary/8 border-l border-r border-primary/40 pointer-events-none z-40"
                       style={{
-                        left: `calc(80px + ${timeToPercent(Math.min(selectionRange.start, selectionRange.end))}%)`,
-                        width: `${Math.max(1, timeToPercent(Math.max(selectionRange.start, selectionRange.end)) - timeToPercent(Math.min(selectionRange.start, selectionRange.end)))}%`,
+                        left: `calc(80px + ${timeToPercent(Math.min(selectionRange.start, selectionRange.end))} * (100% - 80px) / 100)`,
+                        width: `calc(${Math.max(1, timeToPercent(Math.max(selectionRange.start, selectionRange.end)) - timeToPercent(Math.min(selectionRange.start, selectionRange.end)))} * (100% - 80px) / 100)`,
                       }}
                     />
                   )}
@@ -1455,7 +1455,7 @@ export default function Editor() {
                   {timelineHoverTime !== null && duration > 0 && (
                     <div
                       className="absolute top-0 bottom-0 w-[1px] bg-primary/30 z-45 pointer-events-none"
-                      style={{ left: `calc(80px + ${timeToPercent(timelineHoverTime)}%)` }}
+                      style={{ left: `calc(80px + ${timeToPercent(timelineHoverTime)} * (100% - 80px) / 100)` }}
                     >
                       <div className="absolute -top-5 left-1/2 -translate-x-1/2 text-[9px] font-medium text-foreground bg-background/95 backdrop-blur-sm px-1.5 py-0.5 rounded shadow-md border border-border/40 whitespace-nowrap">
                         {formatTime(timelineHoverTime)}

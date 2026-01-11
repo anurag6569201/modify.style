@@ -78,7 +78,8 @@ export const Stage: React.FC = () => {
                             {
                                 zoomStrength: currentState.camera.zoomStrength,
                                 speed: currentState.camera.speed,
-                                padding: currentState.camera.padding
+                                padding: currentState.camera.padding,
+                                mode: currentState.camera.mode
                             }
                         );
 
@@ -105,11 +106,11 @@ export const Stage: React.FC = () => {
                                 // to match the current display size of the stage.
                                 const nativeWidth = currentState.video.width || 1920;
                                 const currentWidth = stageRef.current.offsetWidth || nativeWidth;
-                                
+
                                 if (!isFinite(nativeWidth) || !isFinite(currentWidth) || nativeWidth <= 0 || currentWidth <= 0) {
                                     throw new Error('Invalid width values');
                                 }
-                                
+
                                 const ratio = currentWidth / nativeWidth;
 
                                 if (!isFinite(ratio)) {
@@ -180,7 +181,7 @@ export const Stage: React.FC = () => {
                     } catch (cameraError) {
                         consecutiveErrors++;
                         console.error('Error in camera system update:', cameraError);
-                        
+
                         // Stop animation if too many errors
                         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                             console.error('Too many camera errors, stopping animation');
@@ -193,13 +194,13 @@ export const Stage: React.FC = () => {
             } catch (error) {
                 consecutiveErrors++;
                 console.error('Error in animation loop:', error);
-                
+
                 // Stop animation if too many errors
                 if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
                     console.error('Too many animation errors, stopping animation');
                     return;
                 }
-                
+
                 // Try to continue
                 requestRef.current = requestAnimationFrame(animate);
             }

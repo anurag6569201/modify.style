@@ -68,24 +68,24 @@ export function TimelinePanel() {
     };
 
     return (
-        <div className="space-y-6 p-4 pb-20">
+        <div className="space-y-6 p-4">
             {/* Header */}
             <div className="flex items-center justify-between">
                 <div>
                     <h3 className="text-sm font-semibold">Timeline Events</h3>
                     <p className="text-xs text-muted-foreground">Manage effects and clicks</p>
                 </div>
-                <Button 
-                    size="sm" 
-                    variant="default" 
-                    className="h-8 text-xs font-medium shadow-sm" 
+                <Button
+                    size="sm"
+                    variant="default"
+                    className="h-8 text-xs font-medium shadow-sm"
                     onClick={addSpotlightEffect}
                 >
                     <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Effect
                 </Button>
             </div>
 
-            <div className="space-y-4 max-h-[calc(100vh-300px)] overflow-y-auto pr-2">
+            <div className="space-y-4 overflow-y-auto pr-2">
                 {/* Effects Section */}
                 {editorState.events.effects.length > 0 && (
                     <div className="space-y-2">
@@ -96,18 +96,16 @@ export function TimelinePanel() {
                             </Label>
                         </div>
 
+                        <div className="grid grid-cols-2 gap-2">
                         {editorState.events.effects.map((effect) => {
                             const effectDuration = Math.max(0, (effect.end ?? 0) - (effect.start ?? 0));
                             return (
                                 <div
                                     key={effect.id}
-                                    className="group relative rounded-xl border border-purple-500/20 bg-gradient-to-br from-purple-500/10 via-purple-500/5 to-transparent p-3 hover:border-purple-500/40 hover:shadow-md transition-all"
+                                    className="timeline-events group relative rounded-xl bg-gradient-to-br from-purple-400/10 via-purple-200/5 to-transparent p-0 hover:border-purple-500/40 hover:shadow-md transition-all"
                                 >
-                                    <div className="flex items-start gap-3">
-                                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-purple-500/20 to-purple-500/10 border border-purple-500/30 flex-shrink-0">
-                                            <Sparkles className="h-4 w-4 text-purple-400" />
-                                        </div>
-                                        <div className="flex-1 space-y-2">
+                                    <div className="flex items-start gap-1">
+                                        <div className="flex-1 space-y-0">
                                             <Input
                                                 value={effect.label || ''}
                                                 onChange={(e) => updateEffect(effect.id, { label: e.target.value })}
@@ -115,8 +113,8 @@ export function TimelinePanel() {
                                                 className="h-8 text-sm font-medium bg-background/50 border-purple-500/20 focus:border-purple-500/40"
                                             />
                                             <div className="grid grid-cols-3 gap-2">
-                                                <div className="space-y-1">
-                                                    <Label className="text-[10px] text-muted-foreground uppercase">Start</Label>
+                                                <div className="space-y-0">
+                                                    <Label className="text-[8px] text-muted-foreground uppercase">Start</Label>
                                                     <Input
                                                         type="number"
                                                         min={0}
@@ -126,8 +124,8 @@ export function TimelinePanel() {
                                                         className="h-7 text-xs bg-background/50"
                                                     />
                                                 </div>
-                                                <div className="space-y-1">
-                                                    <Label className="text-[10px] text-muted-foreground uppercase">End</Label>
+                                                <div className="space-y-0">
+                                                    <Label className="text-[8px] text-muted-foreground uppercase">End</Label>
                                                     <Input
                                                         type="number"
                                                         min={0}
@@ -137,8 +135,8 @@ export function TimelinePanel() {
                                                         className="h-7 text-xs bg-background/50"
                                                     />
                                                 </div>
-                                                <div className="space-y-1">
-                                                    <Label className="text-[10px] text-muted-foreground uppercase">Zoom</Label>
+                                                <div className="space-y-0">
+                                                    <Label className="text-[8px] text-muted-foreground uppercase">Zoom</Label>
                                                     <Input
                                                         type="number"
                                                         min={1}
@@ -171,6 +169,7 @@ export function TimelinePanel() {
                                 </div>
                             );
                         })}
+                        </div>
                     </div>
                 )}
 
@@ -183,44 +182,38 @@ export function TimelinePanel() {
                                 Clicks ({editorState.events.clicks.length})
                             </Label>
                         </div>
-                        {editorState.events.clicks.slice(0, 8).map((click, index) => (
-                            <div
-                                key={`click-list-${index}`}
-                                className="group relative rounded-xl border border-blue-500/20 bg-gradient-to-br from-blue-500/10 via-blue-500/5 to-transparent p-3 hover:border-blue-500/40 hover:shadow-md transition-all cursor-pointer"
-                                onClick={() => editorStore.setPlayback({ currentTime: click.timestamp })}
-                            >
-                                <div className="flex items-center gap-3">
-                                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-to-br from-blue-500/20 to-blue-500/10 border border-blue-500/30 flex-shrink-0">
-                                        <MousePointer2 className="h-4 w-4 text-blue-400" />
-                                    </div>
-                                    <div className="flex-1 min-w-0">
-                                        <div className="font-medium text-sm">Click #{index + 1}</div>
-                                        <div className="text-xs text-muted-foreground mt-0.5">
-                                            {formatTime(click.timestamp)} • ({Math.round(click.x * 100)}%, {Math.round(click.y * 100)}%)
+                        <div className="grid grid-cols-2 gap-2">
+                        {editorState.events.clicks.map((click, index) => (
+                            
+                                <div
+                                    key={`click-list-${index}`}
+                                    className="group flex items-center justify-between rounded border border-blue-500/20 bg-blue-500/5 px-2 py-1 text-xs hover:border-blue-500/40 transition cursor-pointer"
+                                    onClick={() =>
+                                        editorStore.setPlayback({ currentTime: click.timestamp })
+                                    }
+                                >
+                                    <div className="truncate">
+                                        <div className="font-medium">#{index + 1}</div>
+                                        <div className="text-[10px] text-muted-foreground leading-tight">
+                                            {formatTime(click.timestamp)} · {Math.round(click.x * 100)}%,{Math.round(click.y * 100)}%
                                         </div>
                                     </div>
+
                                     <Button
                                         variant="ghost"
                                         size="icon"
-                                        className="h-8 w-8 opacity-0 group-hover:opacity-100 transition-opacity"
+                                        className="h-5 w-5"
                                         onClick={(e) => {
                                             e.stopPropagation();
-                                            const timestamp = click.timestamp;
-                                            if (isFinite(timestamp) && !isNaN(timestamp) && timestamp >= 0) {
-                                                editorStore.setPlayback({ currentTime: timestamp });
-                                            }
+                                            editorStore.setPlayback({ currentTime: click.timestamp });
                                         }}
                                     >
-                                        <Play className="h-3.5 w-3.5" />
+                                        <Play className="h-3 w-3" />
                                     </Button>
                                 </div>
-                            </div>
+
                         ))}
-                        {editorState.events.clicks.length > 8 && (
-                            <p className="text-xs text-muted-foreground text-center py-2 px-3 rounded-lg bg-background/50 border border-border/30">
-                                +{editorState.events.clicks.length - 8} more clicks
-                            </p>
-                        )}
+                        </div>
                     </div>
                 )}
 
@@ -232,9 +225,9 @@ export function TimelinePanel() {
                         </div>
                         <p className="text-sm font-medium mb-1">No Events Yet</p>
                         <p className="text-xs text-muted-foreground mb-4">Start recording to capture events</p>
-                        <Button 
-                            size="sm" 
-                            variant="outline" 
+                        <Button
+                            size="sm"
+                            variant="outline"
                             className="h-8 text-xs"
                             onClick={addSpotlightEffect}
                         >

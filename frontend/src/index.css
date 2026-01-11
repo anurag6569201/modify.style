@@ -280,3 +280,9 @@
   outline: none !important;
   --tw-ring-offset-width: 0px !important;
 }
+
+
+
+.timeline-events input{
+  --tw-ring-shadow:none !important;
+}

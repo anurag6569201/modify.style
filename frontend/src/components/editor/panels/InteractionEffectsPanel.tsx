@@ -1,13 +1,26 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { editorStore, useEditorState } from '@/lib/editor/store';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { MousePointerClick, Zap, Activity, X } from 'lucide-react';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import {
+    MousePointerClick,
+    Zap,
+    Activity,
+    X,
+    ChevronDown,
+    Sparkles,
+    Palette,
+    Layers,
+    Clock,
+    Move
+} from 'lucide-react';
 import { ClickEffectConfig } from '@/lib/editor/types';
 import { useToast } from '@/hooks/use-toast';
+import { cn } from '@/lib/utils';
 
 interface InteractionEffectsPanelProps {
     selectedClickIndex: number | null;
@@ -17,6 +30,7 @@ interface InteractionEffectsPanelProps {
 export function InteractionEffectsPanel({ selectedClickIndex, onDeselectClick }: InteractionEffectsPanelProps) {
     const editorState = useEditorState();
     const { toast } = useToast();
+    const [activeSection, setActiveSection] = useState<string | null>('style');
 
     // Get the selected click
     const selectedClick = selectedClickIndex !== null && editorState.events.clicks[selectedClickIndex]
@@ -39,7 +53,7 @@ export function InteractionEffectsPanel({ selectedClickIndex, onDeselectClick }:
 
         const clickKey = `${selectedClick.timestamp}`;
         const config = editorState.effects.clickEffects[clickKey];
-        
+
         if (config) {
             return config;
         }
@@ -102,387 +116,422 @@ export function InteractionEffectsPanel({ selectedClickIndex, onDeselectClick }:
 
     if (!selectedClick) {
         return (
-            <div className="flex flex-col items-center justify-center py-12 text-center px-4">
-                <div className="p-4 rounded-2xl bg-primary/5 border border-primary/20 mb-4">
-                    <MousePointerClick className="h-10 w-10 text-primary/60" />
+            <div className="flex flex-col items-center justify-center h-full text-center px-6">
+                <div className="p-6 rounded-full bg-primary/5 border border-primary/10 mb-6 shadow-[0_0_30px_-10px_rgba(var(--primary),0.3)]">
+                    <MousePointerClick className="h-12 w-12 text-primary/40" />
                 </div>
-                <p className="text-sm font-medium mb-1">No Click Selected</p>
-                <p className="text-xs text-muted-foreground">
-                    Click on a click marker in the timeline to configure its effects
+                <h3 className="text-lg font-semibold text-foreground/80 mb-2">No Click Selected</h3>
+                <p className="text-sm text-muted-foreground max-w-[200px]">
+                    Select a click marker on the timeline to configure its interaction effects
                 </p>
             </div>
         );
     }
 
     return (
-        <div className="space-y-6 p-4">
+        <div className="h-full flex flex-col bg-background/20">
             {/* Header */}
-            <div className="flex items-center justify-between pb-4 border-b border-border/40">
-                <div>
-                    <h3 className="text-sm font-semibold flex items-center gap-2">
+            <div className="flex items-center justify-between p-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
+                <div className="flex items-center gap-3">
+                    <div className="h-8 w-8 rounded-lg bg-blue-500/20 flex items-center justify-center border border-blue-500/30">
                         <MousePointerClick className="h-4 w-4 text-blue-400" />
-                        Click #{selectedClickIndex !== null ? selectedClickIndex + 1 : '?'}
-                    </h3>
-                    <p className="text-xs text-muted-foreground mt-1">
-                        {formatTime(selectedClick.timestamp)} • ({Math.round(selectedClick.x * 100)}%, {Math.round(selectedClick.y * 100)}%)
-                    </p>
+                    </div>
+                    <div>
+                        <h3 className="text-sm font-semibold text-foreground/90">
+                            Click Event
+                        </h3>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground font-mono">
+                            <Clock className="h-3 w-3" />
+                            {formatTime(selectedClick.timestamp)}
+                            <span className="text-white/10">|</span>
+                            <Move className="h-3 w-3" />
+                            {Math.round(selectedClick.x * 100)}%, {Math.round(selectedClick.y * 100)}%
+                        </div>
+                    </div>
                 </div>
                 <Button
                     variant="ghost"
                     size="icon"
-                    className="h-8 w-8"
+                    className="h-8 w-8 hover:bg-white/10 text-muted-foreground hover:text-foreground rounded-lg transition-colors"
                     onClick={onDeselectClick}
                 >
                     <X className="h-4 w-4" />
                 </Button>
             </div>
 
-            {/* Main Toggle */}
-            <div className="space-y-4 bg-card/40 backdrop-blur-sm p-4 rounded-xl border border-border/40 shadow-sm">
-                <div className="flex items-center justify-between py-2">
-                    <div className="flex items-center gap-3">
-                        <div className="p-1.5 rounded-md bg-primary/10 text-primary">
-                            <MousePointerClick className="h-3.5 w-3.5" />
-                        </div>
-                        <Label className="text-sm font-medium">Enable Click Effect</Label>
-                    </div>
-                    <Switch
-                        checked={clickEffectConfig.enabled}
-                        onCheckedChange={(enabled) => updateClickEffect({ enabled })}
-                    />
-                </div>
-
-                {clickEffectConfig.enabled && (
-                    <div className="space-y-6 pt-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                        {/* Animation Style */}
-                        <div className="space-y-3">
-                            <Label className="text-xs text-muted-foreground font-medium">Animation Style</Label>
-                            <div className="grid grid-cols-3 gap-2">
-                                {([
-                                    'ripple', 'orb', 'pulse', 'ring', 'splash', 
-                                    'particles', 'glow', 'shockwave', 'trail', 'burst',
-                                    'neon-burst', 'glitch', 'cyber-pulse', 'implosion', 'magnetic',
-                                    'hologram', 'shock-blur', 'liquid', 'time-freeze', 'depth-pop', 'heat-ripple', 'none'
-                                ] as const).map((style) => (
-                                    <Button
-                                        key={style}
-                                        variant="outline"
-                                        size="sm"
-                                        className={`capitalize text-xs h-8 transition-all ${
-                                            clickEffectConfig.animationStyle === style
-                                                ? "bg-primary text-primary-foreground border-primary shadow-md hover:bg-primary/90"
-                                                : "bg-background/50 hover:bg-background border-border/40 text-muted-foreground hover:text-foreground"
-                                        }`}
-                                        onClick={() => updateClickEffect({ animationStyle: style })}
-                                    >
-                                        {style.replace(/-/g, ' ')}
-                                    </Button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Visual Properties */}
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground font-medium">Primary Color</Label>
-                                <div className="flex gap-2 items-center">
-                                    <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md border border-border/50 shadow-sm transition-transform active:scale-95">
-                                        <input
-                                            type="color"
-                                            className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer border-0"
-                                            value={clickEffectConfig.color}
-                                            onChange={(e) => updateClickEffect({ color: e.target.value })}
-                                        />
-                                    </div>
-                                    <div className="flex-1 bg-background/50 rounded flex items-center px-2 text-xs font-mono truncate h-8 border border-border/40">
-                                        {clickEffectConfig.color}
-                                    </div>
-                                </div>
-                            </div>
-                            <div className="space-y-2">
-                                <Label className="text-xs text-muted-foreground font-medium">Secondary Color</Label>
-                                <div className="flex gap-2 items-center">
-                                    <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md border border-border/50 shadow-sm transition-transform active:scale-95">
-                                        <input
-                                            type="color"
-                                            className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer border-0"
-                                            value={clickEffectConfig.secondaryColor || clickEffectConfig.color}
-                                            onChange={(e) => updateClickEffect({ secondaryColor: e.target.value })}
-                                        />
-                                    </div>
-                                    <Button
-                                        variant="ghost"
-                                        size="sm"
-                                        className="h-8 text-xs"
-                                        onClick={() => updateClickEffect({ secondaryColor: undefined })}
-                                    >
-                                        Reset
-                                    </Button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-4">
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Size</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {clickEffectConfig.size.toFixed(1)}x
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={0.5}
-                                    max={3}
-                                    step={0.1}
-                                    value={[clickEffectConfig.size]}
-                                    onValueChange={([val]) => updateClickEffect({ size: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Duration</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {(clickEffectConfig.animationDuration || 0.8).toFixed(1)}s
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={0.2}
-                                    max={2}
-                                    step={0.1}
-                                    value={[clickEffectConfig.animationDuration || 0.8]}
-                                    onValueChange={([val]) => updateClickEffect({ animationDuration: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                        </div>
-
-                        {/* Advanced Options for specific effects */}
-                        {(clickEffectConfig.animationStyle === 'particles' || 
-                          clickEffectConfig.animationStyle === 'burst' || 
-                          clickEffectConfig.animationStyle === 'splash') && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Particle Count</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {clickEffectConfig.particleCount || 20}
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={5}
-                                    max={50}
-                                    step={5}
-                                    value={[clickEffectConfig.particleCount || 20]}
-                                    onValueChange={([val]) => updateClickEffect({ particleCount: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                        )}
-
-                        {(clickEffectConfig.animationStyle === 'glow' || 
-                          clickEffectConfig.animationStyle === 'orb') && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Glow Intensity</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {((clickEffectConfig.glowIntensity || 0.8) * 100).toFixed(0)}%
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={0}
-                                    max={1}
-                                    step={0.1}
-                                    value={[clickEffectConfig.glowIntensity || 0.8]}
-                                    onValueChange={([val]) => updateClickEffect({ glowIntensity: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                        )}
-
-                        {clickEffectConfig.animationStyle === 'trail' && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Trail Length</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {clickEffectConfig.trailLength || 10}
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={5}
-                                    max={30}
-                                    step={1}
-                                    value={[clickEffectConfig.trailLength || 10]}
-                                    onValueChange={([val]) => updateClickEffect({ trailLength: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                        )}
-
-                        {clickEffectConfig.animationStyle === 'glitch' && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Glitch Intensity</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {((clickEffectConfig.glitchIntensity || 0.5) * 100).toFixed(0)}%
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={0}
-                                    max={1}
-                                    step={0.1}
-                                    value={[clickEffectConfig.glitchIntensity || 0.5]}
-                                    onValueChange={([val]) => updateClickEffect({ glitchIntensity: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                        )}
-
-                        {(clickEffectConfig.animationStyle === 'shock-blur') && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Blur Strength</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {clickEffectConfig.blurStrength || 10}px
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={0}
-                                    max={20}
-                                    step={1}
-                                    value={[clickEffectConfig.blurStrength || 10]}
-                                    onValueChange={([val]) => updateClickEffect({ blurStrength: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                        )}
-
-                        {(clickEffectConfig.animationStyle === 'liquid' || clickEffectConfig.animationStyle === 'heat-ripple') && (
-                            <div className="space-y-2">
-                                <div className="flex items-center justify-between">
-                                    <Label className="text-xs text-muted-foreground font-medium">Distortion Strength</Label>
-                                    <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                        {((clickEffectConfig.distortionStrength || 0.5) * 100).toFixed(0)}%
-                                    </span>
-                                </div>
-                                <Slider
-                                    min={0}
-                                    max={1}
-                                    step={0.1}
-                                    value={[clickEffectConfig.distortionStrength || 0.5]}
-                                    onValueChange={([val]) => updateClickEffect({ distortionStrength: val })}
-                                    className="pt-2"
-                                />
-                            </div>
-                        )}
-
-                        {/* Physics / Intensity */}
-                        <div className="space-y-3 pt-4 border-t border-border/10">
-                            <div className="flex items-center justify-between">
-                                <Label className="flex items-center gap-2 text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                                    <Zap className="h-3.5 w-3.5 text-yellow-500" />
-                                    Impact Force
-                                </Label>
-                                <span className="text-xs font-mono bg-background/50 px-2 py-0.5 rounded border border-border/30">
-                                    {(clickEffectConfig.force * 100).toFixed(0)}%
-                                </span>
-                            </div>
-                            <Slider
-                                min={0}
-                                max={1.5}
-                                step={0.1}
-                                value={[clickEffectConfig.force]}
-                                onValueChange={([val]) => updateClickEffect({ force: val })}
-                            />
-                            <p className="text-[10px] text-muted-foreground">
-                                Controls the intensity of the effect animation.
-                            </p>
-                        </div>
-
-                        {/* Easing */}
-                        <div className="space-y-3">
-                            <Label className="text-xs text-muted-foreground font-medium">Easing</Label>
-                            <div className="grid grid-cols-2 gap-2">
-                                {(['linear', 'ease-out', 'ease-in-out', 'bounce', 'elastic', 'spring'] as const).map((easing) => (
-                                    <Button
-                                        key={easing}
-                                        variant="outline"
-                                        size="sm"
-                                        className={`capitalize text-xs h-8 transition-all ${
-                                            clickEffectConfig.easing === easing
-                                                ? "bg-primary text-primary-foreground border-primary shadow-md hover:bg-primary/90"
-                                                : "bg-background/50 hover:bg-background border-border/40 text-muted-foreground hover:text-foreground"
-                                        }`}
-                                        onClick={() => updateClickEffect({ easing })}
-                                    >
-                                        {easing}
-                                    </Button>
-                                ))}
-                            </div>
-                        </div>
-
-                        {/* Emphasis */}
-                        <div className="flex items-center justify-between pt-2">
+            <ScrollArea className="flex-1">
+                <div className="p-4 space-y-6">
+                    {/* Main Toggle */}
+                    <div className="p-4 rounded-xl bg-gradient-to-br from-white/5 to-white/0 border border-white/10 shadow-sm backdrop-blur-sm">
+                        <div className="flex items-center justify-between">
                             <div className="flex items-center gap-3">
-                                <div className="p-1.5 rounded-md bg-red-500/10 text-red-500">
-                                    <Activity className="h-3.5 w-3.5" />
-                                </div>
-                                <Label className="text-sm font-medium">Double Click Emphasis</Label>
+                                <Label className="text-sm font-medium text-foreground/90">Enable Effect</Label>
                             </div>
                             <Switch
-                                checked={clickEffectConfig.emphasis}
-                                onCheckedChange={(emphasis) => updateClickEffect({ emphasis })}
+                                checked={clickEffectConfig.enabled}
+                                onCheckedChange={(enabled) => updateEffects({ enabled })}
+                                className="data-[state=checked]:bg-blue-500"
                             />
                         </div>
                     </div>
-                )}
-            </div>
 
-            {/* Quick Actions */}
-            <div className="space-y-2">
-                <Label className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Quick Actions</Label>
-                <div className="flex gap-2">
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-xs"
-                        onClick={() => {
-                            editorStore.setPlayback({ currentTime: selectedClick.timestamp });
-                            toast({
-                                title: "Seeked to click",
-                                description: `Jumped to ${formatTime(selectedClick.timestamp)}`,
-                            });
-                        }}
-                    >
-                        Seek to Click
-                    </Button>
-                    <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 text-xs"
-                        onClick={() => {
-                            // Reset to default
-                            const clickKey = `${selectedClick.timestamp}`;
-                            editorStore.setState((prev) => {
-                                const newClickEffects = { ...prev.effects.clickEffects };
-                                delete newClickEffects[clickKey];
-                                return {
-                                    effects: {
-                                        ...prev.effects,
-                                        clickEffects: newClickEffects,
-                                    },
-                                };
-                            });
-                            toast({
-                                title: "Reset to default",
-                                description: "Click effect reset to global settings",
-                            });
-                        }}
-                    >
-                        Reset to Default
-                    </Button>
+                    {clickEffectConfig.enabled && (
+                        <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
+
+                            {/* Animation Style Section */}
+                            <div className="space-y-3">
+                                <div className="flex items-center gap-2 mb-2">
+                                    <Sparkles className="h-4 w-4 text-blue-400" />
+                                    <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Style</Label>
+                                </div>
+                                <div className="grid grid-cols-2 gap-2">
+                                    {([
+                                        'ripple', 'orb', 'pulse', 'ring',
+                                        'splash', 'particles', 'glow', 'shockwave',
+                                        'trail', 'burst', 'neon-burst', 'glitch',
+                                        'cyber-pulse', 'implosion', 'magnetic',
+                                        'hologram', 'shock-blur', 'liquid', 'time-freeze',
+                                        'depth-pop', 'heat-ripple', 'none'
+                                    ] as const).map((style) => (
+                                        <Button
+                                            key={style}
+                                            variant="outline"
+                                            size="sm"
+                                            onClick={() => updateClickEffect({ animationStyle: style })}
+                                            className={cn(
+                                                "h-9 text-xs justify-start px-3 capitalize transition-all duration-200",
+                                                clickEffectConfig.animationStyle === style
+                                                    ? "bg-blue-500/20 text-blue-400 border-blue-500/50 shadow-[0_0_15px_-5px_rgba(59,130,246,0.5)]"
+                                                    : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10 hover:text-foreground"
+                                            )}
+                                        >
+                                            <div className={cn(
+                                                "w-1.5 h-1.5 rounded-full mr-2 transition-colors",
+                                                clickEffectConfig.animationStyle === style ? "bg-blue-400" : "bg-white/20"
+                                            )} />
+                                            {style.replace(/-/g, ' ')}
+                                        </Button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {/* Properties Section */}
+                            <Collapsible
+                                open={activeSection === 'properties'}
+                                onOpenChange={() => setActiveSection(activeSection === 'properties' ? null : 'properties')}
+                                className="space-y-2 rounded-xl bg-white/5 border border-white/10 overflow-hidden"
+                            >
+                                <CollapsibleTrigger className="flex items-center justify-between w-full p-4 hover:bg-white/5 transition-colors">
+                                    <div className="flex items-center gap-2">
+                                        <Palette className="h-4 w-4 text-purple-400" />
+                                        <span className="text-sm font-medium">Appearance</span>
+                                    </div>
+                                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform duration-200", activeSection === 'properties' && "rotate-180")} />
+                                </CollapsibleTrigger>
+                                <CollapsibleContent className="p-4 pt-0 space-y-4">
+                                    {/* Colors */}
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-muted-foreground">Primary</Label>
+                                            <div className="flex gap-2 items-center">
+                                                <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md border border-white/20 shadow-sm cursor-pointer hover:scale-105 transition-transform">
+                                                    <input
+                                                        type="color"
+                                                        className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer opacity-0"
+                                                        value={clickEffectConfig.color}
+                                                        onChange={(e) => updateClickEffect({ color: e.target.value })}
+                                                    />
+                                                    <div className="w-full h-full" style={{ backgroundColor: clickEffectConfig.color }} />
+                                                </div>
+                                                <div className="flex-1 bg-black/40 rounded px-2 py-1 text-xs font-mono text-muted-foreground border border-white/10">
+                                                    {clickEffectConfig.color}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div className="space-y-2">
+                                            <Label className="text-xs text-muted-foreground">Secondary</Label>
+                                            <div className="flex gap-2 items-center">
+                                                <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md border border-white/20 shadow-sm cursor-pointer hover:scale-105 transition-transform">
+                                                    <input
+                                                        type="color"
+                                                        className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer opacity-0"
+                                                        value={clickEffectConfig.secondaryColor || clickEffectConfig.color}
+                                                        onChange={(e) => updateClickEffect({ secondaryColor: e.target.value })}
+                                                    />
+                                                    <div className="w-full h-full" style={{ backgroundColor: clickEffectConfig.secondaryColor || clickEffectConfig.color }} />
+                                                </div>
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8 hover:bg-white/10"
+                                                    onClick={() => updateClickEffect({ secondaryColor: undefined })}
+                                                >
+                                                    <X className="h-3 w-3" />
+                                                </Button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-4 pt-2">
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between">
+                                                <Label className="text-xs text-muted-foreground">Size Scale</Label>
+                                                <span className="text-xs font-mono text-muted-foreground">{clickEffectConfig.size.toFixed(1)}x</span>
+                                            </div>
+                                            <Slider
+                                                min={0.5}
+                                                max={3}
+                                                step={0.1}
+                                                value={[clickEffectConfig.size]}
+                                                onValueChange={([val]) => updateClickEffect({ size: val })}
+                                                className="[&_.range-thumb]:bg-purple-400 [&_.range-fill]:bg-purple-400/50"
+                                            />
+                                        </div>
+                                        <div className="space-y-2">
+                                            <div className="flex justify-between">
+                                                <Label className="text-xs text-muted-foreground">Duration</Label>
+                                                <span className="text-xs font-mono text-muted-foreground">{(clickEffectConfig.animationDuration || 0.8).toFixed(1)}s</span>
+                                            </div>
+                                            <Slider
+                                                min={0.2}
+                                                max={2}
+                                                step={0.1}
+                                                value={[clickEffectConfig.animationDuration || 0.8]}
+                                                onValueChange={([val]) => updateClickEffect({ animationDuration: val })}
+                                            />
+                                        </div>
+                                    </div>
+                                </CollapsibleContent>
+                            </Collapsible>
+
+                            {/* Physics / Advanced Section */}
+                            <Collapsible
+                                open={activeSection === 'physics'}
+                                onOpenChange={() => setActiveSection(activeSection === 'physics' ? null : 'physics')}
+                                className="space-y-2 rounded-xl bg-white/5 border border-white/10 overflow-hidden"
+                            >
+                                <CollapsibleTrigger className="flex items-center justify-between w-full p-4 hover:bg-white/5 transition-colors">
+                                    <div className="flex items-center gap-2">
+                                        <Zap className="h-4 w-4 text-yellow-400" />
+                                        <span className="text-sm font-medium">Physics & Timing</span>
+                                    </div>
+                                    <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform duration-200", activeSection === 'physics' && "rotate-180")} />
+                                </CollapsibleTrigger>
+                                <CollapsibleContent className="p-4 pt-0 space-y-4">
+                                    <div className="space-y-2">
+                                        <div className="flex justify-between">
+                                            <Label className="text-xs text-muted-foreground">Impact Force</Label>
+                                            <span className="text-xs font-mono text-muted-foreground">{(clickEffectConfig.force * 100).toFixed(0)}%</span>
+                                        </div>
+                                        <Slider
+                                            min={0}
+                                            max={1.5}
+                                            step={0.1}
+                                            value={[clickEffectConfig.force]}
+                                            onValueChange={([val]) => updateClickEffect({ force: val })}
+                                            className="[&_.range-thumb]:bg-yellow-400 [&_.range-fill]:bg-yellow-400/50"
+                                        />
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <Label className="text-xs text-muted-foreground">Easing Function</Label>
+                                        <div className="grid grid-cols-3 gap-2">
+                                            {(['linear', 'ease-out', 'ease-in-out', 'bounce', 'elastic', 'spring'] as const).map((easing) => (
+                                                <Button
+                                                    key={easing}
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    onClick={() => updateClickEffect({ easing })}
+                                                    className={cn(
+                                                        "h-7 text-[10px] capitalize border border-transparent",
+                                                        clickEffectConfig.easing === easing
+                                                            ? "bg-yellow-500/10 text-yellow-400 border-yellow-500/30"
+                                                            : "bg-white/5 text-muted-foreground hover:bg-white/10"
+                                                    )}
+                                                >
+                                                    {easing}
+                                                </Button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="flex items-center justify-between pt-2 border-t border-white/5">
+                                        <div className="flex items-center gap-2">
+                                            <Activity className="h-3.5 w-3.5 text-red-400" />
+                                            <Label className="text-sm text-foreground/80">Double Click Emphasis</Label>
+                                        </div>
+                                        <Switch
+                                            checked={clickEffectConfig.emphasis}
+                                            onCheckedChange={(emphasis) => updateClickEffect({ emphasis })}
+                                            className="scale-90"
+                                        />
+                                    </div>
+                                </CollapsibleContent>
+                            </Collapsible>
+
+                            {/* Specific Effect Settings based on style */}
+                            {(clickEffectConfig.animationStyle === 'particles' ||
+                                clickEffectConfig.animationStyle === 'burst' ||
+                                clickEffectConfig.animationStyle === 'splash' ||
+                                clickEffectConfig.animationStyle === 'glow' ||
+                                clickEffectConfig.animationStyle === 'orb' ||
+                                clickEffectConfig.animationStyle === 'trail' ||
+                                clickEffectConfig.animationStyle === 'glitch' ||
+                                clickEffectConfig.animationStyle === 'shock-blur' ||
+                                clickEffectConfig.animationStyle === 'liquid' ||
+                                clickEffectConfig.animationStyle === 'heat-ripple') && (
+                                    <div className="p-4 rounded-xl bg-white/5 border border-white/10 space-y-4">
+                                        <div className="flex items-center gap-2 mb-2">
+                                            <Layers className="h-4 w-4 text-emerald-400" />
+                                            <Label className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Effect Specifics</Label>
+                                        </div>
+
+                                        {(clickEffectConfig.animationStyle === 'particles' ||
+                                            clickEffectConfig.animationStyle === 'burst' ||
+                                            clickEffectConfig.animationStyle === 'splash') && (
+                                                <div className="space-y-2">
+                                                    <div className="flex justify-between">
+                                                        <Label className="text-xs text-muted-foreground">Particle Count</Label>
+                                                        <span className="text-xs font-mono text-muted-foreground">{clickEffectConfig.particleCount || 20}</span>
+                                                    </div>
+                                                    <Slider
+                                                        min={5}
+                                                        max={50}
+                                                        step={5}
+                                                        value={[clickEffectConfig.particleCount || 20]}
+                                                        onValueChange={([val]) => updateClickEffect({ particleCount: val })}
+                                                    />
+                                                </div>
+                                            )}
+
+                                        {(clickEffectConfig.animationStyle === 'glow' ||
+                                            clickEffectConfig.animationStyle === 'orb') && (
+                                                <div className="space-y-2">
+                                                    <div className="flex justify-between">
+                                                        <Label className="text-xs text-muted-foreground">Intensity</Label>
+                                                        <span className="text-xs font-mono text-muted-foreground">{((clickEffectConfig.glowIntensity || 0.8) * 100).toFixed(0)}%</span>
+                                                    </div>
+                                                    <Slider
+                                                        min={0}
+                                                        max={1}
+                                                        step={0.1}
+                                                        value={[clickEffectConfig.glowIntensity || 0.8]}
+                                                        onValueChange={([val]) => updateClickEffect({ glowIntensity: val })}
+                                                    />
+                                                </div>
+                                            )}
+
+                                        {clickEffectConfig.animationStyle === 'trail' && (
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <Label className="text-xs text-muted-foreground">Length</Label>
+                                                    <span className="text-xs font-mono text-muted-foreground">{clickEffectConfig.trailLength || 10}</span>
+                                                </div>
+                                                <Slider
+                                                    min={5}
+                                                    max={30}
+                                                    step={1}
+                                                    value={[clickEffectConfig.trailLength || 10]}
+                                                    onValueChange={([val]) => updateClickEffect({ trailLength: val })}
+                                                />
+                                            </div>
+                                        )}
+
+                                        {clickEffectConfig.animationStyle === 'glitch' && (
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <Label className="text-xs text-muted-foreground">Glitch Factor</Label>
+                                                    <span className="text-xs font-mono text-muted-foreground">{((clickEffectConfig.glitchIntensity || 0.5) * 100).toFixed(0)}%</span>
+                                                </div>
+                                                <Slider
+                                                    min={0}
+                                                    max={1}
+                                                    step={0.1}
+                                                    value={[clickEffectConfig.glitchIntensity || 0.5]}
+                                                    onValueChange={([val]) => updateClickEffect({ glitchIntensity: val })}
+                                                />
+                                            </div>
+                                        )}
+
+                                        {clickEffectConfig.animationStyle === 'shock-blur' && (
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <Label className="text-xs text-muted-foreground">Blur Radius</Label>
+                                                    <span className="text-xs font-mono text-muted-foreground">{clickEffectConfig.blurStrength || 10}px</span>
+                                                </div>
+                                                <Slider
+                                                    min={0}
+                                                    max={20}
+                                                    step={1}
+                                                    value={[clickEffectConfig.blurStrength || 10]}
+                                                    onValueChange={([val]) => updateClickEffect({ blurStrength: val })}
+                                                />
+                                            </div>
+                                        )}
+
+                                        {(clickEffectConfig.animationStyle === 'liquid' || clickEffectConfig.animationStyle === 'heat-ripple') && (
+                                            <div className="space-y-2">
+                                                <div className="flex justify-between">
+                                                    <Label className="text-xs text-muted-foreground">Distortion</Label>
+                                                    <span className="text-xs font-mono text-muted-foreground">{((clickEffectConfig.distortionStrength || 0.5) * 100).toFixed(0)}%</span>
+                                                </div>
+                                                <Slider
+                                                    min={0}
+                                                    max={1}
+                                                    step={0.1}
+                                                    value={[clickEffectConfig.distortionStrength || 0.5]}
+                                                    onValueChange={([val]) => updateClickEffect({ distortionStrength: val })}
+                                                />
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                            {/* Quick Actions */}
+                            <div className="pt-4 border-t border-white/5 grid grid-cols-2 gap-3">
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="bg-white/5 border-white/10 hover:bg-white/10 text-xs"
+                                    onClick={() => {
+                                        editorStore.setPlayback({ currentTime: selectedClick.timestamp });
+                                        toast({
+                                            title: "Seeked to click",
+                                            description: `Jumped to ${formatTime(selectedClick.timestamp)}`,
+                                        });
+                                    }}
+                                >
+                                    Seek to Click
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className="bg-white/5 border-white/10 hover:bg-white/10 text-xs text-red-400 hover:text-red-300"
+                                    onClick={() => {
+                                        const clickKey = `${selectedClick.timestamp}`;
+                                        editorStore.setState((prev) => {
+                                            const newClickEffects = { ...prev.effects.clickEffects };
+                                            delete newClickEffects[clickKey];
+                                            return {
+                                                effects: {
+                                                    ...prev.effects,
+                                                    clickEffects: newClickEffects,
+                                                },
+                                            };
+                                        });
+                                        toast({
+                                            title: "Reset to default",
+                                            description: "Click effect reset to global settings",
+                                        });
+                                    }}
+                                >
+                                    Reset to Default
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
-            </div>
+            </ScrollArea>
         </div>
     );
 }
-
