@@ -3,7 +3,6 @@ import { DesignPanel } from './panels/DesignPanel';
 import { CameraPanel } from './panels/CameraPanel';
 import { EffectsPanel } from './panels/EffectsPanel';
 import { InteractionEffectsPanel } from './panels/InteractionEffectsPanel';
-import { ScriptPanel } from './panels/ScriptPanel';
 import { VoicePanel } from './panels/VoicePanel';
 import { TextPanel } from './panels/TextPanel';
 import { TimelinePanel } from './panels/TimelinePanel';
@@ -11,7 +10,6 @@ import {
     Palette,
     Video,
     Sparkles,
-    FileText,
     Mic2,
     Type,
     LayoutTemplate,
@@ -20,7 +18,7 @@ import {
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
-type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'effects' | 'timeline';
+type TabId = 'voice' | 'design' | 'text' | 'camera' | 'effects' | 'timeline';
 
 interface SidebarItemProps {
     id: TabId;
@@ -63,7 +61,7 @@ interface EditorPanelProps {
 }
 
 export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect, selectedClickIndex, onClickSelect }: EditorPanelProps = {}) {
-    const [activeTab, setActiveTab] = useState<TabId>('script');
+    const [activeTab, setActiveTab] = useState<TabId>('voice');
 
     // Switch to camera tab when effect is selected
     useEffect(() => {
@@ -91,14 +89,13 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect,
         }
 
         switch (activeTab) {
-            case 'script': return <ScriptPanel />;
             case 'voice': return <VoicePanel />;
             case 'design': return <DesignPanel />;
             case 'text': return <TextPanel />;
             case 'camera': return <CameraPanel selectedEffectId={selectedEffectId} onEffectSelect={onEffectSelect} isLoopingEffect={isLoopingEffect} />;
             case 'effects': return <EffectsPanel />;
             case 'timeline': return <TimelinePanel />;
-            default: return <ScriptPanel />;
+            default: return <VoicePanel />;
         }
     };
 
@@ -107,14 +104,12 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect,
             {/* Sidebar */}
             <div className="w-10 flex flex-col items-center bg-card/40 border-r border-white/5 backdrop-blur-md z-10 shadow-xl">
 
-                <div className="flex-1 w-full flex flex-col items-center scrollbar-none overflow-y-auto py-2">
-                    <SidebarItem id="script" icon={FileText} label="Script" isActive={activeTab === 'script'} onClick={setActiveTab} />
+                <div className="flex-1 w-full flex flex-col items-center scrollbar-none overflow-y-auto py-2" style={{overflow:'hidden'}}>
                     <SidebarItem id="voice" icon={Mic2} label="Voice" isActive={activeTab === 'voice'} onClick={setActiveTab} />
                     <div className="w-8 h-[1px] bg-border/40 my-2" />
                     <SidebarItem id="design" icon={Palette} label="Design" isActive={activeTab === 'design'} onClick={setActiveTab} />
                     <SidebarItem id="text" icon={Type} label="Text" isActive={activeTab === 'text'} onClick={setActiveTab} />
                     <SidebarItem id="camera" icon={Video} label="Camera" isActive={activeTab === 'camera'} onClick={setActiveTab} />
-                    <SidebarItem id="effects" icon={Sparkles} label="Effects" isActive={activeTab === 'effects'} onClick={setActiveTab} />
                     <div className="w-8 h-[1px] bg-border/40 my-2" />
                     <SidebarItem id="timeline" icon={Clock} label="Timeline" isActive={activeTab === 'timeline'} onClick={setActiveTab} />
                 </div>
@@ -130,8 +125,7 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect,
                         </h2>
                         <p className="text-xs text-muted-foreground/80 font-medium">
                             {selectedClickIndex !== null && selectedClickIndex !== undefined && 'Configure click effect properties'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'script' && 'Edit and refining your script'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'voice' && 'Generate and manage AI voiceovers'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'voice' && 'Generate and manage AI voiceovers with script editing'}
                             {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'design' && 'Canvas layout and background'}
                             {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'text' && 'Add text overlays and titles'}
                             {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'camera' && (selectedEffectId ? 'Editing selected zoom effect' : 'Control camera movement and zoom')}

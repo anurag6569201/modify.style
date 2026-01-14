@@ -1,26 +1,47 @@
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
 import { Wand2, Loader2, FileText } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { editorStore, useEditorState } from '@/lib/editor/store';
 
 
 export function ScriptPanel() {
     const { toast } = useToast();
+    const editorState = useEditorState();
     const [script, setScript] = useState(
+        editorState.voiceover.script || 
         "Welcome to our product demo. In this video, we'll walk you through the key features that make our platform stand out. Let's start by clicking on the Get Started button to begin the onboarding process..."
     );
     const [isGeneratingScript, setIsGeneratingScript] = useState(false);
+
+    // Sync script with voiceover store
+    useEffect(() => {
+        if (editorState.voiceover.script && editorState.voiceover.script !== script) {
+            setScript(editorState.voiceover.script);
+        }
+    }, [editorState.voiceover.script]);
+
+    const handleScriptChange = (newScript: string) => {
+        setScript(newScript);
+        // Update voiceover store with new script
+        editorStore.setState({
+            voiceover: {
+                ...editorState.voiceover,
+                script: newScript,
+            },
+        });
+    };
 
     const handleGenerateScript = async () => {
         setIsGeneratingScript(true);
         // Simulate API call
         await new Promise((resolve) => setTimeout(resolve, 2000));
-        setScript(
-            "Welcome to our platform walkthrough. Today, I'll show you how to get started in just a few simple steps.\n\nFirst, we'll click on the Get Started button to begin the onboarding process. Notice how intuitive the interface is.\n\nNext, let's scroll down to explore the features section. Here you can see all the powerful tools at your disposal.\n\nNow, click on the Dashboard tab to access your analytics. The dashboard provides real-time insights into your performance.\n\nFinally, use the search functionality to find exactly what you need. Just type your query and click the search icon."
-        );
+        const generatedScript = "Welcome to our platform walkthrough. Today, I'll show you how to get started in just a few simple steps.\n\nFirst, we'll click on the Get Started button to begin the onboarding process. Notice how intuitive the interface is.\n\nNext, let's scroll down to explore the features section. Here you can see all the powerful tools at your disposal.\n\nNow, click on the Dashboard tab to access your analytics. The dashboard provides real-time insights into your performance.\n\nFinally, use the search functionality to find exactly what you need. Just type your query and click the search icon.";
+        setScript(generatedScript);
+        handleScriptChange(generatedScript);
         setIsGeneratingScript(false);
         toast({
             title: "Script generated!",
@@ -58,7 +79,7 @@ export function ScriptPanel() {
                         <div className="absolute inset-0 bg-gradient-to-b from-transparent pointer-events-none rounded-md" style={{ height: '100%' }} />
                         <Textarea
                             value={script}
-                            onChange={(e) => setScript(e.target.value)}
+                            onChange={(e) => handleScriptChange(e.target.value)}
                             placeholder="Enter your video script here..."
                             style={{ maxHeight: '320px', minHeight: '300px' }}
                             className="flex-1 w-full h-full resize-none font-sans text-sm leading-relaxed bg-background/0 border-border/0 focus:border-primary/0 focus:bg-background/0 focus-visible:ring-0 focus-visible:ring-offset-0 transition-all p-0 rounded-md shadow-none"

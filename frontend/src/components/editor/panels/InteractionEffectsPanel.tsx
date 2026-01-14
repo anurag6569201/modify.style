@@ -169,7 +169,7 @@ export function InteractionEffectsPanel({ selectedClickIndex, onDeselectClick }:
                             </div>
                             <Switch
                                 checked={clickEffectConfig.enabled}
-                                onCheckedChange={(enabled) => updateEffects({ enabled })}
+                                onCheckedChange={(enabled) => updateClickEffect({ enabled })}
                                 className="data-[state=checked]:bg-blue-500"
                             />
                         </div>
@@ -243,7 +243,7 @@ export function InteractionEffectsPanel({ selectedClickIndex, onDeselectClick }:
                                                     />
                                                     <div className="w-full h-full" style={{ backgroundColor: clickEffectConfig.color }} />
                                                 </div>
-                                                <div className="flex-1 bg-black/40 rounded px-2 py-1 text-xs font-mono text-muted-foreground border border-white/10">
+                                                <div className="flex-1 rounded px-2 py-1 text-xs font-mono text-muted-foreground border border-white/10">
                                                     {clickEffectConfig.color}
                                                 </div>
                                             </div>

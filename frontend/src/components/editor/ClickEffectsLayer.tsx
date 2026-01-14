@@ -59,9 +59,11 @@ const ClickEffect: React.FC<ClickEffectProps> = ({ click, config, currentTime, v
     const progress = Math.max(0, Math.min(1, (timeSinceClick - CLICK_DELAY) / animationDuration));
     const easedProgress = easingFunctions[config.easing || 'ease-out'](progress);
 
-    // Calculate position in percentage (0-100)
-    const xPercent = click.x * 100;
-    const yPercent = click.y * 100;
+    // Calculate position in percentage (0-100) - click.x and click.y are normalized (0-1) relative to video dimensions
+    // These should align perfectly with the video canvas since both use the same coordinate system
+    // The ClickEffectsLayer container matches the video canvas dimensions exactly (both are absolute inset-0)
+    const xPercent = Math.max(0, Math.min(100, click.x * 100));
+    const yPercent = Math.max(0, Math.min(100, click.y * 100));
 
     // Base size with emphasis multiplier
     const emphasisMultiplier = config.emphasis ? 1.5 : 1;
@@ -1039,6 +1041,12 @@ export const ClickEffectsLayer: React.FC = () => {
             style={{
                 width: '100%',
                 height: '100%',
+                // Ensure it matches the video canvas exactly
+                position: 'absolute',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
             }}
         >
             {activeClicks.map((click, index) => {

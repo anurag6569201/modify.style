@@ -146,6 +146,19 @@ export interface PlaybackState {
     isMuted: boolean;
 }
 
+export interface VoiceoverConfig {
+    script: string;
+    voiceId: string;
+    audioUrl: string | null;
+    audioBlob: Blob | null;
+    duration: number;
+    speed: number;
+    pitch: number;
+    volume: number;
+    isGenerated: boolean;
+    generatedAt: number | null;
+}
+
 export interface EditorState {
     video: VideoConfig;
     camera: CameraConfig;
@@ -204,7 +217,7 @@ export interface EditorState {
         endTime: number;
         animation: 'none' | 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'typewriter' | 'scale' | 'pop' | 'blur-in' | 'glitch' | 'spin-3d';
     }>;
-
+    voiceover: VoiceoverConfig;
     events: {
         clicks: ClickData[];
         moves: MoveData[];
@@ -303,6 +316,18 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         vignette: 0,
     },
     textOverlays: [],
+    voiceover: {
+        script: '',
+        voiceId: 'emma',
+        audioUrl: null,
+        audioBlob: null,
+        duration: 0,
+        speed: 1.0,
+        pitch: 0,
+        volume: 100,
+        isGenerated: false,
+        generatedAt: null,
+    },
     events: {
         clicks: [],
         moves: [],

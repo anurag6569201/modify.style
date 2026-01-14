@@ -121,7 +121,7 @@ export function EffectsPanel() {
                                                     />
                                                     <div className="w-full h-full" style={{ backgroundColor: effects.clickColor }} />
                                                 </div>
-                                                <div className="flex-1 bg-black/40 rounded px-2 py-1 text-xs font-mono text-muted-foreground border border-white/10">
+                                                <div className="flex-1  rounded px-2 py-1 text-xs font-mono text-muted-foreground border border-white/10">
                                                     {effects.clickColor}
                                                 </div>
                                             </div>
