@@ -1,8 +1,9 @@
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
-import { Mic2, Loader2, PlayCircle, Download, Volume2, Play, Pause } from 'lucide-react';
+import { Input } from '@/components/ui/input';
+import { Mic2, Loader2, PlayCircle, Download, Volume2, Play, Pause, Search, X } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Slider } from '@/components/ui/slider';
 import {
@@ -16,90 +17,108 @@ import { greabyAPI, GreabyVoice } from '@/lib/api/greaby';
 import { editorStore, useEditorState } from '@/lib/editor/store';
 import { Textarea } from '@/components/ui/textarea';
 import { findVoicePreview, getAllVoicePreviews } from '@/lib/api/voice-previews';
+import { VOICE_OPTIONS } from '@/lib/api/voices';
+
+interface ExtendedVoice extends GreabyVoice {
+    group: string;
+    flag: string;
+}
 
 export function VoicePanel() {
     const { toast } = useToast();
     const editorState = useEditorState();
-    const [voices, setVoices] = useState<GreabyVoice[]>([]);
+    const [voices, setVoices] = useState<ExtendedVoice[]>([]);
     const [isLoadingVoices, setIsLoadingVoices] = useState(true);
     const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
     const [generationProgress, setGenerationProgress] = useState(0);
     const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
     const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [selectedGroup, setSelectedGroup] = useState<string>('all');
+    const [selectedGender, setSelectedGender] = useState<string>('all');
     const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
-    // Load voices from Greaby API on mount
-    useEffect(() => {
-        const loadVoices = async () => {
-            setIsLoadingVoices(true);
-            try {
-                const availableVoices = await greabyAPI.getVoices();
-                
-                // If API returned voices, use them; otherwise use all available preview voices
-                let voicesToUse: GreabyVoice[];
-                
-                if (availableVoices.length > 0) {
-                    // Enhance API voices with preview URLs
-                    voicesToUse = availableVoices.map(voice => {
-                        const preview = findVoicePreview(voice.id, voice.name);
-                        return {
-                            ...voice,
-                            previewUrl: preview?.previewUrl,
-                        };
-                    });
-                } else {
-                    // Use all available voice previews as fallback
-                    const previewVoices = getAllVoicePreviews();
-                    voicesToUse = previewVoices.map(preview => ({
-                        id: preview.voiceId,
-                        name: preview.name,
-                        description: `${preview.name} voice${preview.language ? ` (${preview.language})` : ''}${preview.quality ? ` - ${preview.quality.toUpperCase()}` : ''}`,
-                        language: preview.language,
-                        gender: preview.gender,
-                        previewUrl: preview.previewUrl,
-                    }));
-                }
-                
-                setVoices(voicesToUse);
-                
-                // Set default voice if not set
-                if (voicesToUse.length > 0 && !editorState.voiceover.voiceId) {
-                    editorStore.setState({
-                        voiceover: {
-                            ...editorState.voiceover,
-                            voiceId: voicesToUse[0].id,
-                        },
-                    });
-                }
-            } catch (error) {
-                console.error('Failed to load voices:', error);
-                // Use all available voice previews as fallback
-                const previewVoices = getAllVoicePreviews();
-                const fallbackVoices: GreabyVoice[] = previewVoices.map(preview => ({
-                    id: preview.voiceId,
-                    name: preview.name,
-                    description: `${preview.name} voice${preview.language ? ` (${preview.language})` : ''}${preview.quality ? ` - ${preview.quality.toUpperCase()}` : ''}`,
-                    language: preview.language,
-                    gender: preview.gender,
-                    previewUrl: preview.previewUrl,
-                }));
-                setVoices(fallbackVoices);
-                
-                if (fallbackVoices.length > 0 && !editorState.voiceover.voiceId) {
-                    editorStore.setState({
-                        voiceover: {
-                            ...editorState.voiceover,
-                            voiceId: fallbackVoices[0].id,
-                        },
-                    });
-                }
-            } finally {
-                setIsLoadingVoices(false);
+    // Convert VOICE_OPTIONS to GreabyVoice format and enhance with preview URLs
+    const allVoices = useMemo(() => {
+        return VOICE_OPTIONS.map(voice => {
+            const previewUrl = voice.audio 
+                ? `/voice-previews/${voice.audio}` 
+                : findVoicePreview(voice.value, voice.label)?.previewUrl || undefined;
+            
+            // Normalize gender - handle cases like "Female, Child" -> "female"
+            let normalizedGender: 'male' | 'female' | 'neutral' = 'neutral';
+            const genderLower = voice.gender.toLowerCase();
+            if (genderLower.includes('female')) {
+                normalizedGender = 'female';
+            } else if (genderLower.includes('male')) {
+                normalizedGender = 'male';
             }
-        };
-
-        loadVoices();
+            
+            return {
+                id: voice.value,
+                name: voice.label,
+                description: `${voice.group} • ${voice.gender}`,
+                language: voice.accent,
+                gender: normalizedGender,
+                previewUrl,
+                group: voice.group,
+                flag: voice.flag,
+            } as ExtendedVoice;
+        });
     }, []);
+
+    // Filter voices based on search, group, and gender
+    const filteredVoices = useMemo(() => {
+        let filtered = allVoices;
+
+        // Filter by search query
+        if (searchQuery.trim()) {
+            const query = searchQuery.toLowerCase();
+            filtered = filtered.filter(voice => 
+                voice.name.toLowerCase().includes(query) ||
+                voice.group.toLowerCase().includes(query) ||
+                voice.id.toLowerCase().includes(query)
+            );
+        }
+
+        // Filter by group
+        if (selectedGroup !== 'all') {
+            filtered = filtered.filter(voice => voice.group === selectedGroup);
+        }
+
+        // Filter by gender
+        if (selectedGender !== 'all') {
+            filtered = filtered.filter(voice => {
+                const voiceGender = voice.gender?.toLowerCase() || '';
+                return voiceGender.includes(selectedGender.toLowerCase());
+            });
+        }
+
+        return filtered;
+    }, [allVoices, searchQuery, selectedGroup, selectedGender]);
+
+    // Get unique groups for filter
+    const uniqueGroups = useMemo(() => {
+        const groups = Array.from(new Set(allVoices.map(v => v.group))).sort();
+        return groups;
+    }, [allVoices]);
+
+    // Set voices and default voice on mount
+    useEffect(() => {
+        setIsLoadingVoices(true);
+        setVoices(allVoices);
+        
+        // Set default voice if not set
+        if (allVoices.length > 0 && !editorState.voiceover.voiceId) {
+            editorStore.setState({
+                voiceover: {
+                    ...editorState.voiceover,
+                    voiceId: allVoices[0].id,
+                },
+            });
+        }
+        setIsLoadingVoices(false);
+    }, [allVoices]);
 
     // Cleanup audio preview URL on unmount
     useEffect(() => {
@@ -411,29 +430,90 @@ export function VoicePanel() {
                             </Button>
                         )}
                     </div>
+
+                    {/* Search and Filters */}
+                    <div className="space-y-2">
+                        <div className="relative">
+                            <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
+                            <Input
+                                placeholder="Search voices by name, language, or ID..."
+                                value={searchQuery}
+                                onChange={(e) => setSearchQuery(e.target.value)}
+                                className="pl-8 pr-8 h-9 text-sm bg-background/50 border-border/40"
+                            />
+                            {searchQuery && (
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="absolute right-1 top-1 h-7 w-7"
+                                    onClick={() => setSearchQuery('')}
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </Button>
+                            )}
+                        </div>
+                        
+                        <div className="flex gap-2">
+                            <Select value={selectedGroup} onValueChange={setSelectedGroup}>
+                                <SelectTrigger className="h-9 text-xs bg-background/50 border-border/40">
+                                    <SelectValue placeholder="All Languages" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Languages</SelectItem>
+                                    {uniqueGroups.map(group => (
+                                        <SelectItem key={group} value={group}>
+                                            {group}
+                                        </SelectItem>
+                                    ))}
+                                </SelectContent>
+                            </Select>
+                            
+                            <Select value={selectedGender} onValueChange={setSelectedGender}>
+                                <SelectTrigger className="h-9 text-xs bg-background/50 border-border/40">
+                                    <SelectValue placeholder="All Genders" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectItem value="all">All Genders</SelectItem>
+                                    <SelectItem value="male">Male</SelectItem>
+                                    <SelectItem value="female">Female</SelectItem>
+                                    <SelectItem value="neutral">Neutral</SelectItem>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    </div>
+
+                    {/* Voice Count */}
+                    <div className="text-[10px] text-muted-foreground">
+                        {filteredVoices.length} {filteredVoices.length === 1 ? 'voice' : 'voices'} available
+                    </div>
+
+                    {/* Quick Select Dropdown */}
                     <Select 
                         value={editorState.voiceover.voiceId} 
                         onValueChange={(value) => updateVoiceoverConfig({ voiceId: value })}
                         disabled={isLoadingVoices}
                     >
                         <SelectTrigger className="h-10 bg-background/50 border-border/40 focus:ring-primary/20">
-                            <SelectValue placeholder={isLoadingVoices ? "Loading voices..." : "Select a voice"} />
+                            <SelectValue placeholder={isLoadingVoices ? "Loading voices..." : "Quick Select Voice"} />
                         </SelectTrigger>
-                        <SelectContent>
-                            {voices.map((voice) => (
+                        <SelectContent className="max-h-[300px]">
+                            {filteredVoices.map((voice) => (
                                 <SelectItem key={voice.id} value={voice.id} className="cursor-pointer focus:bg-primary/10">
                                     <div className="flex items-center justify-between w-full pr-2">
-                                        <div className="flex flex-col py-1 flex-1">
-                                            <span className="font-medium text-sm">{voice.name}</span>
-                                            <span className="text-[11px] text-muted-foreground">
-                                                {voice.description}
-                                            </span>
+                                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                                            <span className="text-base">{voice.flag}</span>
+                                            <div className="flex flex-col flex-1 min-w-0">
+                                                <span className="font-medium text-sm truncate">{voice.name}</span>
+                                                <span className="text-[11px] text-muted-foreground truncate">
+                                                    {voice.group}
+                                                </span>
+                                            </div>
                                         </div>
                                         {voice.previewUrl && (
                                             <Button
                                                 variant="ghost"
                                                 size="icon"
-                                                className="h-7 w-7 ml-2"
+                                                className="h-7 w-7 ml-2 flex-shrink-0"
                                                 onClick={(e) => {
                                                     e.stopPropagation();
                                                     if (playingPreviewId === voice.id) {
@@ -456,52 +536,93 @@ export function VoicePanel() {
                         </SelectContent>
                     </Select>
                     
-                    {/* Voice Preview List (Alternative View) */}
-                    <div className="space-y-2 max-h-[200px] overflow-y-auto">
-                        {voices.map((voice) => (
-                            <div
-                                key={voice.id}
-                                className={`flex items-center justify-between p-2 rounded-md border transition-all ${
-                                    editorState.voiceover.voiceId === voice.id
-                                        ? 'bg-primary/10 border-primary/30'
-                                        : 'bg-background/30 border-border/20 hover:bg-background/50'
-                                }`}
-                            >
-                                <div className="flex-1 min-w-0">
-                                    <div className="flex items-center gap-2">
-                                        <button
-                                            onClick={() => updateVoiceoverConfig({ voiceId: voice.id })}
-                                            className="text-left flex-1 min-w-0"
-                                        >
-                                            <span className="font-medium text-sm block truncate">{voice.name}</span>
-                                            <span className="text-[11px] text-muted-foreground block truncate">
-                                                {voice.description}
-                                            </span>
-                                        </button>
+                    {/* Voice List - Grouped by Language */}
+                    <div className="space-y-3 max-h-[400px] overflow-y-auto">
+                        {(() => {
+                            // Group filtered voices by language group
+                            const grouped = filteredVoices.reduce((acc, voice) => {
+                                const group = voice.group || 'Other';
+                                if (!acc[group]) {
+                                    acc[group] = [];
+                                }
+                                acc[group].push(voice);
+                                return acc;
+                            }, {} as Record<string, typeof filteredVoices>);
+
+                            const sortedGroups = Object.keys(grouped).sort();
+
+                            if (sortedGroups.length === 0) {
+                                return (
+                                    <div className="text-center py-8 text-sm text-muted-foreground">
+                                        No voices found matching your criteria
+                                    </div>
+                                );
+                            }
+
+                            return sortedGroups.map(group => (
+                                <div key={group} className="space-y-2">
+                                    <div className="flex items-center gap-2 px-2 py-1 bg-background/30 rounded-md">
+                                        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                                            {group}
+                                        </span>
+                                        <span className="text-[10px] text-muted-foreground/70">
+                                            ({grouped[group].length})
+                                        </span>
+                                    </div>
+                                    <div className="space-y-1.5">
+                                        {grouped[group].map((voice) => (
+                                            <div
+                                                key={voice.id}
+                                                className={`flex items-center justify-between p-2.5 rounded-md border transition-all cursor-pointer ${
+                                                    editorState.voiceover.voiceId === voice.id
+                                                        ? 'bg-primary/10 border-primary/30 ring-1 ring-primary/20'
+                                                        : 'bg-background/30 border-border/20 hover:bg-background/50 hover:border-border/40'
+                                                }`}
+                                                onClick={() => updateVoiceoverConfig({ voiceId: voice.id })}
+                                            >
+                                                <div className="flex items-center gap-2.5 flex-1 min-w-0">
+                                                    <span className="text-lg flex-shrink-0">{voice.flag}</span>
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2">
+                                                            <span className="font-medium text-sm truncate">
+                                                                {voice.name}
+                                                            </span>
+                                                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted/50 text-muted-foreground">
+                                                                {voice.gender}
+                                                            </span>
+                                                        </div>
+                                                        <span className="text-[11px] text-muted-foreground block truncate">
+                                                            {voice.id}
+                                                        </span>
+                                                    </div>
+                                                </div>
+                                                {voice.previewUrl && (
+                                                    <Button
+                                                        variant="ghost"
+                                                        size="icon"
+                                                        className="h-8 w-8 flex-shrink-0"
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            if (playingPreviewId === voice.id) {
+                                                                handleStopPreview();
+                                                            } else {
+                                                                handlePlayPreview(voice.id, voice.previewUrl);
+                                                            }
+                                                        }}
+                                                    >
+                                                        {playingPreviewId === voice.id ? (
+                                                            <Pause className="h-4 w-4" />
+                                                        ) : (
+                                                            <Play className="h-4 w-4" />
+                                                        )}
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        ))}
                                     </div>
                                 </div>
-                                {voice.previewUrl && (
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8 flex-shrink-0"
-                                        onClick={() => {
-                                            if (playingPreviewId === voice.id) {
-                                                handleStopPreview();
-                                            } else {
-                                                handlePlayPreview(voice.id, voice.previewUrl);
-                                            }
-                                        }}
-                                    >
-                                        {playingPreviewId === voice.id ? (
-                                            <Pause className="h-4 w-4" />
-                                        ) : (
-                                            <Play className="h-4 w-4" />
-                                        )}
-                                    </Button>
-                                )}
-                            </div>
-                        ))}
+                            ));
+                        })()}
                     </div>
                 </div>
 

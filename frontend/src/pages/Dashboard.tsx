@@ -42,6 +42,8 @@ const statusConfig = {
   },
 };
 
+import { AudioGenerator } from "@/components/AudioGenerator";
+
 export default function Dashboard() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [user, setUser] = useState<{ name: string; email: string } | undefined>(
@@ -94,7 +96,7 @@ export default function Dashboard() {
   return (
     <div className="min-h-screen bg-background">
       <Header isAuthenticated user={user} />
-
+      <AudioGenerator />
       <main className="container py-8">
         {/* Page Header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">

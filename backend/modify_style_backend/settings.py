@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'rest_framework',
     'corsheaders',
     'accounts',
+    'audio_creations',
 ]
 
 MIDDLEWARE = [
@@ -120,6 +121,10 @@ USE_TZ = True
 
 STATIC_URL = 'static/'
 
+# Media files (User uploads)
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",
@@ -142,3 +147,12 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
+
+# Azure Speech Configuration (add these to your environment variables)
+import os
+AZURE_SPEECH_KEY = os.environ.get('AZURE_SPEECH_KEY', '')
+AZURE_SPEECH_ENDPOINT = os.environ.get('AZURE_SPEECH_ENDPOINT', '')
+
+# Azure Speech Configuration (add these to your environment variables)
+# AZURE_SPEECH_KEY = os.environ.get('AZURE_SPEECH_KEY', '')
+# AZURE_SPEECH_ENDPOINT = os.environ.get('AZURE_SPEECH_ENDPOINT', '')
