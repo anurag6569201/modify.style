@@ -1,8 +1,11 @@
 import { useState, useRef, useEffect } from "react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
+import { StudioPipeline } from "@/components/studio/StudioPipeline";
+import { StudioProjectBar } from "@/components/studio/StudioProjectBar";
+import { ShareDialog } from "@/components/ShareDialog";
 import { Button } from "@/components/ui/button";
-import { Check, ArrowLeft, Download, Loader2, Video, FileVideo, Image as ImageIcon, Settings } from "lucide-react";
+import { Check, ArrowLeft, Download, Loader2, Video, FileVideo, Image as ImageIcon, Settings, Share2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
@@ -12,6 +15,10 @@ import { FilterEngine } from "@/lib/effects/filters";
 import { getCursorPos } from "@/lib/composition/math";
 import { updateCameraSystem, getInitialCameraState } from "@/lib/composition/camera";
 import { ClickData, MoveData } from "./Recorder";
+import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
+import { editorHref } from "@/lib/studio/pipeline";
+import { useRenderFlowGuard } from "@/hooks/useStudioFlowGuard";
+import { computePipelineGates } from "@/lib/studio/pipelineProgress";
 
 // Helper function to render background
 function renderBackground(
@@ -414,8 +421,11 @@ function drawCursor(
 
 export default function Render() {
   const location = useLocation();
+  const [searchParams] = useSearchParams();
+  const queryProjectId = searchParams.get("project");
   const {
-    videoUrl,
+    projectId: stateProjectId,
+    videoUrl: stateVideoUrl,
     clickData = [],
     moveData = [],
     presentation,
@@ -427,12 +437,30 @@ export default function Render() {
     voiceover,
   } = location.state || {};
 
+  const projectId = stateProjectId ?? queryProjectId ?? undefined;
+
   const [rendering, setRendering] = useState(false);
   const [progress, setProgress] = useState(0);
   const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const [exportFormat, setExportFormat] = useState<"webm" | "mp4" | "gif" | "apng">("webm");
   const [exportQuality, setExportQuality] = useState<"high" | "medium" | "low">("high");
   const [showSettings, setShowSettings] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [project, setProject] = useState<ProjectDetail | null>(null);
+
+  const videoUrl = stateVideoUrl ?? project?.video_url ?? undefined;
+
+  const flowGates = computePipelineGates(project, { includeExport: true, currentStep: "export" });
+
+  useRenderFlowGuard(projectId, project, !!videoUrl, !!stateVideoUrl);
+
+  useEffect(() => {
+    if (!projectId) return;
+    projectsApi
+      .get(projectId)
+      .then(setProject)
+      .catch(() => undefined);
+  }, [projectId]);
 
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -620,22 +648,50 @@ export default function Render() {
     };
 
     mediaRecorder.onstop = () => {
-      // Clean up audio context
       if (audioContextRef.current) {
         audioContextRef.current.close().catch(console.warn);
         audioContextRef.current = null;
       }
       audioSourcesRef.current.clear();
-      
+
       const blob = new Blob(chunksRef.current, { type: mimeType });
       const url = URL.createObjectURL(blob);
       setDownloadUrl(url);
       setRendering(false);
       setProgress(100);
+
       toast({
-        title: "Rendering Complete",
-        description: `Your ${exportFormat.toUpperCase()} video is ready to download. Note: Audio segments are played during preview but need to be mixed with video in post-processing for final export.`,
+        title: "Rendering complete",
+        description: projectId
+          ? "Uploading to your project…"
+          : `Your ${exportFormat.toUpperCase()} video is ready to download.`,
       });
+
+      if (projectId) {
+        const duration = video.duration || 0;
+        const ext =
+          exportFormat === "mp4" ? "mp4" : exportFormat === "gif" ? "gif" : "webm";
+        void projectsApi
+          .uploadVideo(projectId, blob, {
+            kind: "render",
+            duration,
+            filename: `export.${ext}`,
+          })
+          .then(() => {
+            toast({
+              title: "Saved to project",
+              description: "Your demo is ready to share from the dashboard or share dialog.",
+            });
+          })
+          .catch((err) => {
+            console.warn("[Render] Upload failed:", err);
+            toast({
+              title: "Export saved locally",
+              description: "Download below — cloud upload failed.",
+              variant: "destructive",
+            });
+          });
+      }
     };
 
     // Setup audio context and load audio segments if available
@@ -1176,146 +1232,207 @@ export default function Render() {
 
   return (
     <div className="min-h-screen bg-background">
-      <Header isAuthenticated user={{ name: "User", email: "user@example.com" }} />
-      <main className="container py-12 flex flex-col items-center">
-        <Button variant="ghost" asChild className="mb-8 self-start">
-          <Link to="/dashboard">
-            <ArrowLeft className="mr-2 h-4 w-4" />
-            Back to Dashboard
-          </Link>
-        </Button>
-
-        <div className="w-full max-w-3xl rounded-xl border border-border bg-card p-8 text-center">
-          {!videoUrl ? (
-            <div className="text-muted-foreground">No video received. Please record one first.</div>
-          ) : (
+      <Header />
+      <main className="container space-y-8 py-10">
+        <StudioProjectBar
+          title={project?.title ?? "Export demo"}
+          projectId={projectId}
+          actions={
             <>
-              <h1 className="text-2xl font-bold mb-4">Export Video</h1>
-              <p className="text-muted-foreground mb-8">
-                {rendering
-                  ? "Rendering in progress... Please wait."
-                  : "Ready to render your cinematic demo."}
-              </p>
-
-              <video
-                ref={videoRef}
-                src={videoUrl}
-                crossOrigin="anonymous"
-                muted
-                className="hidden"
-                playsInline
-              />
-
-              <div className="relative mx-auto mb-8 aspect-video w-full max-w-md overflow-hidden rounded-xl border border-border bg-gradient-subtle shadow-xl p-4">
-                <div className="relative w-full h-full flex items-center justify-center">
-                  <div className="absolute inset-4 rounded-lg shadow-2xl border border-border/50 overflow-hidden bg-black">
-                    <canvas
-                      ref={canvasRef}
-                      className="w-full h-full object-contain"
-                    />
-                  </div>
-                  {rendering && (
-                    <div className="absolute inset-4 flex items-center justify-center bg-background/60 backdrop-blur-sm rounded-lg">
-                      <div className="text-center">
-                        <Loader2 className="h-10 w-10 animate-spin text-primary mx-auto mb-2" />
-                        <div className="font-mono text-foreground">{Math.round(progress)}%</div>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-
-              {!rendering && !downloadUrl && (
-                <div className="space-y-4 mb-6">
-                  <div className="space-y-2">
-                    <Label>Export Format</Label>
-                    <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as any)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="webm">
-                          <div className="flex items-center gap-2">
-                            <Video className="h-4 w-4" />
-                            <span>WebM (VP9)</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="mp4">
-                          <div className="flex items-center gap-2">
-                            <FileVideo className="h-4 w-4" />
-                            <span>MP4 (H.264)</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="gif">
-                          <div className="flex items-center gap-2">
-                            <ImageIcon className="h-4 w-4" />
-                            <span>GIF (Animated)</span>
-                          </div>
-                        </SelectItem>
-                        <SelectItem value="apng">
-                          <div className="flex items-center gap-2">
-                            <ImageIcon className="h-4 w-4" />
-                            <span>APNG (Animated)</span>
-                          </div>
-                        </SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label>Quality</Label>
-                    <Select value={exportQuality} onValueChange={(v) => setExportQuality(v as any)}>
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="high">High (60fps, 8Mbps)</SelectItem>
-                        <SelectItem value="medium">Medium (30fps, 4Mbps)</SelectItem>
-                        <SelectItem value="low">Low (24fps, 2Mbps)</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setShowSettings(!showSettings)}
-                    className="w-full"
-                  >
-                    <Settings className="mr-2 h-4 w-4" />
-                    {showSettings ? "Hide" : "Show"} Advanced Settings
-                  </Button>
-                </div>
-              )}
-
-              {!rendering && !downloadUrl && (
-                <Button size="lg" onClick={startRendering} className="w-full max-w-sm">
-                  <Video className="mr-2 h-4 w-4" />
-                  Start Rendering
+              <Button variant="outline" size="sm" asChild>
+                <Link to={editorHref(projectId)}>
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back to editor
+                </Link>
+              </Button>
+              {project && (
+                <Button
+                  variant="hero"
+                  size="sm"
+                  onClick={() => setShareOpen(true)}
+                  disabled={!flowGates.canShare}
+                  title={!flowGates.canShare ? "Finish export before sharing" : undefined}
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  Share
                 </Button>
               )}
-
-              {downloadUrl && (
-                <div className="animate-in fade-in zoom-in space-y-4">
-                  <div className="flex items-center justify-center gap-2 text-green-500 mb-4">
-                    <Check className="h-6 w-6" />
-                    <span className="text-lg font-medium">Ready!</span>
-                  </div>
-                  <Button size="lg" asChild className="w-full max-w-sm">
-                    <a href={downloadUrl} download={`demo-recording.${exportFormat}`}>
-                      <Download className="mr-2 h-4 w-4" />
-                      Download {exportFormat.toUpperCase()}
-                    </a>
-                  </Button>
-                  <Button variant="outline" onClick={startRendering}>
-                    Render Again
-                  </Button>
-                </div>
-              )}
             </>
+          }
+        />
+
+        <StudioPipeline
+          currentStep="export"
+          projectId={projectId}
+          project={project}
+          includeExport
+          onShareClick={project && flowGates.canShare ? () => setShareOpen(true) : undefined}
+        />
+
+        <div className="mx-auto max-w-2xl">
+          {!videoUrl ? (
+            <div className="rounded-xl border border-dashed border-border bg-card p-12 text-center">
+              <p className="mb-6 text-muted-foreground">
+                No recording found. Start from the recorder or open a project in the editor.
+              </p>
+              <div className="flex flex-col justify-center gap-3 sm:flex-row">
+                <Button variant="hero" asChild>
+                  <Link to="/recorder">Record a demo</Link>
+                </Button>
+                <Button variant="outline" asChild>
+                  <Link to="/dashboard">View demos</Link>
+                </Button>
+              </div>
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
+              <div className="border-b border-border px-6 py-5">
+                <h2 className="font-display text-xl font-semibold">Export your demo</h2>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {rendering
+                    ? "Rendering in progress — this may take a minute."
+                    : downloadUrl
+                      ? "Your file is ready. Download it or share a hosted link."
+                      : "Choose a format and quality, then render the final video."}
+                </p>
+              </div>
+
+              <div className="p-6">
+                <video
+                  ref={videoRef}
+                  src={videoUrl}
+                  crossOrigin="anonymous"
+                  muted
+                  className="hidden"
+                  playsInline
+                />
+
+                <div className="relative mx-auto mb-6 aspect-video w-full overflow-hidden rounded-xl border border-border bg-secondary p-4">
+                  <div className="relative flex h-full w-full items-center justify-center">
+                    <div className="absolute inset-4 overflow-hidden rounded-lg border border-border bg-black shadow-md">
+                      <canvas ref={canvasRef} className="h-full w-full object-contain" />
+                    </div>
+                    {rendering && (
+                      <div className="absolute inset-4 flex items-center justify-center rounded-lg bg-background/80 backdrop-blur-sm">
+                        <div className="text-center">
+                          <Loader2 className="mx-auto mb-2 h-10 w-10 animate-spin text-primary" />
+                          <div className="font-mono text-sm font-medium">{Math.round(progress)}%</div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                {!rendering && !downloadUrl && (
+                  <div className="mb-6 space-y-4">
+                    <div className="space-y-2">
+                      <Label>Export format</Label>
+                      <Select value={exportFormat} onValueChange={(v) => setExportFormat(v as typeof exportFormat)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="webm">
+                            <div className="flex items-center gap-2">
+                              <Video className="h-4 w-4" />
+                              <span>WebM (VP9)</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="mp4">
+                            <div className="flex items-center gap-2">
+                              <FileVideo className="h-4 w-4" />
+                              <span>MP4 (H.264)</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="gif">
+                            <div className="flex items-center gap-2">
+                              <ImageIcon className="h-4 w-4" />
+                              <span>GIF (Animated)</span>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="apng">
+                            <div className="flex items-center gap-2">
+                              <ImageIcon className="h-4 w-4" />
+                              <span>APNG (Animated)</span>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label>Quality</Label>
+                      <Select value={exportQuality} onValueChange={(v) => setExportQuality(v as typeof exportQuality)}>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="high">High (60fps, 8Mbps)</SelectItem>
+                          <SelectItem value="medium">Medium (30fps, 4Mbps)</SelectItem>
+                          <SelectItem value="low">Low (24fps, 2Mbps)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setShowSettings(!showSettings)}
+                      className="w-full"
+                    >
+                      <Settings className="mr-2 h-4 w-4" />
+                      {showSettings ? "Hide" : "Show"} advanced settings
+                    </Button>
+                  </div>
+                )}
+
+                {!rendering && !downloadUrl && (
+                  <Button variant="hero" size="lg" onClick={startRendering} className="w-full">
+                    <Video className="mr-2 h-4 w-4" />
+                    Start rendering
+                  </Button>
+                )}
+
+                {downloadUrl && (
+                  <div className="space-y-3 animate-in fade-in zoom-in">
+                    <div className="mb-2 flex items-center justify-center gap-2 text-success">
+                      <Check className="h-5 w-5" />
+                      <span className="font-medium">Export complete</span>
+                    </div>
+                    <Button variant="hero" size="lg" asChild className="w-full">
+                      <a href={downloadUrl} download={`demo-recording.${exportFormat}`}>
+                        <Download className="mr-2 h-4 w-4" />
+                        Download {exportFormat.toUpperCase()}
+                      </a>
+                    </Button>
+                    {project && (
+                      <Button variant="outline" className="w-full" onClick={() => setShareOpen(true)}>
+                        <Share2 className="mr-2 h-4 w-4" />
+                        Share hosted link
+                      </Button>
+                    )}
+                    <Button variant="ghost" className="w-full" onClick={startRendering}>
+                      Render again
+                    </Button>
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
       </main>
+
+      {project && (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          projectId={project.id}
+          shareSlug={project.share_slug}
+          visibility={project.visibility}
+          viewCount={project.view_count}
+          onVisibilityChange={(v) => setProject((p) => (p ? { ...p, visibility: v } : p))}
+        />
+      )}
     </div>
   );
 }

@@ -1,11 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
+import { StudioPipeline } from "@/components/studio/StudioPipeline";
+import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
+import { buildRecordingPayload } from "@/lib/projectPersistence";
 import { Button } from "@/components/ui/button";
 import {
   Circle,
   Square,
   Monitor,
+  ListOrdered,
   Video,
   CheckCircle2,
   AlertCircle,
@@ -838,9 +842,18 @@ export default function Recorder() {
   const [recordingState, setRecordingState] = useState<RecordingState>("idle");
   const [timer, setTimer] = useState(0);
   const [countdown, setCountdown] = useState<number | null>(null);
-  const [user, setUser] = useState<{ name: string; email: string } | undefined>(undefined);
-  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const projectId = searchParams.get("project");
   const { toast } = useToast();
+  const [existingProject, setExistingProject] = useState<ProjectDetail | null>(null);
+
+  useEffect(() => {
+    if (!projectId) {
+      setExistingProject(null);
+      return;
+    }
+    projectsApi.get(projectId).then(setExistingProject).catch(() => setExistingProject(null));
+  }, [projectId]);
 
   // Recording settings
   const [countdownDuration, setCountdownDuration] = useState(5);
@@ -1238,26 +1251,6 @@ export default function Recorder() {
     return () => {
       extensionWS.disconnect();
     };
-  }, []);
-
-  useEffect(() => {
-    const fetchProfile = async () => {
-      try {
-        const token = localStorage.getItem("accessToken");
-        if (token) {
-          const response = await fetch("http://localhost:8000/api/auth/profile/", {
-            headers: { Authorization: `Bearer ${token}` },
-          });
-          if (response.ok) {
-            const data = await response.json();
-            setUser({ name: data.username, email: data.email });
-          }
-        }
-      } catch (error) {
-        console.error("Failed to fetch profile", error);
-      }
-    };
-    fetchProfile();
   }, []);
 
   useEffect(() => {
@@ -3329,60 +3322,83 @@ export default function Recorder() {
 
       setRecordingState("stopped");
       toast({
-        title: "Recording saved",
-        description: "Redirecting to editor...",
+        title: "Saving recording",
+        description: "Uploading video and events to your project…",
       });
 
-      // Download cursor data as JSON file
-      const cursorData = {
+      const recordingPayload = buildRecordingPayload({
         clicks: clicksRef.current,
         moves: movesRef.current,
-        markers: markers,
-        metadata: {
-          recordingStartTime: recordingStartTimeRef.current,
-          duration: timer,
-          viewport: {
-            width: window.innerWidth,
-            height: window.innerHeight
-          }
-        }
-      };
-
-      const dataStr = JSON.stringify(cursorData, null, 2);
-      const dataBlob = new Blob([dataStr], { type: 'application/json' });
-      const dataUrl = URL.createObjectURL(dataBlob);
-      const link = document.createElement('a');
-      link.href = dataUrl;
-      link.download = `cursor-data-${Date.now()}.json`;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
-      URL.revokeObjectURL(dataUrl);
-
-      console.log('[Frontend] Downloaded cursor data:', {
-        clicks: clicksRef.current.length,
-        moves: movesRef.current.length,
-        markers: markers.length
+        markers,
+        duration: timer,
+        rawRecording,
+        visualEffects: {
+          cursorEffects,
+          clickRipple,
+          cursorGlow,
+          cursorTrail,
+          showClickIndicator,
+        },
       });
 
-      setTimeout(() => {
-        navigate("/editor/new", {
-          state: {
-            videoUrl,
-            clickData: clicksRef.current,
-            moveData: movesRef.current,
-            markers: markers,
-            rawRecording, // Pass raw recording flag for layered rendering
-            visualEffects: {
-              cursorEffects,
-              clickRipple,
-              cursorGlow,
-              cursorTrail,
-              showClickIndicator,
-            },
+      void (async () => {
+        let targetProjectId = projectId ?? undefined;
+        const editorNavState = {
+          videoUrl,
+          clickData: clicksRef.current,
+          moveData: movesRef.current,
+          markers,
+          rawRecording,
+          visualEffects: {
+            cursorEffects,
+            clickRipple,
+            cursorGlow,
+            cursorTrail,
+            showClickIndicator,
+          },
+        };
+
+        try {
+          if (!targetProjectId) {
+            const created = await projectsApi.create({ title: "Untitled demo" });
+            targetProjectId = created.id;
           }
-        });
-      }, 1500);
+
+          await projectsApi.saveRecordingData(
+            targetProjectId,
+            recordingPayload as unknown as Record<string, unknown>,
+            { duration: timer }
+          );
+
+          const ext = selectedMimeType.includes("mp4") ? "mp4" : "webm";
+          await projectsApi.uploadVideo(targetProjectId, blob, {
+            kind: "source",
+            duration: timer,
+            filename: `recording.${ext}`,
+          });
+
+          toast({
+            title: "Recording saved",
+            description: "Opening the editor…",
+          });
+
+          navigate(`/editor/${targetProjectId}?tab=script`, {
+            replace: true,
+            state: editorNavState,
+          });
+        } catch (err) {
+          console.error("[Recorder] Failed to persist recording:", err);
+          toast({
+            title: "Couldn't save to cloud",
+            description: "Opening editor with a local copy — try exporting again later.",
+            variant: "destructive",
+          });
+          navigate(`/editor/${targetProjectId ?? "new"}?tab=script`, {
+            replace: true,
+            state: editorNavState,
+          });
+        }
+      })();
     };
 
     // Set recording state BEFORE starting MediaRecorder
@@ -3474,242 +3490,238 @@ export default function Recorder() {
     }
   };
 
+  const recordingSteps = [
+    {
+      key: "idle",
+      title: "Choose a source",
+      description: "Pick your screen, a window, or a browser tab to capture.",
+      active: recordingState === "idle",
+    },
+    {
+      key: "selecting",
+      title: "Hide the sharing bar",
+      description: 'Click "Hide" on the browser bar so it stays out of the recording.',
+      active: recordingState === "selecting",
+    },
+    {
+      key: "record",
+      title: "Record naturally",
+      description: "Walk through your product — we track clicks, zoom, and cursor for polish.",
+      active: ["ready", "countdown", "recording", "paused"].includes(recordingState),
+    },
+  ];
+
+  const capabilities = [
+    {
+      icon: Sparkles,
+      title: "Click effects",
+      description: "Ripples and indicators so viewers never lose the action.",
+    },
+    {
+      icon: ZoomIn,
+      title: "Smart zoom",
+      description: "Auto-focus on important areas while keeping context visible.",
+    },
+    {
+      icon: Move,
+      title: "Cursor follow",
+      description: "Smooth camera movement that tracks where you point.",
+    },
+    {
+      icon: Activity,
+      title: "Live quality score",
+      description: "Real-time tips while you record, before you edit.",
+    },
+  ];
+
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden selection:bg-primary/20">
-      {/* Background decorations */}
-      <div className="absolute top-0 left-0 w-full h-full overflow-hidden -z-10 pointer-events-none">
-        <div className="absolute top-[-10%] left-[-10%] w-[40%] h-[40%] rounded-full bg-primary/5 blur-3xl animate-float" style={{ animationDuration: '15s' }} />
-        <div className="absolute bottom-[-10%] right-[-10%] w-[40%] h-[40%] rounded-full bg-purple-500/5 blur-3xl animate-float" style={{ animationDuration: '20s', animationDelay: '2s' }} />
-      </div>
+    <div className="min-h-screen bg-background">
+      <Header />
 
-      <Header isAuthenticated user={user} />
-
-      <main className="container grid gap-12 py-16 px-6 lg:grid-cols-12 lg:gap-16 lg:items-start relative z-10">
-        {/* Left Column: Instructions & Tips */}
-        <div className="space-y-10 lg:col-span-6 self-start sticky top-24">
-          <div className="space-y-4">
-            <h1 className="text-4xl lg:text-5xl font-extrabold tracking-tight pb-1">
-              Record Your <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-purple-600">Flow</span>
-            </h1>
-            <p className="text-lg text-muted-foreground leading-relaxed">
-              Create engaging, professional demos with automatic zoom, smooth cursor tracking, and beautiful click effects.
-            </p>
+      <main className="container py-10 lg:py-14">
+        {/* Page header */}
+        <div className="mx-auto mb-10 max-w-3xl text-center lg:mb-14">
+          <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-border bg-card px-4 py-1.5 text-sm shadow-sm">
+            <Circle className="h-3 w-3 fill-primary text-primary" />
+            <span className="text-muted-foreground">Step 1 · Record once</span>
           </div>
-
-          {/* Steps Timeline */}
-          <div className="relative space-y-6 before:absolute before:top-4 before:h-full before:w-px before:bg-gradient-to-b before:from-border before:via-border/50 before:to-transparent before:-z-10 bg-background/50 backdrop-blur-sm rounded-3xl">
-            <div className={`group relative flex gap-5 rounded-2xl border p-4 transition-all duration-300 ${recordingState === 'idle' ? 'bg-primary/5 border-primary/50 shadow-glow' : 'bg-card/40 hover:bg-card border-border/50 hover:border-border'}`}>
-              <div className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold transition-all duration-300 ${recordingState === 'idle' ? 'bg-primary text-primary-foreground scale-110 shadow-lg shadow-primary/25' : 'bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary'}`}>
-                1
-              </div>
-              <div>
-                <h3 className={`font-semibold text-lg ${recordingState === 'idle' ? 'text-primary' : 'text-foreground'}`}>Choose source</h3>
-                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">Select your entire screen, a window, or a specific browser tab to share.</p>
-              </div>
-            </div>
-
-            <div className={`group relative flex gap-5 rounded-2xl border p-4 transition-all duration-300 ${recordingState === 'selecting' ? 'bg-primary/5 border-primary/50 shadow-glow' : 'bg-card/40 hover:bg-card border-border/50 hover:border-border'}`}>
-              <div className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold transition-all duration-300 ${recordingState === 'selecting' ? 'bg-primary text-primary-foreground scale-110 shadow-lg shadow-primary/25' : 'bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary'}`}>
-                2
-              </div>
-              <div>
-                <h3 className={`font-semibold text-lg ${recordingState === 'selecting' ? 'text-primary' : 'text-foreground'}`}>Hide Controls</h3>
-                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">Click "Hide" on the browser's screen sharing bar to keep your recording clean.</p>
-              </div>
-            </div>
-
-            <div className={`group relative flex gap-5 rounded-2xl border p-4 transition-all duration-300 ${['ready', 'countdown', 'recording'].includes(recordingState) ? 'bg-primary/5 border-primary/50 shadow-glow' : 'bg-card/40 hover:bg-card border-border/50 hover:border-border'}`}>
-              <div className={`relative flex h-10 w-10 shrink-0 items-center justify-center rounded-xl font-bold transition-all duration-300 ${['ready', 'countdown', 'recording'].includes(recordingState) ? 'bg-primary text-primary-foreground scale-110 shadow-lg shadow-primary/25' : 'bg-muted text-muted-foreground group-hover:bg-primary/10 group-hover:text-primary'}`}>
-                3
-              </div>
-              <div>
-                <h3 className={`font-semibold text-lg ${['ready', 'countdown', 'recording'].includes(recordingState) ? 'text-primary' : 'text-foreground'}`}>Record & Polish</h3>
-                <p className="text-sm text-muted-foreground mt-1 leading-relaxed">Navigate naturally. We'll handle the zooms, clicks, and polish automatically.</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Tips Panel */}
-
-          {/* Tips Panel */}
-          <Collapsible>
-            <CollapsibleTrigger className="w-full rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 text-sm text-blue-600 dark:text-blue-400 hover:bg-blue-500/10 transition-colors">
-              <div className="flex items-center justify-between w-full">
-                <div className="flex items-center gap-3 font-semibold text-base">
-                  <div className="p-1.5 rounded-lg bg-blue-500/10 text-blue-500">
-                    <AlertCircle className="h-5 w-5" />
-                  </div>
-                  Demo Creator Checklist
-                </div>
-                <ChevronDown className="h-4 w-4" />
-              </div>
-            </CollapsibleTrigger>
-            <CollapsibleContent className="mt-3 rounded-2xl border border-blue-500/20 bg-blue-500/5 p-5 text-sm">
-              <div className="space-y-4">
-                <div>
-                  <h4 className="font-semibold mb-2 text-blue-700 dark:text-blue-300">Before Recording:</h4>
-                  <ul className="list-none space-y-2 ml-1">
-                    {['Clean up your desktop', 'Turn off notifications', 'Close extra tabs', 'Check mic levels'].map((item, i) => (
-                      <li key={i} className="flex items-start gap-2 text-muted-foreground">
-                        <div className="h-1.5 w-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                        {item}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-                <div className="pt-2 border-t border-blue-500/10">
-                  <h4 className="font-semibold mb-2 text-blue-700 dark:text-blue-300 mt-2">Pro Tips:</h4>
-                  <ul className="list-none space-y-2 ml-1">
-                    <li className="flex items-start gap-2 text-muted-foreground">
-                      <div className="h-1.5 w-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                      Move mouse smoothly - viewers follow your cursor
-                    </li>
-                    <li className="flex items-start gap-2 text-muted-foreground">
-                      <div className="h-1.5 w-1.5 rounded-full bg-blue-400 mt-1.5 shrink-0" />
-                      Press <kbd className="px-1.5 py-0.5 bg-background/50 rounded text-xs font-mono mx-1">M</kbd> to add markers
-                    </li>
-                  </ul>
-                </div>
-              </div>
-            </CollapsibleContent>
-          </Collapsible>
-
-          {/* Smart Tips Panel */}
-          {showSmartTips && recordingState === "recording" && (
-            <Collapsible defaultOpen>
-              <CollapsibleTrigger className="w-full rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-4 text-sm text-amber-600 dark:text-amber-400 hover:bg-amber-500/10 transition-colors my-4">
-                <div className="flex items-center justify-between w-full">
-                  <div className="flex items-center gap-3 font-semibold text-base">
-                    <div className="p-1.5 rounded-lg bg-amber-500/10 text-amber-500">
-                      <Zap className="h-5 w-5" />
-                    </div>
-                    Smart Insights
-                  </div>
-                  <ChevronDown className="h-4 w-4" />
-                </div>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-2 rounded-2xl border border-amber-500/20 bg-gradient-to-br from-amber-500/10 to-amber-500/5 p-4 text-sm">
-                <div className="space-y-3">
-                  {recordingQualityScore < 80 && timer > 10 && (
-                    <div className="flex items-start gap-3 p-3 rounded-xl bg-background/60 border border-amber-500/10">
-                      <Lightbulb className="h-5 w-5 text-amber-500 mt-0.5 shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-xs font-medium text-foreground">Tip: {recordingQualityScore < 60 ? 'Consider adding more markers (M key) to highlight important moments' : 'Try varying your click pace for better engagement'}</p>
-                      </div>
-                    </div>
-                  )}
-                  {/* ... specific conditional tips ... */}
-                  {avgClickInterval && avgClickInterval < 500 && (
-                    <div className="flex items-start gap-3 p-3 rounded-xl bg-background/60 border border-blue-500/10">
-                      <Info className="h-5 w-5 text-blue-500 mt-0.5 shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-xs font-medium text-foreground">You're clicking rapidly. Slow down for clarity.</p>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-          )}
-
-          {/* Feature Highlights - Grid Layout */}
-          <div className="grid gap-4 sm:grid-cols-2">
-            <div className="rounded-2xl border border-primary/20 bg-gradient-to-br from-primary/10 to-primary/5 p-4 hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
-              <div className="flex flex-col gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/20 group-hover:bg-primary/30 transition-colors shadow-sm">
-                  <Sparkles className="h-5 w-5 text-primary" />
-                </div>
-                <div>
-                  <h3 className="mb-1 font-semibold text-foreground">Visual Effects</h3>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Beautiful ripple animations and clear click indicators.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-purple-500/20 bg-purple-500/5 p-4 hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
-              <div className="flex flex-col gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-purple-500/20 group-hover:bg-purple-500/30 transition-colors shadow-sm">
-                  <Video className="h-5 w-5 text-purple-600 dark:text-purple-400" />
-                </div>
-                <div>
-                  <h3 className="mb-1 font-semibold text-foreground">Smart Zoom</h3>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Auto-zoom on important areas while keeping context.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-green-500/20 bg-green-500/5 p-4 hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
-              <div className="flex flex-col gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-green-500/20 group-hover:bg-green-500/30 transition-colors shadow-sm">
-                  <Move className="h-5 w-5 text-green-600 dark:text-green-400" />
-                </div>
-                <div>
-                  <h3 className="mb-1 font-semibold text-foreground">Cursor Follow</h3>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Smooth camera movement tracking your mouse.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <div className="rounded-2xl border border-blue-500/20 bg-blue-500/5 p-4 hover:shadow-lg transition-all cursor-pointer group hover:-translate-y-1">
-              <div className="flex flex-col gap-3">
-                <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-blue-500/20 group-hover:bg-blue-500/30 transition-colors shadow-sm">
-                  <Zap className="h-5 w-5 text-blue-600 dark:text-blue-400" />
-                </div>
-                <div>
-                  <h3 className="mb-1 font-semibold text-foreground">AI Insights</h3>
-                  <p className="text-xs text-muted-foreground leading-relaxed">
-                    Real-time quality scoring and suggestions.
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
+          <h1 className="font-display text-4xl font-semibold tracking-tight sm:text-5xl">
+            Capture your screen.{" "}
+            <span className="text-primary">DemoForge handles the rest.</span>
+          </h1>
+          <p className="mx-auto mt-4 max-w-2xl text-lg leading-relaxed text-muted-foreground">
+            Record a walkthrough of your product. We&apos;ll turn it into a polished demo
+            with script, voiceover, framing, and a shareable link — no editing required.
+          </p>
         </div>
 
+        {/* Pipeline */}
+        <div className="mx-auto mb-12 max-w-4xl">
+          <StudioPipeline currentStep="record" projectId={projectId} project={existingProject} />
+        </div>
 
-        {/* Right Column: Recorder Interface */}
-        <div className="lg:col-span-6 lg:sticky lg:top-24">
-          <div className="overflow-hidden rounded-2xl border border-border/50 bg-card ring-1 ring-border/50">
-            {/* Browser Chrome visual - Enhanced */}
-            <div className="flex items-center gap-4 border-b border-border/50 bg-muted/30 px-4 py-3 backdrop-blur-sm">
-              <div className="flex gap-2">
-                <div className="h-3 w-3 rounded-full bg-red-400/90 shadow-sm" />
-                <div className="h-3 w-3 rounded-full bg-yellow-400/90 shadow-sm" />
-                <div className="h-3 w-3 rounded-full bg-green-400/90 shadow-sm" />
-              </div>
+        <div className="grid gap-10 lg:grid-cols-12 lg:gap-12 lg:items-start">
+          {/* Left: guidance */}
+          <div className="space-y-8 lg:col-span-5 lg:sticky lg:top-24">
+            <div>
+              <h2 className="font-display text-xl font-semibold">How recording works</h2>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Three quick steps, then you&apos;re on to script and voice in the editor.
+              </p>
+            </div>
 
-              {/* Fake URL Bar */}
-              <div className="flex-1 flex items-center justify-center">
-                <div className="flex w-full max-w-md items-center gap-2 rounded-lg bg-background/50 border border-border/50 px-3 py-1.5 shadow-inner text-xs text-muted-foreground">
-                  <div className="flex gap-2 items-center">
-                    <span className="text-muted-foreground/50">https://</span>
-                    <span className="text-foreground font-medium">recording.new</span>
+            <div className="space-y-3">
+              {recordingSteps.map((step, i) => (
+                <div
+                  key={step.key}
+                  className={`flex gap-4 rounded-xl border p-4 transition-colors ${
+                    step.active
+                      ? "border-primary/40 bg-primary/5"
+                      : "border-border bg-card"
+                  }`}
+                >
+                  <div
+                    className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-sm font-semibold ${
+                      step.active
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-secondary text-muted-foreground"
+                    }`}
+                  >
+                    {i + 1}
+                  </div>
+                  <div className="min-w-0">
+                    <h3 className={`font-medium ${step.active ? "text-primary" : "text-foreground"}`}>
+                      {step.title}
+                    </h3>
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                      {step.description}
+                    </p>
                   </div>
                 </div>
+              ))}
+            </div>
+
+            <Collapsible>
+              <CollapsibleTrigger className="flex w-full items-center justify-between rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-secondary/60">
+                <div className="flex items-center gap-3">
+                  <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-secondary">
+                    <ListOrdered className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                  <div>
+                    <div className="text-sm font-medium">Before you hit record</div>
+                    <div className="text-xs text-muted-foreground">Quick checklist</div>
+                  </div>
+                </div>
+                <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+              </CollapsibleTrigger>
+              <CollapsibleContent className="mt-2 rounded-xl border border-border bg-card p-4">
+                <ul className="space-y-2 text-sm text-muted-foreground">
+                  {[
+                    "Close extra tabs and turn off notifications",
+                    "Clean up your desktop if sharing full screen",
+                    "Check mic levels in Recording Preferences",
+                    "Move the mouse smoothly — viewers follow your cursor",
+                  ].map((tip) => (
+                    <li key={tip} className="flex items-start gap-2">
+                      <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" />
+                      {tip}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-3 border-t border-border pt-3 text-xs text-muted-foreground">
+                  Press{" "}
+                  <kbd className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono text-[10px]">
+                    M
+                  </kbd>{" "}
+                  during recording to mark important moments.
+                </p>
+              </CollapsibleContent>
+            </Collapsible>
+
+            {showSmartTips && recordingState === "recording" && (
+              <Collapsible defaultOpen>
+                <CollapsibleTrigger className="flex w-full items-center justify-between rounded-xl border border-border bg-card p-4 text-left transition-colors hover:bg-secondary/60">
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-warning/10">
+                      <Zap className="h-4 w-4 text-warning" />
+                    </div>
+                    <div className="text-sm font-medium">Recording tips</div>
+                  </div>
+                  <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+                </CollapsibleTrigger>
+                <CollapsibleContent className="mt-2 space-y-2 rounded-xl border border-border bg-card p-4">
+                  {recordingQualityScore < 80 && timer > 10 && (
+                    <div className="flex items-start gap-3 rounded-lg bg-secondary/60 p-3">
+                      <Lightbulb className="mt-0.5 h-4 w-4 shrink-0 text-warning" />
+                      <p className="text-xs text-foreground">
+                        {recordingQualityScore < 60
+                          ? "Add markers with M to highlight key moments."
+                          : "Try varying your click pace for better engagement."}
+                      </p>
+                    </div>
+                  )}
+                  {avgClickInterval && avgClickInterval < 500 && (
+                    <div className="flex items-start gap-3 rounded-lg bg-secondary/60 p-3">
+                      <Info className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <p className="text-xs text-foreground">
+                        You&apos;re clicking rapidly — slow down so viewers can follow.
+                      </p>
+                    </div>
+                  )}
+                </CollapsibleContent>
+              </Collapsible>
+            )}
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              {capabilities.map(({ icon: Icon, title, description }) => (
+                <div
+                  key={title}
+                  className="rounded-xl border border-border bg-card p-4"
+                >
+                  <div className="mb-3 flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10">
+                    <Icon className="h-4 w-4 text-primary" />
+                  </div>
+                  <h3 className="text-sm font-medium">{title}</h3>
+                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                    {description}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+          {/* Right: recorder */}
+          <div className="lg:col-span-7 lg:sticky lg:top-24">
+            <div className="overflow-hidden rounded-xl border border-border bg-card shadow-md">
+            {/* Window chrome */}
+            <div className="flex items-center gap-3 border-b border-border bg-secondary/60 px-4 py-3">
+              <div className="flex gap-1.5">
+                <div className="h-3 w-3 rounded-full bg-destructive/50" />
+                <div className="h-3 w-3 rounded-full bg-warning/60" />
+                <div className="h-3 w-3 rounded-full bg-success/60" />
               </div>
 
-              <div className="flex items-center gap-2">
-                <div className="inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider text-primary">
-                  <Monitor className="h-3 w-3" />
-                  REC
+              <div className="flex-1 flex items-center justify-center">
+                <div className="flex w-full max-w-sm items-center gap-2 rounded-md border border-border bg-background px-3 py-1 text-xs text-muted-foreground">
+                  <span className="text-muted-foreground/60">https://</span>
+                  <span className="font-medium text-foreground">recording.new</span>
                 </div>
+              </div>
+
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                <Monitor className="h-3 w-3" />
+                Rec
               </div>
             </div>
 
-            {/* Preview Area - Redesigned with proper zoom layers */}
+            {/* Preview */}
             <div
-              className={`relative aspect-video bg-gradient-subtle transition-all duration-300 overflow-hidden ${recordingState === "recording"
-                ? "ring-2 ring-primary/20 shadow-[0_0_50px_-12px_rgba(var(--primary),0.3)]"
-                : recordingState === "paused"
-                  ? "ring-2 ring-warning/20 shadow-lg"
-                  : ""
-                }`}
+              className={`relative aspect-video bg-secondary transition-colors overflow-hidden ${
+                recordingState === "recording"
+                  ? "ring-2 ring-inset ring-primary/30"
+                  : recordingState === "paused"
+                    ? "ring-2 ring-inset ring-warning/30"
+                    : ""
+              }`}
             >
               {/* Viewport Container - This handles the zoom and pan */}
               <div
@@ -3758,105 +3770,102 @@ export default function Recorder() {
                 )}
 
                 {/* Overlay content */}
-                <div className={`relative z-10 flex flex-col items-center justify-center p-8 ${showPreview && mediaStreamRef.current && recordingState !== "idle" ? 'bg-background/20 backdrop-blur-sm rounded-xl border border-white/10' : ''}`} style={{ minHeight: '300px' }}>
-                  {/* Idle State */}
+                <div className={`relative z-10 flex flex-col items-center justify-center p-8 ${showPreview && mediaStreamRef.current && recordingState !== "idle" ? "rounded-xl border border-border/60 bg-background/80 backdrop-blur-sm" : ""}`} style={{ minHeight: "300px" }}>
                   {recordingState === "idle" && (
                     <div className="text-center animate-scale-in">
-                      <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-3xl bg-gradient-to-br from-primary/20 to-primary/5 shadow-inner animate-float">
-                        <Video className="h-12 w-12 text-primary drop-shadow-md" />
+                      <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-2xl border border-border bg-card shadow-sm">
+                        <Video className="h-10 w-10 text-primary" />
                       </div>
-                      <h3 className="text-2xl font-bold tracking-tight mb-2">Ready to record?</h3>
-                      <p className="text-base text-muted-foreground max-w-[250px] mx-auto mb-6">
-                        Click the button below to start capturing.
+                      <h3 className="font-display text-2xl font-semibold tracking-tight mb-2">
+                        Ready to record?
+                      </h3>
+                      <p className="text-sm text-muted-foreground max-w-[260px] mx-auto mb-5 leading-relaxed">
+                        Select your screen below. DemoForge captures clicks, cursor, and zoom data for the editor.
                       </p>
-                      <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-xs font-medium text-primary">
-                        <Zap className="h-3 w-3" />
-                        <span>AI-Powered Mode Active</span>
+                      <div className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs font-medium text-muted-foreground">
+                        <Sparkles className="h-3 w-3 text-primary" />
+                        Smart framing enabled
                       </div>
                     </div>
                   )}
 
-                  {/* Selecting / Hide Prompt State */}
                   {recordingState === "selecting" && (
                     <div className="text-center animate-fade-in max-w-sm">
-                      <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full bg-primary/10 animate-pulse">
-                        <Monitor className="h-10 w-10 text-primary" />
+                      <div className="mx-auto mb-6 flex h-16 w-16 items-center justify-center rounded-full border border-primary/20 bg-primary/10">
+                        <Monitor className="h-8 w-8 text-primary" />
                       </div>
-                      <h3 className="text-xl font-bold mb-3">Screen Selected!</h3>
-                      <div className="rounded-xl border border-border bg-card/50 p-4 backdrop-blur-sm">
-                        <p className="text-sm text-muted-foreground">
-                          Please click <span className="font-bold text-foreground bg-secondary px-1 py-0.5 rounded">Hide</span> on the browser sharing bar at the bottom of your screen.
+                      <h3 className="font-display text-xl font-semibold mb-3">Source selected</h3>
+                      <div className="rounded-xl border border-border bg-card p-4">
+                        <p className="text-sm text-muted-foreground leading-relaxed">
+                          Click{" "}
+                          <span className="font-semibold text-foreground">Hide</span> on the
+                          browser sharing bar at the bottom of your screen.
                         </p>
                       </div>
                     </div>
                   )}
 
-                  {/* Ready State */}
                   {recordingState === "ready" && (
                     <div className="text-center animate-fade-in">
-                      <div className="mx-auto mb-6 flex h-24 w-24 items-center justify-center rounded-full bg-destructive/10 ring-4 ring-destructive/5">
-                        <div className="h-20 w-20 rounded-full bg-destructive shadow-lg shadow-destructive/30 flex items-center justify-center animate-pulse">
-                          <Circle className="h-10 w-10 fill-white text-white" />
+                      <div className="mx-auto mb-6 flex h-20 w-20 items-center justify-center rounded-full border-4 border-destructive/20 bg-destructive/10">
+                        <div className="flex h-14 w-14 items-center justify-center rounded-full bg-destructive shadow-md">
+                          <Circle className="h-7 w-7 fill-destructive-foreground text-destructive-foreground" />
                         </div>
                       </div>
-                      <h3 className="text-xl font-bold text-foreground">Ready to Capture</h3>
+                      <h3 className="font-display text-xl font-semibold">Ready to capture</h3>
                       <p className="text-sm text-muted-foreground mt-2">
-                        Press "Start Recording" or Spacebar
+                        Press Start Recording or hit Spacebar
                       </p>
                     </div>
                   )}
 
-                  {/* Countdown State */}
                   {recordingState === "countdown" && (
-                    <div className="text-center animate-scale-in flex flex-col items-center justify-center absolute inset-0 bg-background/90 backdrop-blur-md z-50">
-                      <div className="relative">
-                        <div className="absolute inset-0 rounded-full bg-primary/20 animate-ping" />
-                        <div className="text-9xl font-black text-primary animate-pulse tabular-nums relative z-10 drop-shadow-2xl">
-                          {countdown}
-                        </div>
+                    <div className="text-center animate-scale-in flex flex-col items-center justify-center absolute inset-0 bg-background/95 backdrop-blur-sm z-50">
+                      <div className="font-display text-8xl font-semibold text-primary tabular-nums">
+                        {countdown}
                       </div>
-                      <p className="mt-8 text-2xl font-medium text-muted-foreground tracking-widest uppercase">Get ready</p>
+                      <p className="mt-6 text-sm font-medium uppercase tracking-widest text-muted-foreground">
+                        Get ready
+                      </p>
                     </div>
                   )}
 
-                  {/* Recording / Paused State */}
                   {(recordingState === "recording" || recordingState === "paused") && (
                     <div className="text-center animate-fade-in relative z-20 w-full max-w-lg">
-                      {/* HUD Stats Bar */}
-                      <div className="flex items-center justify-center gap-6 mb-8">
-                        <div className="text-center">
-                          <div className={`text-5xl font-mono font-bold tracking-tight tabular-nums drop-shadow-lg ${recordingState === 'recording' ? 'text-white' : 'text-yellow-400'}`}>
-                            {formatTime(timer)}
-                          </div>
-                          <div className={`mt-2 inline-flex items-center gap-1.5 rounded-full px-3 py-0.5 text-[10px] font-bold uppercase tracking-widest ${recordingState === "recording" ? "bg-red-500/20 text-red-100 border border-red-500/30" : "bg-yellow-500/20 text-yellow-100 border border-yellow-500/30"
-                            }`}>
-                            <div className={`h-1.5 w-1.5 rounded-full ${recordingState === "recording" ? "bg-red-500 animate-pulse" : "bg-yellow-500"}`} />
-                            {recordingState === "recording" ? "ON AIR" : "PAUSED"}
-                          </div>
+                      <div className="mb-6">
+                        <div className={`font-mono text-5xl font-semibold tabular-nums ${recordingState === "recording" ? "text-foreground" : "text-warning"}`}>
+                          {formatTime(timer)}
+                        </div>
+                        <div className={`mt-2 inline-flex items-center gap-1.5 rounded-full border px-3 py-0.5 text-[10px] font-semibold uppercase tracking-widest ${
+                          recordingState === "recording"
+                            ? "border-destructive/30 bg-destructive/10 text-destructive"
+                            : "border-warning/30 bg-warning/10 text-warning"
+                        }`}>
+                          <div className={`h-1.5 w-1.5 rounded-full ${recordingState === "recording" ? "bg-destructive animate-pulse" : "bg-warning"}`} />
+                          {recordingState === "recording" ? "Recording" : "Paused"}
                         </div>
                       </div>
 
-                      {/* Zoom and Follow Controls */}
                       {recordingState === "recording" && (
                         <div className="flex items-center justify-center gap-3">
-                          <div className="flex items-center gap-1 rounded-full bg-black/60 backdrop-blur-md border border-white/10 px-3 py-1.5 shadow-xl">
+                          <div className="flex items-center gap-1 rounded-full border border-border bg-card/90 px-3 py-1.5 shadow-sm">
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-8 w-8 p-0 hover:bg-white/20 text-white rounded-full"
+                              className="h-8 w-8 p-0 rounded-full"
                               onClick={handleZoomOut}
                               disabled={viewportZoom <= CAMERA_CONFIG.ZOOM_MIN}
                               title="Zoom Out (-)"
                             >
                               <ZoomOut className="h-4 w-4" />
                             </Button>
-                            <span className="text-xs font-mono px-2 min-w-[3.5rem] text-center font-bold text-white">
+                            <span className="min-w-[3.5rem] px-2 text-center font-mono text-xs font-semibold">
                               {Math.round(viewportZoom * 100)}%
                             </span>
                             <Button
                               variant="ghost"
                               size="sm"
-                              className="h-8 w-8 p-0 hover:bg-white/20 text-white rounded-full"
+                              className="h-8 w-8 p-0 rounded-full"
                               onClick={handleZoomIn}
                               disabled={viewportZoom >= CAMERA_CONFIG.ZOOM_MAX}
                               title="Zoom In (+)"
@@ -3868,49 +3877,49 @@ export default function Recorder() {
                           <Button
                             variant={followCursor ? "default" : "secondary"}
                             size="sm"
-                            className={`h-11 px-4 gap-2 transition-all rounded-full border border-white/10 shadow-xl ${followCursor
-                              ? "bg-primary hover:bg-primary/90 text-white"
-                              : "bg-black/60 hover:bg-black/70 text-white backdrop-blur-md"
-                              }`}
+                            className="h-10 gap-2 rounded-full px-4"
                             onClick={() => setFollowCursor(!followCursor)}
                             title="Toggle Cursor Following (F)"
                           >
                             <Move className="h-4 w-4" />
-                            <span className="text-xs font-bold uppercase tracking-wide">Follow</span>
-                            {followCursor && (
-                              <div className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-                            )}
+                            <span className="text-xs font-semibold uppercase tracking-wide">Follow</span>
                           </Button>
                         </div>
                       )}
 
-
-                      {/* Stats Grid */}
-                      <div className="mt-8 grid grid-cols-3 gap-2">
-                        <div className="flex flex-col items-center p-2 rounded-xl bg-black/40 backdrop-blur-sm border border-white/5">
-                          <div className="text-xs text-white/60 mb-1">Interactions</div>
-                          <div className="text-lg font-bold text-white">{interactionCount}</div>
+                      <div className="mt-6 grid grid-cols-3 gap-2">
+                        <div className="rounded-lg border border-border bg-card/90 p-2">
+                          <div className="text-[10px] text-muted-foreground">Interactions</div>
+                          <div className="text-lg font-semibold">{interactionCount}</div>
                         </div>
-                        <div className="flex flex-col items-center p-2 rounded-xl bg-black/40 backdrop-blur-sm border border-white/5">
-                          <div className="text-xs text-white/60 mb-1">Speed</div>
-                          <div className="text-lg font-bold text-white">{avgClickInterval ? Math.round(1000 / avgClickInterval * 10) / 10 : 0} <span className="text-[10px] opacity-50">cps</span></div>
+                        <div className="rounded-lg border border-border bg-card/90 p-2">
+                          <div className="text-[10px] text-muted-foreground">Speed</div>
+                          <div className="text-lg font-semibold">
+                            {avgClickInterval ? Math.round((1000 / avgClickInterval) * 10) / 10 : 0}{" "}
+                            <span className="text-[10px] font-normal text-muted-foreground">cps</span>
+                          </div>
                         </div>
-                        <div className="flex flex-col items-center p-2 rounded-xl bg-black/40 backdrop-blur-sm border border-white/5">
-                          <div className="text-xs text-white/60 mb-1">Quality</div>
-                          <div className={`text-lg font-bold ${recordingQualityScore >= 80 ? 'text-green-400' : recordingQualityScore >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>
+                        <div className="rounded-lg border border-border bg-card/90 p-2">
+                          <div className="text-[10px] text-muted-foreground">Quality</div>
+                          <div className={`text-lg font-semibold ${
+                            recordingQualityScore >= 80
+                              ? "text-success"
+                              : recordingQualityScore >= 60
+                                ? "text-warning"
+                                : "text-destructive"
+                          }`}>
                             {Math.round(recordingQualityScore)}%
                           </div>
                         </div>
                       </div>
 
-                      {/* Microphone Level Indicator */}
                       {(audioSource === "microphone" || audioSource === "both") && recordingState === "recording" && (
-                        <div className="mt-6 w-full max-w-xs mx-auto">
+                        <div className="mt-5 w-full max-w-xs mx-auto">
                           <div className="flex items-center gap-3">
-                            <Mic className="h-3 w-3 text-white/60" />
-                            <div className="flex-1 h-1.5 bg-white/20 rounded-full overflow-hidden">
+                            <Mic className="h-3.5 w-3.5 text-muted-foreground" />
+                            <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-secondary">
                               <div
-                                className="h-full bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)] transition-all duration-75"
+                                className="h-full bg-success transition-all duration-75"
                                 style={{ width: `${micLevel}%` }}
                               />
                             </div>
@@ -3935,24 +3944,26 @@ export default function Recorder() {
               </div>
 
             </div>
-            {/* Divider */}
-            <div className="h-px w-full bg-border/50" />
+            <div className="h-px bg-border" />
 
-            {/* Settings Panel */}
             <Collapsible open={showSettings} onOpenChange={setShowSettings}>
-              <CollapsibleTrigger className="w-full px-6 py-4 bg-muted/20 hover:bg-muted/40 transition-colors flex items-center justify-between group">
+              <CollapsibleTrigger className="flex w-full items-center justify-between px-5 py-4 transition-colors hover:bg-secondary/40">
                 <div className="flex items-center gap-3">
-                  <div className="p-1.5 rounded-lg bg-background border border-border/50 shadow-sm text-muted-foreground group-hover:text-primary transition-colors">
-                    <Settings className="h-4 w-4" />
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-background">
+                    <Settings className="h-4 w-4 text-muted-foreground" />
                   </div>
                   <div className="text-left">
-                    <span className="text-sm font-medium block">Recording Preferences</span>
-                    <span className="text-[10px] text-muted-foreground">Quality, Audio & Timers</span>
+                    <span className="text-sm font-medium block">Recording preferences</span>
+                    <span className="text-xs text-muted-foreground">Quality, audio & countdown</span>
                   </div>
                 </div>
-                {showSettings ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+                {showSettings ? (
+                  <ChevronUp className="h-4 w-4 text-muted-foreground" />
+                ) : (
+                  <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                )}
               </CollapsibleTrigger>
-              <CollapsibleContent className="p-6 space-y-6 bg-muted/20 border-t border-border/50 shadow-inner">
+              <CollapsibleContent className="space-y-6 border-t border-border bg-secondary/30 p-5">
                 <div className="grid gap-6">
                   <div className="space-y-3">
                     <div className="flex items-center justify-between">
@@ -3990,14 +4001,16 @@ export default function Recorder() {
                     </Select>
                   </div>
 
-                  <div className="flex items-center justify-between p-3 rounded-xl bg-background border border-border/50">
+                  <div className="flex items-center justify-between rounded-lg border border-border bg-background p-3">
                     <div className="space-y-0.5">
                       <Label htmlFor="rawrecording-mode" className="text-sm font-medium flex items-center gap-2">
-                        Raw Recording
-                        <span className="px-1.5 py-0.5 rounded bg-primary/10 text-[10px] font-bold text-primary uppercase">Pro</span>
+                        Raw recording
+                        <span className="rounded bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase text-primary">
+                          Pro
+                        </span>
                       </Label>
-                      <p className="text-[10px] text-muted-foreground max-w-[200px] leading-tight">
-                        Disable effects during recording for higher performance.
+                      <p className="max-w-[220px] text-xs leading-relaxed text-muted-foreground">
+                        Skip live effects for higher performance during capture.
                       </p>
                     </div>
                     <Switch
@@ -4014,23 +4027,23 @@ export default function Recorder() {
               </CollapsibleContent>
             </Collapsible>
 
-            {/* Controls Bar - Floating Action Bar style */}
-            <div className="p-6 bg-card/50 backdrop-blur-sm">
+            <div className="border-t border-border p-5">
               {recordingState === "idle" && (
                 <Button
+                  variant="hero"
                   size="lg"
-                  className="h-14 w-full text-lg font-bold shadow-xl shadow-primary/20 hover:shadow-primary/30 transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-r from-primary to-indigo-600 hover:from-primary/90 hover:to-indigo-600/90"
+                  className="h-12 w-full text-base font-semibold"
                   onClick={handleSelectScreen}
                 >
-                  <Monitor className="h-6 w-6 mr-2" />
-                  Select Screen to Record
+                  <Monitor className="mr-2 h-5 w-5" />
+                  Select screen to record
                 </Button>
               )}
 
               {recordingState === "selecting" && (
-                <Button size="lg" className="h-14 w-full text-lg gap-2 animate-pulse" onClick={handleConfirmHide}>
-                  <CheckCircle2 className="h-6 w-6" />
-                  I've Hidden the Sharing Bar
+                <Button size="lg" className="h-12 w-full" onClick={handleConfirmHide}>
+                  <CheckCircle2 className="mr-2 h-5 w-5" />
+                  I&apos;ve hidden the sharing bar
                 </Button>
               )}
 
@@ -4038,35 +4051,32 @@ export default function Recorder() {
                 <Button
                   variant="destructive"
                   size="lg"
-                  className="h-16 w-full text-xl font-bold gap-3 shadow-2xl shadow-red-500/30 hover:shadow-red-500/40 transition-all hover:scale-[1.02] active:scale-[0.98] bg-gradient-to-r from-red-500 to-pink-600 hover:from-red-600 hover:to-pink-700"
+                  className="h-14 w-full gap-2 text-base font-semibold"
                   onClick={handleStartCountdown}
                 >
-                  <div className="relative flex items-center justify-center">
-                    <div className="absolute inset-0 bg-white rounded-full animate-ping opacity-20" />
-                    <Circle className="h-6 w-6 fill-current" />
-                  </div>
-                  START RECORDING
+                  <Circle className="h-5 w-5 fill-current" />
+                  Start recording
                 </Button>
               )}
 
               {recordingState === "countdown" && (
-                <Button variant="outline" size="lg" disabled className="h-14 w-full text-base font-medium opacity-80 cursor-not-allowed">
-                  <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin mr-2" />
-                  Starting in {countdown}s...
+                <Button variant="outline" size="lg" disabled className="h-12 w-full">
+                  <div className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                  Starting in {countdown}s…
                 </Button>
               )}
 
               {(recordingState === "recording" || recordingState === "paused") && (
-                <div className="flex flex-col gap-4">
+                <div className="flex flex-col gap-3">
                   <div className="grid grid-cols-2 gap-3">
                     {recordingState === "recording" ? (
-                      <Button variant="secondary" size="lg" className="h-12 border border-border/50 hover:bg-secondary/80" onClick={handlePauseRecording}>
-                        <Pause className="h-5 w-5 mr-2" />
-                        Pause Can
+                      <Button variant="secondary" size="lg" className="h-11" onClick={handlePauseRecording}>
+                        <Pause className="mr-2 h-4 w-4" />
+                        Pause
                       </Button>
                     ) : (
-                      <Button variant="default" size="lg" className="h-12 bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg shadow-emerald-500/20" onClick={handleResumeRecording}>
-                        <Circle className="h-4 w-4 fill-current mr-2" />
+                      <Button variant="default" size="lg" className="h-11" onClick={handleResumeRecording}>
+                        <Circle className="mr-2 h-4 w-4 fill-current" />
                         Resume
                       </Button>
                     )}
@@ -4074,51 +4084,52 @@ export default function Recorder() {
                     <Button
                       variant="outline"
                       size="lg"
-                      className="h-12 border-dashed border-border hover:bg-accent hover:text-accent-foreground"
+                      className="h-11"
                       onClick={handleAddMarker}
                       disabled={recordingState === "paused"}
                       title="Add Marker (M)"
                     >
-                      <Bookmark className="h-4 w-4 mr-2" />
-                      Add Marker
+                      <Bookmark className="mr-2 h-4 w-4" />
+                      Add marker
                     </Button>
                   </div>
 
-                  <Button variant="destructive" size="lg" className="h-14 w-full gap-2 shadow-lg shadow-destructive/20 hover:shadow-destructive/30 hover:scale-[1.01] active:scale-[0.99] transition-all bg-gradient-to-r from-red-600 to-red-700" onClick={handleStopRecording}>
-                    <Square className="h-5 w-5 fill-current" />
-                    <span className="font-bold tracking-wide">STOP RECORDING & SAVE</span>
+                  <Button variant="destructive" size="lg" className="h-12 w-full gap-2 font-semibold" onClick={handleStopRecording}>
+                    <Square className="h-4 w-4 fill-current" />
+                    Stop & save
                   </Button>
 
-                  {/* Keyboard Shortcuts Hint */}
-                  <div className="grid grid-cols-2 gap-2 text-[10px] text-muted-foreground/60 mt-2 px-2">
-                    <div className="flex items-center gap-1.5 justify-center">
-                      <div className="px-1.5 py-0.5 rounded bg-muted/50 border border-border/50 font-mono">SPC</div>
-                      <span>Pause/Resume</span>
+                  <div className="grid grid-cols-2 gap-2 px-1 text-[10px] text-muted-foreground">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <kbd className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono">SPC</kbd>
+                      Pause / resume
                     </div>
-                    <div className="flex items-center gap-1.5 justify-center">
-                      <div className="px-1.5 py-0.5 rounded bg-muted/50 border border-border/50 font-mono">M</div>
-                      <span>Add Marker</span>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <kbd className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono">M</kbd>
+                      Add marker
                     </div>
-                    <div className="flex items-center gap-1.5 justify-center">
-                      <div className="px-1.5 py-0.5 rounded bg-muted/50 border border-border/50 font-mono">F</div>
-                      <span>Toggle Follow</span>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <kbd className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono">F</kbd>
+                      Toggle follow
                     </div>
-                    <div className="flex items-center gap-1.5 justify-center">
-                      <div className="px-1.5 py-0.5 rounded bg-muted/50 border border-border/50 font-mono">ESC</div>
-                      <span>Stop</span>
+                    <div className="flex items-center justify-center gap-1.5">
+                      <kbd className="rounded border border-border bg-secondary px-1.5 py-0.5 font-mono">ESC</kbd>
+                      Stop
                     </div>
                   </div>
 
-                  {/* Markers List */}
                   {markers.length > 0 && (
-                    <div className="bg-background/50 rounded-lg p-3 border border-border/50 text-center">
-                      <div className="text-xs font-medium text-muted-foreground mb-2 flex items-center justify-center gap-2">
+                    <div className="rounded-lg border border-border bg-secondary/40 p-3 text-center">
+                      <div className="mb-2 flex items-center justify-center gap-2 text-xs font-medium text-muted-foreground">
                         <Bookmark className="h-3 w-3" />
-                        Marked Moments
+                        Marked moments
                       </div>
-                      <div className="flex flex-wrap gap-1.5 justify-center">
+                      <div className="flex flex-wrap justify-center gap-1.5">
                         {markers.map((marker, idx) => (
-                          <span key={idx} className="inline-flex items-center px-1.5 py-0.5 rounded bg-primary/10 text-primary text-[10px] font-mono border border-primary/10">
+                          <span
+                            key={idx}
+                            className="inline-flex items-center rounded border border-primary/20 bg-primary/10 px-1.5 py-0.5 font-mono text-[10px] text-primary"
+                          >
                             {formatTime(marker.timestamp)}
                           </span>
                         ))}
@@ -4128,10 +4139,10 @@ export default function Recorder() {
                 </div>
               )}
             </div>
+            </div>
           </div>
-
         </div>
-      </main >
-    </div >
+      </main>
+    </div>
   );
 }

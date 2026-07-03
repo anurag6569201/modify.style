@@ -1,8 +1,10 @@
 import { useState, useEffect, useRef, type ReactNode } from "react";
-import { Link } from "react-router-dom";
+import { Link, Navigate } from "react-router-dom";
+import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
+import { useAuth } from "@/contexts/AuthContext";
 import {
   Accordion,
   AccordionContent,
@@ -569,6 +571,20 @@ const faqs = [
 const trustedBy = ["Northwind", "Acme Labs", "Loomly", "Basewell", "Quill", "Tandem", "Cadence", "Orbit"];
 
 export default function Landing() {
+  const { isAuthenticated, isLoading } = useAuth();
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
+
   return (
     <div className="flex min-h-screen flex-col bg-gradient-warm">
       <Header />

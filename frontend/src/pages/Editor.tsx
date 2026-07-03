@@ -1,6 +1,5 @@
 
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
-// import { VisualEffectsLayer } from "@/components/editor/VisualEffectsLayer"; // Deprecated
 // import { CanvasOverlay } from "@/components/editor/CanvasOverlay"; // Deprecated
 import { getInitialCameraState, updateCameraSystem } from "@/lib/composition/camera";
 import { ClickData, MoveData } from "@/pages/Recorder";
@@ -17,8 +16,11 @@ import { VideoControls } from "@/components/editor/VideoControls";
 
 
 
-import { useNavigate, useParams, useLocation } from "react-router-dom";
+import { useNavigate, useParams, useLocation, useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
+import { StudioPipeline } from "@/components/studio/StudioPipeline";
+import { StudioProjectBar } from "@/components/studio/StudioProjectBar";
+import type { PipelineStepId, EditorTabId } from "@/lib/studio/pipeline";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Switch } from "@/components/ui/switch";
@@ -77,10 +79,30 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { ShareDialog } from "@/components/ShareDialog";
 import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
+import { hydrateEditorFromProject, serializeEditorState, scriptSegmentsFromState } from "@/lib/projectPersistence";
+import { useDebouncedProjectSave } from "@/hooks/useDebouncedProjectSave";
+import { useEditorFlowGuard } from "@/hooks/useStudioFlowGuard";
+import { computePipelineGates, stepLockReason, isStepNavigable, firstUnlockedEditorTab } from "@/lib/studio/pipelineProgress";
 
-const mockUser = {
-  name: "Alex Johnson",
-  email: "alex@company.com",
+
+const VALID_EDITOR_TABS = new Set<EditorTabId>([
+  "script",
+  "voice",
+  "design",
+  "text",
+  "camera",
+  "effects",
+  "timeline",
+]);
+
+const TAB_PIPELINE_STEP: Record<EditorTabId, PipelineStepId> = {
+  script: "script",
+  voice: "voice",
+  design: "frame",
+  text: "frame",
+  camera: "frame",
+  effects: "frame",
+  timeline: "frame",
 };
 
 
@@ -94,15 +116,47 @@ export default function Editor() {
   const { id } = useParams();
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { toast } = useToast();
+
+  const tabParam = searchParams.get("tab");
+  const requestedTab =
+    tabParam && VALID_EDITOR_TABS.has(tabParam as EditorTabId)
+      ? (tabParam as EditorTabId)
+      : null;
+
+  const setEditorTab = useCallback(
+    (tab: EditorTabId) => {
+      setSearchParams({ tab }, { replace: true });
+    },
+    [setSearchParams]
+  );
 
   // --- Server-side project (persistence + sharing) ---
   const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [projectLoading, setProjectLoading] = useState(() => !!id && id !== "new");
   const [shareOpen, setShareOpen] = useState(false);
   const [titleDraft, setTitleDraft] = useState("");
+  const hydratedFromDbRef = useRef(false);
+  const [autoSaveReady, setAutoSaveReady] = useState(false);
+  const [frameVisited, setFrameVisited] = useState(false);
+
+  useDebouncedProjectSave(project?.id, autoSaveReady, frameVisited);
 
   useEffect(() => {
-    if (!id) return;
+    setAutoSaveReady(false);
+    if (!project?.id) return;
+    const t = setTimeout(() => setAutoSaveReady(true), 3000);
+    return () => clearTimeout(t);
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!id || id === "new") {
+      setProjectLoading(false);
+      return;
+    }
+    hydratedFromDbRef.current = false;
+    setProjectLoading(true);
     projectsApi
       .get(id)
       .then((p) => {
@@ -110,9 +164,22 @@ export default function Editor() {
         setTitleDraft(p.title);
       })
       .catch(() => {
-        // Local-only session (e.g. legacy route) — sharing disabled, editing still works.
-      });
+        // Local-only session — sharing disabled, editing still works from nav state.
+      })
+      .finally(() => setProjectLoading(false));
   }, [id]);
+
+  // Hydrate editor from DB when reopening a project (no fresh navigation state).
+  useEffect(() => {
+    if (!project || hydratedFromDbRef.current) return;
+    if (location.state?.videoUrl) {
+      hydratedFromDbRef.current = true;
+      return;
+    }
+    if (hydrateEditorFromProject(project)) {
+      hydratedFromDbRef.current = true;
+    }
+  }, [project, location.state?.videoUrl]);
 
   const saveTitle = async () => {
     if (!project || !titleDraft.trim() || titleDraft === project.title) return;
@@ -128,11 +195,102 @@ export default function Editor() {
   // Use new Store
   const editorState = useEditorState();
 
-  const videoUrl = location.state?.videoUrl;
+  const videoUrl =
+    location.state?.videoUrl ??
+    project?.video_url ??
+    editorState.video.url ??
+    null;
+
+  const livePipeline = useMemo(
+    () => ({
+      hasVideo: !!videoUrl,
+      hasScript:
+        editorState.voiceover.scriptSegments.some((s) => s.text.trim()) ||
+        editorState.voiceover.script.trim().length > 0,
+      hasVoice:
+        editorState.voiceover.isGenerated ||
+        editorState.voiceover.scriptSegments.some((s) => s.isGenerated),
+      frameVisited,
+    }),
+    [videoUrl, editorState.voiceover, frameVisited]
+  );
+
+  const flowGates = useMemo(
+    () =>
+      computePipelineGates(project, {
+        currentStep: requestedTab ? TAB_PIPELINE_STEP[requestedTab] : undefined,
+        live: livePipeline,
+      }),
+    [project, requestedTab, livePipeline]
+  );
+
+  const editorTab: EditorTabId = requestedTab ?? firstUnlockedEditorTab(flowGates.gates);
+  const pipelineStep = TAB_PIPELINE_STEP[editorTab];
+
+  const setEditorTabGuarded = useCallback(
+    (tab: EditorTabId) => {
+      const step = TAB_PIPELINE_STEP[tab];
+      const gate = computePipelineGates(project, {
+        currentStep: step,
+        live: livePipeline,
+      }).gates[step];
+
+      if (!isStepNavigable(gate)) {
+        toast({
+          title: "Step locked",
+          description: gate?.lockReason ?? "Complete the previous step first.",
+          variant: "destructive",
+        });
+        return;
+      }
+      setEditorTab(tab);
+    },
+    [project, livePipeline, setEditorTab, toast]
+  );
+
+  useEffect(() => {
+    const fromDb = (project?.edit_data as { pipeline?: { frameVisited?: boolean } } | undefined)
+      ?.pipeline?.frameVisited;
+    if (fromDb) setFrameVisited(true);
+  }, [project?.edit_data]);
+
+  useEffect(() => {
+    if (["camera", "design", "text", "effects", "timeline"].includes(editorTab)) {
+      setFrameVisited(true);
+    }
+  }, [editorTab]);
+
+  useEditorFlowGuard(
+    project,
+    id,
+    editorTab,
+    livePipeline,
+    (tab) => setEditorTabGuarded(tab),
+    { projectLoading }
+  );
+
+  const tabLocks = useMemo(() => {
+    const locks: Partial<Record<EditorTabId, string>> = {};
+    const { gates } = flowGates;
+    if (gates.script.access === "locked") locks.script = gates.script.lockReason;
+    if (gates.voice.access === "locked") locks.voice = gates.voice.lockReason;
+    if (gates.frame.access === "locked") {
+      const reason = gates.frame.lockReason ?? "Complete the previous step first";
+      locks.design = reason;
+      locks.text = reason;
+      locks.camera = reason;
+      locks.effects = reason;
+      locks.timeline = reason;
+    }
+    return locks;
+  }, [flowGates]);
   const clickData = location.state?.clickData || [];
   const moveData = location.state?.moveData || [];
   const capturedEffects = location.state?.effects || [];
-  const rawRecording = location.state?.rawRecording || false;
+  const rawRecording =
+    location.state?.rawRecording ??
+    (project?.recording_data as { rawRecording?: boolean } | undefined)?.rawRecording ??
+    false;
   const videoRef = useRef<HTMLVideoElement>(null); // Kept for legacy ref passing to old components if any remain
   const videoContainerRef = useRef<HTMLDivElement>(null);
 
@@ -316,15 +474,39 @@ export default function Editor() {
 
 
 
-  const handleRender = () => {
-    // Enable layered rendering if raw recording was used
+  const handleRender = async () => {
+    if (!flowGates.canExport) {
+      toast({
+        title: "Export locked",
+        description:
+          stepLockReason(flowGates.gates, "export") ??
+          "Complete script, voice, and frame first.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     const presentationConfig = {
       ...editorState.presentation,
       layeredRendering: rawRecording ? true : (editorState.presentation.layeredRendering !== false),
     };
 
+    if (project?.id) {
+      try {
+        await projectsApi.saveEditData(
+          project.id,
+          serializeEditorState(editorState, { frameVisited }),
+          scriptSegmentsFromState(editorState)
+        );
+        await projectsApi.update(project.id, { status: "rendering" });
+      } catch {
+        toast({ title: "Couldn't save before export", variant: "destructive" });
+      }
+    }
+
     navigate("/render", {
       state: {
+        projectId: project?.id,
         videoUrl,
         clickData,
         moveData,
@@ -674,28 +856,56 @@ export default function Editor() {
 
   return (
     <div className="flex min-h-screen flex-col bg-background">
-      <Header isAuthenticated user={mockUser} />
+      <Header />
 
       <main className="flex-1">
-        <div className="container py-6">
+        <div className="container space-y-6 py-6">
+          <StudioProjectBar
+            title={titleDraft || (id === "new" ? "New demo" : "Untitled demo")}
+            titleEditable={!!project}
+            onTitleChange={setTitleDraft}
+            onTitleSave={saveTitle}
+            projectId={project?.id ?? id}
+            actions={
+              <>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShareOpen(true)}
+                  disabled={!project || !flowGates.canShare}
+                  title={!flowGates.canShare ? "Export your demo before sharing" : undefined}
+                >
+                  <Share2 className="mr-2 h-4 w-4" />
+                  Share
+                </Button>
+                <Button
+                  variant="hero"
+                  size="sm"
+                  onClick={handleRender}
+                  disabled={!flowGates.canExport}
+                  title={!flowGates.canExport ? stepLockReason(flowGates.gates, "export") : undefined}
+                >
+                  <Sparkles className="mr-2 h-4 w-4" />
+                  Export
+                </Button>
+              </>
+            }
+          />
 
-          {/* Project bar: editable title + share */}
-          {project && (
-            <div className="mb-4 flex items-center justify-between gap-3">
-              <input
-                value={titleDraft}
-                onChange={(e) => setTitleDraft(e.target.value)}
-                onBlur={saveTitle}
-                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
-                aria-label="Project title"
-                className="w-full max-w-md truncate rounded-md border border-transparent bg-transparent px-2 py-1 font-display text-lg font-semibold outline-none transition-colors hover:border-border focus:border-primary"
-              />
-              <Button size="sm" variant="hero" onClick={() => setShareOpen(true)}>
-                <Share2 className="mr-2 h-4 w-4" />
-                Share
-              </Button>
-            </div>
-          )}
+          <StudioPipeline
+            currentStep={pipelineStep}
+            projectId={project?.id ?? id}
+            project={project}
+            live={livePipeline}
+            onShareClick={project && flowGates.canShare ? () => setShareOpen(true) : undefined}
+            onExportClick={flowGates.canExport ? handleRender : undefined}
+          />
+
+          <p className="text-sm text-muted-foreground">
+            {flowGates.canExport
+              ? `${editorState.events.clicks.length} clicks captured · ready to export when framing looks good.`
+              : `${editorState.events.clicks.length} clicks captured · follow the pipeline in order — later steps unlock as you complete each one.`}
+          </p>
 
           {/* Split Layout */}
           <div className="grid gap-6 lg:grid-cols-2" >
@@ -722,8 +932,8 @@ export default function Editor() {
 
                     </>
                   ) : (
-                    <div className="flex h-16 w-16 items-center justify-center rounded-full bg-gradient-hero shadow-glow">
-                      <Video className="h-8 w-8 text-primary-foreground" />
+                    <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-secondary">
+                      <Video className="h-8 w-8 text-primary" />
                     </div>
                   )}
                 </div>
@@ -764,13 +974,16 @@ export default function Editor() {
             </div>
 
             {/* Right - Control Panel */}
-            <div className="rounded-xl border border-border bg-card overflow-hidden font-sans h-[500px]">
+            <div className="h-[500px] overflow-hidden rounded-xl border border-border bg-card">
               <EditorPanel 
                 selectedEffectId={selectedEffectId}
                 onEffectSelect={setSelectedEffectId}
                 isLoopingEffect={isLoopingEffect}
                 selectedClickIndex={selectedClickIndex}
                 onClickSelect={setSelectedClickIndex}
+                activeTab={editorTab}
+                onTabChange={setEditorTabGuarded}
+                tabLocks={tabLocks}
               />
             </div>
           </div>
@@ -1602,36 +1815,6 @@ export default function Editor() {
                 </div>
               </div>
 
-            </div>
-          </div>
-
-          {/* Top Bar */}
-          <div className="mb-6 flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold">
-                {id === "new" ? "New Demo" : "Product Onboarding Demo"}
-              </h1>
-              <p className="text-sm text-muted-foreground">
-                Edit your demo video • {editorState.events.clicks.length} clicks
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="text-xs text-muted-foreground hidden lg:flex items-center gap-1">
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Space</span>
-                <span>Play/Pause</span>
-                <span>•</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">←</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">→</span>
-                <span>Seek</span>
-                <span>•</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+←</span>
-                <span className="px-2 py-0.5 bg-secondary rounded border border-border">Shift+→</span>
-                <span>Frame</span>
-              </div>
-              <Button variant="hero" onClick={handleRender}>
-                <Sparkles className="mr-2 h-4 w-4" />
-                Render Video
-              </Button>
             </div>
           </div>
         </div >

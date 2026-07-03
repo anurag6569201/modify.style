@@ -8,15 +8,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-
-interface HeaderProps {
-  isAuthenticated?: boolean;
-  user?: {
-    name: string;
-    email: string;
-    avatar?: string;
-  };
-}
+import { useAuth } from "@/contexts/AuthContext";
 
 const marketingLinks = [
   { label: "How it works", href: "/#how-it-works" },
@@ -24,20 +16,22 @@ const marketingLinks = [
   { label: "Pricing", href: "/#pricing" },
 ];
 
-export function Header({ isAuthenticated = false, user }: HeaderProps) {
+export function Header() {
   const navigate = useNavigate();
+  const { user, isAuthenticated, signOut } = useAuth();
 
   const handleLogout = () => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
+    signOut();
     navigate("/auth");
   };
+
+  const homeHref = isAuthenticated ? "/dashboard" : "/";
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/80 backdrop-blur-xl">
       <div className="container flex h-16 items-center justify-between">
         <Link
-          to="/"
+          to={homeHref}
           className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
         >
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary shadow-sm">
@@ -63,14 +57,17 @@ export function Header({ isAuthenticated = false, user }: HeaderProps) {
         <nav className="flex items-center gap-2 sm:gap-3">
           {isAuthenticated ? (
             <>
-              <Button variant="ghost" asChild>
+              <Button variant="ghost" asChild className="hidden sm:inline-flex">
                 <Link to="/dashboard">Dashboard</Link>
+              </Button>
+              <Button variant="ghost" asChild className="hidden md:inline-flex">
+                <Link to="/recorder">Record</Link>
               </Button>
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="relative h-9 w-9 rounded-full">
                     <Avatar className="h-9 w-9">
-                      <AvatarImage src={user?.avatar} alt={user?.name} />
+                      <AvatarImage alt={user?.name} />
                       <AvatarFallback className="bg-primary text-primary-foreground">
                         {user?.name?.charAt(0)?.toUpperCase() || <User className="h-4 w-4" />}
                       </AvatarFallback>

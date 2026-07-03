@@ -127,6 +127,10 @@ STATIC_URL = 'static/'
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
 
+# Allow screen recordings and exports (default Django cap is ~2.5 MB).
+DATA_UPLOAD_MAX_MEMORY_SIZE = 512 * 1024 * 1024  # 512 MB
+FILE_UPLOAD_MAX_MEMORY_SIZE = 512 * 1024 * 1024
+
 # CORS Configuration
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:5173",

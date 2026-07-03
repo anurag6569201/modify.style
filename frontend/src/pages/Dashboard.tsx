@@ -1,7 +1,8 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/Header";
+import { useAuth } from "@/contexts/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -13,10 +14,12 @@ import {
   Edit,
   FolderOpen,
   Eye,
-  Loader2,
   Share2,
 } from "lucide-react";
 import { ShareDialog } from "@/components/ShareDialog";
+import { StudioPipeline } from "@/components/studio/StudioPipeline";
+import { computePipelineGates, firstUnlockedEditorTab } from "@/lib/studio/pipelineProgress";
+import { recorderHref, editorHref } from "@/lib/studio/pipeline";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -53,45 +56,29 @@ function formatDate(iso: string): string {
   }
 }
 
+function projectResumeHref(project: ProjectSummary): string {
+  const gates = computePipelineGates(project);
+  if (!gates.recordComplete) return recorderHref(project.id);
+  const tab = firstUnlockedEditorTab(gates.gates);
+  return editorHref(project.id, tab);
+}
+
 export default function Dashboard() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
-  const [user, setUser] = useState<{ name: string; email: string } | undefined>(
-    undefined
-  );
   const [loading, setLoading] = useState(true);
-  const [creating, setCreating] = useState(false);
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const navigate = useNavigate();
-
-  const signOut = useCallback(() => {
-    localStorage.removeItem("accessToken");
-    localStorage.removeItem("refreshToken");
-    navigate("/auth");
-  }, [navigate]);
+  const { signOut } = useAuth();
 
   useEffect(() => {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      navigate("/auth");
-      return;
-    }
-
     const load = async () => {
-      // Profile + projects in parallel.
-      const profilePromise = fetch(
-        `${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/auth/profile/`,
-        { headers: { Authorization: `Bearer ${token}` } }
-      )
-        .then((r) => (r.ok ? r.json() : null))
-        .then((d) => d && setUser({ name: d.username, email: d.email }))
-        .catch(() => undefined);
-
       try {
-        const [data] = await Promise.all([projectsApi.list(), profilePromise]);
+        const data = await projectsApi.list();
         setProjects(data);
       } catch (err) {
         if (err instanceof UnauthorizedError) {
           signOut();
+          navigate("/auth");
           return;
         }
         toast.error("Couldn't load your projects. Is the backend running?");
@@ -103,18 +90,8 @@ export default function Dashboard() {
     load();
   }, [navigate, signOut]);
 
-  const handleCreate = async () => {
-    setCreating(true);
-    try {
-      const project = await projectsApi.create();
-      toast.success("New demo created");
-      // Head to the recorder to capture the screen for this project.
-      navigate(`/recorder?project=${project.id}`);
-    } catch (err) {
-      if (err instanceof UnauthorizedError) return signOut();
-      toast.error("Couldn't create a project.");
-      setCreating(false);
-    }
+  const handleCreate = () => {
+    navigate("/recorder");
   };
 
   const handleDelete = async (id: string) => {
@@ -125,34 +102,36 @@ export default function Dashboard() {
       toast.success("Project deleted");
     } catch (err) {
       setProjects(prev); // rollback
-      if (err instanceof UnauthorizedError) return signOut();
+      if (err instanceof UnauthorizedError) {
+        signOut();
+        navigate("/auth");
+        return;
+      }
       toast.error("Couldn't delete that project.");
     }
   };
 
   return (
-    <div className="min-h-screen bg-gradient-warm">
-      <Header isAuthenticated user={user} />
-      <main className="container py-10">
+    <div className="min-h-screen bg-background">
+      <Header />
+      <main className="container space-y-10 py-10">
         {/* Page header */}
-        <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="font-display text-3xl font-semibold tracking-tight">
               Your demos
             </h1>
             <p className="mt-1 text-muted-foreground">
-              Create, manage, and share your demo videos.
+              Record once, refine in the studio, export, and share — all linked in one flow.
             </p>
           </div>
-          <Button variant="hero" onClick={handleCreate} disabled={creating}>
-            {creating ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="mr-2 h-4 w-4" />
-            )}
+          <Button variant="hero" onClick={handleCreate}>
+            <Plus className="mr-2 h-4 w-4" />
             Create new demo
           </Button>
         </div>
+
+        <StudioPipeline overview />
 
         {loading ? (
           /* Loading skeleton */
@@ -181,12 +160,8 @@ export default function Dashboard() {
               Create your first demo by recording your screen. DemoForge's AI will
               handle the script, voice, and framing.
             </p>
-            <Button variant="hero" size="lg" onClick={handleCreate} disabled={creating}>
-              {creating ? (
-                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-              ) : (
-                <Plus className="mr-2 h-5 w-5" />
-              )}
+            <Button variant="hero" size="lg" onClick={handleCreate}>
+              <Plus className="mr-2 h-5 w-5" />
               Create your first demo
             </Button>
           </div>
@@ -195,14 +170,15 @@ export default function Dashboard() {
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
             {projects.map((project) => {
               const cfg = statusConfig[project.status] ?? statusConfig.draft;
+              const resumeHref = projectResumeHref(project);
               return (
                 <Link
                   key={project.id}
-                  to={`/editor/${project.id}`}
+                  to={resumeHref}
                   className="group relative rounded-xl border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
                 >
                   {/* Thumbnail */}
-                  <div className="relative aspect-video overflow-hidden rounded-t-xl bg-gradient-subtle">
+                  <div className="relative aspect-video overflow-hidden rounded-t-xl bg-secondary">
                     {project.thumbnail_url ? (
                       <img
                         src={project.thumbnail_url}
@@ -241,6 +217,15 @@ export default function Dashboard() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.preventDefault();
+                              navigate(`/recorder?project=${project.id}`);
+                            }}
+                          >
+                            <Video className="mr-2 h-4 w-4" />
+                            Re-record
+                          </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={(e) => {
                               e.preventDefault();

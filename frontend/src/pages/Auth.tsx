@@ -1,9 +1,11 @@
 import { useState } from "react";
-import { useNavigate, Link } from "react-router-dom";
+import { useNavigate, Link, Navigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Video, Loader2, Check } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useGoogleLogin } from "@react-oauth/google";
+import { useAuth } from "@/contexts/AuthContext";
+import { API_BASE_URL } from "@/lib/auth";
 
 type AuthState = "idle" | "loading" | "success";
 
@@ -11,12 +13,13 @@ export default function Auth() {
   const [authState, setAuthState] = useState<AuthState>("idle");
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { isAuthenticated, isLoading, signIn } = useAuth();
 
   const login = useGoogleLogin({
     onSuccess: async (tokenResponse) => {
       setAuthState("loading");
       try {
-        const response = await fetch("http://localhost:8000/api/auth/google/", {
+        const response = await fetch(`${API_BASE_URL}/api/auth/google/`, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -31,8 +34,7 @@ export default function Auth() {
         const data = await response.json();
 
         if (data.access) {
-          localStorage.setItem("accessToken", data.access);
-          localStorage.setItem("refreshToken", data.refresh);
+          await signIn(data.access, data.refresh);
           setAuthState("success");
           toast({
             title: "Welcome to DemoForge!",
@@ -59,6 +61,18 @@ export default function Auth() {
       });
     },
   });
+
+  if (isLoading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center">
+        <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (isAuthenticated) {
+    return <Navigate to="/dashboard" replace />;
+  }
 
   return (
     <div className="flex min-h-screen">
