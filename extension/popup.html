@@ -3,24 +3,139 @@
 <head>
   <meta charset="utf-8">
   <style>
-    body {
-      width: 200px;
-      padding: 16px;
-      font-family: system-ui, -apple-system, sans-serif;
+    :root {
+      --bg: #1c1917;
+      --card: #292524;
+      --border: #3f3a36;
+      --text: #f5f0ea;
+      --muted: #a8a29e;
+      --primary: #e8734a;
+      --primary-hover: #d9633b;
+      --success: #4ade80;
+      --danger: #f87171;
     }
+    * { box-sizing: border-box; margin: 0; }
+    body {
+      width: 280px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 13px;
+    }
+    .header {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo {
+      width: 28px; height: 28px; border-radius: 8px;
+      background: var(--primary);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px;
+    }
+    .title { font-weight: 600; font-size: 14px; }
+    .subtitle { color: var(--muted); font-size: 11px; }
+
+    .body { padding: 14px 16px 16px; }
+
+    .status {
+      display: flex; flex-direction: column; gap: 8px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 14px;
+    }
+    .row { display: flex; align-items: center; gap: 8px; }
+    .dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--muted); flex-shrink: 0;
+    }
+    .dot.ok { background: var(--success); }
+    .dot.bad { background: var(--danger); }
+    .dot.rec {
+      background: var(--danger);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(248,113,113,.5); }
+      50% { opacity: .7; box-shadow: 0 0 0 5px rgba(248,113,113,0); }
+    }
+    .row .label { color: var(--muted); }
+    .row .value { margin-left: auto; font-weight: 500; }
+
+    .timer {
+      font-variant-numeric: tabular-nums;
+      font-weight: 600;
+      color: var(--danger);
+    }
+
     button {
       width: 100%;
-      padding: 8px;
-      margin: 4px 0;
+      padding: 10px;
+      border: 0;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 600;
       cursor: pointer;
+      transition: background .15s ease, transform .05s ease;
     }
+    button:active { transform: translateY(1px); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+
+    #start { background: var(--primary); color: #fff; }
+    #start:hover:not(:disabled) { background: var(--primary-hover); }
+
+    #stop {
+      background: transparent;
+      color: var(--danger);
+      border: 1px solid var(--border);
+      margin-top: 8px;
+      display: none;
+    }
+    #stop:hover { background: rgba(248,113,113,.08); }
+
+    .hint {
+      margin-top: 12px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.5;
+      text-align: center;
+    }
+    .hint a { color: var(--primary); text-decoration: none; }
   </style>
 </head>
 <body>
-  <h3>DemoForge Recorder</h3>
-  <button id="start">Start Recording</button>
-  <button id="stop">Stop Recording</button>
+  <div class="header">
+    <div class="logo">⚡</div>
+    <div>
+      <div class="title">DemoForge</div>
+      <div class="subtitle">Pixel-perfect cursor capture</div>
+    </div>
+  </div>
+
+  <div class="body">
+    <div class="status">
+      <div class="row">
+        <span class="dot" id="app-dot"></span>
+        <span class="label">DemoForge app</span>
+        <span class="value" id="app-status">Checking…</span>
+      </div>
+      <div class="row">
+        <span class="dot" id="rec-dot"></span>
+        <span class="label">Recording</span>
+        <span class="value" id="rec-status">—</span>
+      </div>
+    </div>
+
+    <button id="start">Start recording</button>
+    <button id="stop">Stop recording</button>
+
+    <p class="hint" id="hint">
+      Records the true viewport cursor for buttery-smooth auto-zoom.
+    </p>
+  </div>
+
   <script src="popup.js"></script>
 </body>
 </html>
-

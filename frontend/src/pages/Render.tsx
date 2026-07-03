@@ -424,6 +424,7 @@ export default function Render() {
     cursorConfig,
     textOverlays = [],
     rawRecording = false,
+    voiceover,
   } = location.state || {};
 
   const [rendering, setRendering] = useState(false);
@@ -440,6 +441,8 @@ export default function Render() {
   const cameraStateRef = useRef(getInitialCameraState());
   const cursorImageRef = useRef<HTMLImageElement | null>(null);
   const backgroundImageRef = useRef<HTMLImageElement | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const audioSourcesRef = useRef<Map<number, AudioBufferSourceNode>>(new Map());
   const { toast } = useToast();
 
   // Preload background image if needed
@@ -617,6 +620,13 @@ export default function Render() {
     };
 
     mediaRecorder.onstop = () => {
+      // Clean up audio context
+      if (audioContextRef.current) {
+        audioContextRef.current.close().catch(console.warn);
+        audioContextRef.current = null;
+      }
+      audioSourcesRef.current.clear();
+      
       const blob = new Blob(chunksRef.current, { type: mimeType });
       const url = URL.createObjectURL(blob);
       setDownloadUrl(url);
@@ -624,15 +634,67 @@ export default function Render() {
       setProgress(100);
       toast({
         title: "Rendering Complete",
-        description: `Your ${exportFormat.toUpperCase()} video is ready to download.`,
+        description: `Your ${exportFormat.toUpperCase()} video is ready to download. Note: Audio segments are played during preview but need to be mixed with video in post-processing for final export.`,
       });
     };
+
+    // Setup audio context and load audio segments if available
+    if (voiceover?.scriptSegments && voiceover.scriptSegments.length > 0) {
+      try {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        
+        // Load and prepare audio segments
+        const audioSegments = voiceover.scriptSegments.filter(s => s.isGenerated && (s.audioBlob || s.audioUrl));
+        
+        for (const segment of audioSegments) {
+          try {
+            let audioBuffer: AudioBuffer;
+            
+            if (segment.audioBlob) {
+              const arrayBuffer = await segment.audioBlob.arrayBuffer();
+              audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+            } else if (segment.audioUrl) {
+              const response = await fetch(segment.audioUrl);
+              const arrayBuffer = await response.arrayBuffer();
+              audioBuffer = await audioContextRef.current.decodeAudioData(arrayBuffer);
+            } else {
+              continue;
+            }
+            
+            // Store audio buffer for playback at correct timestamp
+            // We'll schedule playback in the render loop
+            const segmentData = {
+              buffer: audioBuffer,
+              timestamp: segment.timestamp,
+              duration: segment.duration || audioBuffer.duration,
+            };
+            
+            // Schedule audio playback when video reaches the segment timestamp
+            // This will be handled in the render loop
+            (audioSourcesRef.current as any).set(segment.timestamp, segmentData);
+          } catch (error) {
+            console.warn(`Failed to load audio segment at ${segment.timestamp}s:`, error);
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to initialize audio context:', error);
+      }
+    }
 
     mediaRecorder.start();
     video.currentTime = 0;
     await video.play();
 
+    // Start audio playback if audio context is available
+    if (audioContextRef.current && audioSourcesRef.current.size > 0) {
+      // Resume audio context (required by some browsers)
+      if (audioContextRef.current.state === 'suspended') {
+        await audioContextRef.current.resume();
+      }
+    }
+
     let lastTime = performance.now();
+    const playedAudioSegments = new Set<number>();
 
     const renderLoop = () => {
       if (video.ended || video.paused) {
@@ -644,6 +706,37 @@ export default function Render() {
 
       const currentTime = video.currentTime;
       setProgress((currentTime / video.duration) * 100);
+
+      // Play audio segments at their timestamps
+      if (audioContextRef.current && audioSourcesRef.current.size > 0) {
+        audioSourcesRef.current.forEach((segmentData: any, segmentTimestamp: number) => {
+          // Check if we should play this segment (within 0.1s tolerance)
+          if (
+            !playedAudioSegments.has(segmentTimestamp) &&
+            currentTime >= segmentTimestamp - 0.1 &&
+            currentTime < segmentTimestamp + 0.1
+          ) {
+            try {
+              const source = audioContextRef.current!.createBufferSource();
+              source.buffer = segmentData.buffer;
+              source.connect(audioContextRef.current!.destination);
+              
+              // Calculate offset if we're slightly past the start time
+              const offset = Math.max(0, currentTime - segmentTimestamp);
+              source.start(0, offset);
+              
+              playedAudioSegments.add(segmentTimestamp);
+              
+              // Clean up after playback
+              source.onended = () => {
+                source.disconnect();
+              };
+            } catch (error) {
+              console.warn(`Failed to play audio segment at ${segmentTimestamp}s:`, error);
+            }
+          }
+        });
+      }
 
       const timestamp = performance.now();
       const dt = Math.min((timestamp - lastTime) / 1000, 0.1);

@@ -41,6 +41,8 @@ INSTALLED_APPS = [
     'corsheaders',
     'accounts',
     'audio_creations',
+    'script_generation',
+    'projects',
 ]
 
 MIDDLEWARE = [
@@ -148,11 +150,46 @@ SIMPLE_JWT = {
     'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
 }
 
-# Azure Speech Configuration (add these to your environment variables)
 import os
+
+# Optionally load a local .env (no-op if python-dotenv isn't installed).
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BASE_DIR / '.env')
+except Exception:
+    pass
+
+# ─────────────────────────────────────────────────────────────
+# AI provider configuration — all secrets come from the environment.
+# Never hardcode keys in source. See backend/.env.example.
+# ─────────────────────────────────────────────────────────────
+
+# Google Gemini (current script-generation fallback provider)
+GOOGLE_GEMINI_API_KEY = os.environ.get('GOOGLE_GEMINI_API_KEY', '')
+
+# Azure Speech — neural TTS + word-level timing for captions
 AZURE_SPEECH_KEY = os.environ.get('AZURE_SPEECH_KEY', '')
 AZURE_SPEECH_ENDPOINT = os.environ.get('AZURE_SPEECH_ENDPOINT', '')
+AZURE_SPEECH_REGION = os.environ.get('AZURE_SPEECH_REGION', '')
 
-# Azure Speech Configuration (add these to your environment variables)
-# AZURE_SPEECH_KEY = os.environ.get('AZURE_SPEECH_KEY', '')
-# AZURE_SPEECH_ENDPOINT = os.environ.get('AZURE_SPEECH_ENDPOINT', '')
+# Azure OpenAI — script generation / smart edits (preferred over Gemini)
+AZURE_OPENAI_ENDPOINT = os.environ.get('AZURE_OPENAI_ENDPOINT', '')
+AZURE_OPENAI_API_KEY = os.environ.get('AZURE_OPENAI_API_KEY', '')
+AZURE_OPENAI_DEPLOYMENT = os.environ.get('AZURE_OPENAI_DEPLOYMENT', 'gpt-4o')
+AZURE_OPENAI_API_VERSION = os.environ.get('AZURE_OPENAI_API_VERSION', '2024-08-01-preview')
+
+# Azure Translator — one-click localization
+AZURE_TRANSLATOR_KEY = os.environ.get('AZURE_TRANSLATOR_KEY', '')
+AZURE_TRANSLATOR_ENDPOINT = os.environ.get('AZURE_TRANSLATOR_ENDPOINT', '')
+AZURE_TRANSLATOR_REGION = os.environ.get('AZURE_TRANSLATOR_REGION', '')
+
+# Azure Blob Storage + CDN — durable media + public share playback
+AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
+AZURE_STORAGE_CONTAINER = os.environ.get('AZURE_STORAGE_CONTAINER', 'demoforge-media')
+AZURE_CDN_BASE_URL = os.environ.get('AZURE_CDN_BASE_URL', '')
+
+# Which LLM provider to use for scripts: 'azure_openai' or 'gemini'.
+AI_SCRIPT_PROVIDER = os.environ.get(
+    'AI_SCRIPT_PROVIDER',
+    'azure_openai' if AZURE_OPENAI_API_KEY else 'gemini',
+)

@@ -72,8 +72,11 @@ import {
   Repeat,
   Type,
   ChevronDown,
+  Share2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { ShareDialog } from "@/components/ShareDialog";
+import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
 
 const mockUser = {
   name: "Alex Johnson",
@@ -92,6 +95,35 @@ export default function Editor() {
   const navigate = useNavigate();
   const location = useLocation();
   const { toast } = useToast();
+
+  // --- Server-side project (persistence + sharing) ---
+  const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [titleDraft, setTitleDraft] = useState("");
+
+  useEffect(() => {
+    if (!id) return;
+    projectsApi
+      .get(id)
+      .then((p) => {
+        setProject(p);
+        setTitleDraft(p.title);
+      })
+      .catch(() => {
+        // Local-only session (e.g. legacy route) — sharing disabled, editing still works.
+      });
+  }, [id]);
+
+  const saveTitle = async () => {
+    if (!project || !titleDraft.trim() || titleDraft === project.title) return;
+    const title = titleDraft.trim();
+    setProject((p) => (p ? { ...p, title } : p));
+    try {
+      await projectsApi.update(project.id, { title });
+    } catch {
+      toast({ title: "Couldn't save the title", variant: "destructive" });
+    }
+  };
 
   // Use new Store
   const editorState = useEditorState();
@@ -303,6 +335,7 @@ export default function Editor() {
         effectsConfig: editorState.effects,
         cursorConfig: editorState.cursor,
         rawRecording, // Pass raw recording flag
+        voiceover: editorState.voiceover, // Pass voiceover with script segments
       }
     });
   };
@@ -645,6 +678,24 @@ export default function Editor() {
 
       <main className="flex-1">
         <div className="container py-6">
+
+          {/* Project bar: editable title + share */}
+          {project && (
+            <div className="mb-4 flex items-center justify-between gap-3">
+              <input
+                value={titleDraft}
+                onChange={(e) => setTitleDraft(e.target.value)}
+                onBlur={saveTitle}
+                onKeyDown={(e) => e.key === "Enter" && e.currentTarget.blur()}
+                aria-label="Project title"
+                className="w-full max-w-md truncate rounded-md border border-transparent bg-transparent px-2 py-1 font-display text-lg font-semibold outline-none transition-colors hover:border-border focus:border-primary"
+              />
+              <Button size="sm" variant="hero" onClick={() => setShareOpen(true)}>
+                <Share2 className="mr-2 h-4 w-4" />
+                Share
+              </Button>
+            </div>
+          )}
 
           {/* Split Layout */}
           <div className="grid gap-6 lg:grid-cols-2" >
@@ -1394,6 +1445,81 @@ export default function Editor() {
                       </div>
                     )}
 
+                    {/* Audio Segments Track */}
+                    {editorState.voiceover.scriptSegments.length > 0 && (
+                      <div className="relative h-16 bg-secondary/20 border border-border/40 rounded overflow-hidden group">
+                        {/* Track Header */}
+                        <div className="absolute left-0 top-0 bottom-0 w-20 bg-secondary/30 border-r border-border/40 flex items-center justify-center z-10">
+                          <div className="flex items-center gap-0.5">
+                            <Mic2 className="h-3 w-3 text-orange-400" />
+                            <span className="text-[10px] font-medium text-foreground">Audio</span>
+                            <span className="text-[8px] text-muted-foreground">
+                              ({editorState.voiceover.scriptSegments.filter(s => s.isGenerated).length}/{editorState.voiceover.scriptSegments.length})
+                            </span>
+                          </div>
+                        </div>
+                        
+                        {/* Track Content Area */}
+                        <div className="absolute left-20 right-0 top-0 bottom-0">
+                          {/* Row Divider */}
+                          <div className="absolute left-0 right-0 top-1/2 h-[1px] bg-border/30 z-0" />
+                          
+                          {editorState.voiceover.scriptSegments.map((segment, index) => {
+                            const startTime = segment.timestamp;
+                            const endTime = segment.timestamp + (segment.duration || 2); // Default 2s if no duration
+                            const startPercent = timeToPercent(startTime);
+                            const endPercent = timeToPercent(endTime);
+                            const width = Math.max(4, endPercent - startPercent);
+                            const isGenerated = segment.isGenerated || false;
+                            
+                            // Alternate between top and bottom row
+                            const rowIndex = index % 2;
+                            const isTopRow = rowIndex === 0;
+                            
+                            return (
+                              <div
+                                key={`audio-${index}`}
+                                className={`absolute rounded border transition-all group ${
+                                  isGenerated
+                                    ? 'bg-orange-500/80 border-orange-500/40 hover:border-orange-400 hover:shadow-sm z-10'
+                                    : 'bg-orange-500/40 border-orange-500/20 opacity-60 z-5'
+                                }`}
+                                style={{ 
+                                  left: `${startPercent}%`, 
+                                  width: `${width}%`,
+                                  minWidth: '60px',
+                                  top: isTopRow ? '2px' : '50%',
+                                  bottom: isTopRow ? '50%' : '2px',
+                                  height: 'calc(50% - 4px)'
+                                }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  editorStore.setPlayback({ currentTime: startTime });
+                                }}
+                              >
+                                {/* Content */}
+                                <div className="absolute inset-0 flex items-center px-2 pointer-events-none">
+                                  <Mic2 className={`h-2.5 w-2.5 ${isGenerated ? 'text-white' : 'text-white/50'} flex-shrink-0`} />
+                                  <span className={`text-[10px] font-medium truncate ml-1 ${isGenerated ? 'text-white' : 'text-white/50'}`}>
+                                    {segment.text.substring(0, 20)}...
+                                  </span>
+                                  <span className={`text-[8px] ml-auto font-mono bg-white/10 px-1 py-0.5 rounded ${isGenerated ? 'text-white/70' : 'text-white/40'}`}>
+                                    {formatTime(startTime)}
+                                    {segment.duration && ` (${Math.round(segment.duration)}s)`}
+                                  </span>
+                                </div>
+                                
+                                {/* Status Indicator */}
+                                {!isGenerated && (
+                                  <div className="absolute top-1 right-1 w-1.5 h-1.5 rounded-full bg-yellow-400 border border-background" />
+                                )}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Clicks Track */}
                     {editorState.events.clicks.length > 0 && (
                       <div className="relative h-5 bg-secondary/20 border border-border/40 rounded overflow-hidden">
@@ -1464,7 +1590,7 @@ export default function Editor() {
                   )}
 
                   {/* Empty State */}
-                  {editorState.events.clicks.length === 0 && editorState.events.effects.length === 0 && editorState.textOverlays.length === 0 && (
+                  {editorState.events.clicks.length === 0 && editorState.events.effects.length === 0 && editorState.textOverlays.length === 0 && editorState.voiceover.scriptSegments.length === 0 && (
                     <div className="absolute inset-0 flex items-center justify-center text-muted-foreground pointer-events-none">
                       <div className="text-center">
                         <Clock className="h-5 w-5 mx-auto mb-1.5 opacity-40" />
@@ -1510,6 +1636,20 @@ export default function Editor() {
           </div>
         </div >
       </main >
+
+      {project && (
+        <ShareDialog
+          open={shareOpen}
+          onOpenChange={setShareOpen}
+          projectId={project.id}
+          shareSlug={project.share_slug}
+          visibility={project.visibility}
+          viewCount={project.view_count}
+          onVisibilityChange={(v) =>
+            setProject((p) => (p ? { ...p, visibility: v } : p))
+          }
+        />
+      )}
     </div >
   );
 }

@@ -146,8 +146,18 @@ export interface PlaybackState {
     isMuted: boolean;
 }
 
+export interface ScriptSegment {
+    text: string;
+    timestamp: number;
+    audioUrl?: string | null;
+    audioBlob?: Blob | null;
+    duration?: number;
+    isGenerated?: boolean;
+}
+
 export interface VoiceoverConfig {
     script: string;
+    scriptSegments: ScriptSegment[];
     voiceId: string;
     audioUrl: string | null;
     audioBlob: Blob | null;
@@ -318,6 +328,7 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
     textOverlays: [],
     voiceover: {
         script: '',
+        scriptSegments: [],
         voiceId: 'emma',
         audioUrl: null,
         audioBlob: null,

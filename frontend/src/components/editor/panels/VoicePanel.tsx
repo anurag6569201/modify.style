@@ -31,8 +31,10 @@ export function VoicePanel() {
     const [isLoadingVoices, setIsLoadingVoices] = useState(true);
     const [isGeneratingVoice, setIsGeneratingVoice] = useState(false);
     const [generationProgress, setGenerationProgress] = useState(0);
+    const [segmentProgress, setSegmentProgress] = useState<Record<number, number>>({});
     const [audioPreviewUrl, setAudioPreviewUrl] = useState<string | null>(null);
     const [playingPreviewId, setPlayingPreviewId] = useState<string | null>(null);
+    const [playingSegmentIndex, setPlayingSegmentIndex] = useState<number | null>(null);
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedGroup, setSelectedGroup] = useState<string>('all');
     const [selectedGender, setSelectedGender] = useState<string>('all');
@@ -191,12 +193,14 @@ export function VoicePanel() {
     };
 
     const handleGenerateVoice = async () => {
+        const scriptSegments = editorState.voiceover.scriptSegments || [];
         const script = editorState.voiceover.script || '';
         
-        if (!script.trim()) {
+        // Check if we have script segments (preferred) or full script (fallback)
+        if (scriptSegments.length === 0 && !script.trim()) {
             toast({
                 title: "No script found",
-                description: "Please add a script in the Script panel first.",
+                description: "Please generate a script in the Script panel first.",
                 variant: "destructive",
             });
             return;
@@ -204,44 +208,146 @@ export function VoicePanel() {
 
         setIsGeneratingVoice(true);
         setGenerationProgress(0);
+        setSegmentProgress({});
 
         try {
-            // Generate audio using Greaby API
-            const response = await greabyAPI.generateAudio({
-                text: script,
-                voiceId: editorState.voiceover.voiceId,
-                speed: editorState.voiceover.speed,
-                pitch: editorState.voiceover.pitch,
-                volume: editorState.voiceover.volume,
-                format: 'mp3',
-            });
-
-            if (!response.success) {
-                // If it's a Web Speech API fallback message, handle it
-                if (response.message && response.message.includes('browser TTS')) {
-                    // Use Web Speech API to speak the text
-                    const { generateAudioWithWebSpeech } = await import('@/lib/api/web-speech-tts');
-                    const ttsResult = await generateAudioWithWebSpeech({
-                        text: script,
-                        voiceId: editorState.voiceover.voiceId,
-                        speed: editorState.voiceover.speed,
-                        pitch: editorState.voiceover.pitch,
-                        volume: editorState.voiceover.volume,
-                    });
-
-                    if (ttsResult.success) {
-                        toast({
-                            title: "Preview generated!",
-                            description: response.message || "Using browser TTS for preview. Configure Greaby API for downloadable audio.",
-                        });
-                        return;
-                    }
-                }
-                throw new Error(response.error || 'Failed to generate audio');
+            // If we have script segments, generate audio for each segment
+            if (scriptSegments.length > 0) {
+                await handleGenerateSegments(scriptSegments);
+            } else {
+                // Fallback to single audio generation for full script
+                await handleGenerateSingleAudio(script);
             }
+        } catch (error) {
+            console.error('Error generating voice:', error);
+            toast({
+                title: "Generation failed",
+                description: error instanceof Error ? error.message : "Failed to generate audio. Please try again.",
+                variant: "destructive",
+            });
+        } finally {
+            setIsGeneratingVoice(false);
+            setGenerationProgress(0);
+            setSegmentProgress({});
+        }
+    };
 
-            // Handle Web Speech API fallback (message but no audio data)
-            if (response.message && !response.audioUrl && !response.audioData) {
+    const handleGenerateSegments = async (segments: typeof editorState.voiceover.scriptSegments) => {
+        const totalSegments = segments.length;
+        const updatedSegments = [...segments];
+
+        for (let i = 0; i < totalSegments; i++) {
+            const segment = segments[i];
+            setSegmentProgress(prev => ({ ...prev, [i]: 0 }));
+
+            try {
+                // Generate audio for this segment
+                const response = await greabyAPI.generateAudio({
+                    text: segment.text,
+                    voiceId: editorState.voiceover.voiceId,
+                    speed: editorState.voiceover.speed,
+                    pitch: editorState.voiceover.pitch,
+                    volume: editorState.voiceover.volume,
+                    format: 'mp3',
+                });
+
+                if (!response.success) {
+                    throw new Error(response.error || `Failed to generate audio for segment ${i + 1}`);
+                }
+
+                // Handle async job if needed
+                let finalAudioUrl = response.audioUrl;
+                let finalAudioBlob: Blob | null = null;
+
+                if (response.jobId && !response.audioUrl) {
+                    const jobResult = await greabyAPI.waitForJobCompletion(
+                        response.jobId,
+                        (progress) => setSegmentProgress(prev => ({ ...prev, [i]: progress })),
+                        60000,
+                        1000
+                    );
+
+                    if (!jobResult.success || !jobResult.audioUrl) {
+                        throw new Error(jobResult.error || 'Job failed or timed out');
+                    }
+
+                    finalAudioUrl = jobResult.audioUrl;
+                }
+
+                // Download audio if we have a URL
+                if (finalAudioUrl) {
+                    finalAudioBlob = await greabyAPI.downloadAudio(finalAudioUrl);
+                } else if (response.audioData) {
+                    const mimeType = 'audio/mpeg';
+                    finalAudioBlob = greabyAPI.base64ToBlob(response.audioData, mimeType);
+                    finalAudioUrl = URL.createObjectURL(finalAudioBlob);
+                }
+
+                // Get audio duration
+                let duration = response.duration || 0;
+                if (finalAudioBlob) {
+                    const previewUrl = URL.createObjectURL(finalAudioBlob);
+                    const audio = new Audio(previewUrl);
+                    duration = await new Promise<number>((resolve) => {
+                        audio.addEventListener('loadedmetadata', () => {
+                            resolve(audio.duration);
+                            URL.revokeObjectURL(previewUrl);
+                        });
+                        audio.addEventListener('error', () => {
+                            resolve(0);
+                            URL.revokeObjectURL(previewUrl);
+                        });
+                    });
+                }
+
+                // Update segment with audio data
+                updatedSegments[i] = {
+                    ...segment,
+                    audioUrl: finalAudioUrl,
+                    audioBlob: finalAudioBlob,
+                    duration: duration,
+                    isGenerated: true,
+                };
+
+                // Update editor state
+                editorStore.setState({
+                    voiceover: {
+                        ...editorState.voiceover,
+                        scriptSegments: updatedSegments,
+                    },
+                });
+
+                setSegmentProgress(prev => ({ ...prev, [i]: 100 }));
+                setGenerationProgress(((i + 1) / totalSegments) * 100);
+            } catch (error) {
+                console.error(`Error generating audio for segment ${i + 1}:`, error);
+                updatedSegments[i] = {
+                    ...segment,
+                    isGenerated: false,
+                };
+            }
+        }
+
+        toast({
+            title: "Voice segments generated!",
+            description: `Generated audio for ${updatedSegments.filter(s => s.isGenerated).length} of ${totalSegments} segments.`,
+        });
+    };
+
+    const handleGenerateSingleAudio = async (script: string) => {
+        // Generate audio using Greaby API
+        const response = await greabyAPI.generateAudio({
+            text: script,
+            voiceId: editorState.voiceover.voiceId,
+            speed: editorState.voiceover.speed,
+            pitch: editorState.voiceover.pitch,
+            volume: editorState.voiceover.volume,
+            format: 'mp3',
+        });
+
+        if (!response.success) {
+            // If it's a Web Speech API fallback message, handle it
+            if (response.message && response.message.includes('browser TTS')) {
                 const { generateAudioWithWebSpeech } = await import('@/lib/api/web-speech-tts');
                 const ttsResult = await generateAudioWithWebSpeech({
                     text: script,
@@ -256,98 +362,105 @@ export function VoicePanel() {
                         title: "Preview generated!",
                         description: response.message || "Using browser TTS for preview. Configure Greaby API for downloadable audio.",
                     });
+                    return;
                 }
-                return;
             }
+            throw new Error(response.error || 'Failed to generate audio');
+        }
 
-            // Handle async job if jobId is returned
-            let finalAudioUrl = response.audioUrl;
-            let finalAudioBlob: Blob | null = null;
-
-            if (response.jobId && !response.audioUrl) {
-                // Poll for job completion
-                const jobResult = await greabyAPI.waitForJobCompletion(
-                    response.jobId,
-                    (progress) => setGenerationProgress(progress),
-                    60000, // 60 seconds max wait
-                    1000   // Poll every second
-                );
-
-                if (!jobResult.success || !jobResult.audioUrl) {
-                    throw new Error(jobResult.error || 'Job failed or timed out');
-                }
-
-                finalAudioUrl = jobResult.audioUrl;
-            }
-
-            // Download audio if we have a URL
-            if (finalAudioUrl) {
-                finalAudioBlob = await greabyAPI.downloadAudio(finalAudioUrl);
-                const previewUrl = URL.createObjectURL(finalAudioBlob);
-                setAudioPreviewUrl(previewUrl);
-
-                // Create audio element to get duration
-                const audio = new Audio(previewUrl);
-                const duration = await new Promise<number>((resolve) => {
-                    audio.addEventListener('loadedmetadata', () => {
-                        resolve(audio.duration);
-                    });
-                    audio.addEventListener('error', () => {
-                        resolve(0);
-                    });
-                });
-
-                // Update editor store with generated audio
-                editorStore.setState({
-                    voiceover: {
-                        ...editorState.voiceover,
-                        script: script,
-                        audioUrl: finalAudioUrl,
-                        audioBlob: finalAudioBlob,
-                        duration: duration || response.duration || 0,
-                        isGenerated: true,
-                        generatedAt: Date.now(),
-                    },
-                });
-
-                toast({
-                    title: "Voice generated!",
-                    description: `AI voiceover has been created (${Math.round(duration || 0)}s).`,
-                });
-            } else if (response.audioData) {
-                // Handle base64 audio data
-                const mimeType = 'audio/mpeg';
-                const blob = greabyAPI.base64ToBlob(response.audioData, mimeType);
-                const previewUrl = URL.createObjectURL(blob);
-                setAudioPreviewUrl(previewUrl);
-
-                editorStore.setState({
-                    voiceover: {
-                        ...editorState.voiceover,
-                        script: script,
-                        audioUrl: previewUrl,
-                        audioBlob: blob,
-                        duration: response.duration || 0,
-                        isGenerated: true,
-                        generatedAt: Date.now(),
-                    },
-                });
-
-                toast({
-                    title: "Voice generated!",
-                    description: `AI voiceover has been created (${Math.round(response.duration || 0)}s).`,
-                });
-            }
-        } catch (error) {
-            console.error('Error generating voice:', error);
-            toast({
-                title: "Generation failed",
-                description: error instanceof Error ? error.message : "Failed to generate audio. Please try again.",
-                variant: "destructive",
+        // Handle Web Speech API fallback (message but no audio data)
+        if (response.message && !response.audioUrl && !response.audioData) {
+            const { generateAudioWithWebSpeech } = await import('@/lib/api/web-speech-tts');
+            const ttsResult = await generateAudioWithWebSpeech({
+                text: script,
+                voiceId: editorState.voiceover.voiceId,
+                speed: editorState.voiceover.speed,
+                pitch: editorState.voiceover.pitch,
+                volume: editorState.voiceover.volume,
             });
-        } finally {
-            setIsGeneratingVoice(false);
-            setGenerationProgress(0);
+
+            if (ttsResult.success) {
+                toast({
+                    title: "Preview generated!",
+                    description: response.message || "Using browser TTS for preview. Configure Greaby API for downloadable audio.",
+                });
+            }
+            return;
+        }
+
+        // Handle async job if jobId is returned
+        let finalAudioUrl = response.audioUrl;
+        let finalAudioBlob: Blob | null = null;
+
+        if (response.jobId && !response.audioUrl) {
+            const jobResult = await greabyAPI.waitForJobCompletion(
+                response.jobId,
+                (progress) => setGenerationProgress(progress),
+                60000,
+                1000
+            );
+
+            if (!jobResult.success || !jobResult.audioUrl) {
+                throw new Error(jobResult.error || 'Job failed or timed out');
+            }
+
+            finalAudioUrl = jobResult.audioUrl;
+        }
+
+        // Download audio if we have a URL
+        if (finalAudioUrl) {
+            finalAudioBlob = await greabyAPI.downloadAudio(finalAudioUrl);
+            const previewUrl = URL.createObjectURL(finalAudioBlob);
+            setAudioPreviewUrl(previewUrl);
+
+            const audio = new Audio(previewUrl);
+            const duration = await new Promise<number>((resolve) => {
+                audio.addEventListener('loadedmetadata', () => {
+                    resolve(audio.duration);
+                });
+                audio.addEventListener('error', () => {
+                    resolve(0);
+                });
+            });
+
+            editorStore.setState({
+                voiceover: {
+                    ...editorState.voiceover,
+                    script: script,
+                    audioUrl: finalAudioUrl,
+                    audioBlob: finalAudioBlob,
+                    duration: duration || response.duration || 0,
+                    isGenerated: true,
+                    generatedAt: Date.now(),
+                },
+            });
+
+            toast({
+                title: "Voice generated!",
+                description: `AI voiceover has been created (${Math.round(duration || 0)}s).`,
+            });
+        } else if (response.audioData) {
+            const mimeType = 'audio/mpeg';
+            const blob = greabyAPI.base64ToBlob(response.audioData, mimeType);
+            const previewUrl = URL.createObjectURL(blob);
+            setAudioPreviewUrl(previewUrl);
+
+            editorStore.setState({
+                voiceover: {
+                    ...editorState.voiceover,
+                    script: script,
+                    audioUrl: previewUrl,
+                    audioBlob: blob,
+                    duration: response.duration || 0,
+                    isGenerated: true,
+                    generatedAt: Date.now(),
+                },
+            });
+
+            toast({
+                title: "Voice generated!",
+                description: `AI voiceover has been created (${Math.round(response.duration || 0)}s).`,
+            });
         }
     };
 
@@ -363,6 +476,65 @@ export function VoicePanel() {
                 });
             });
         }
+    };
+
+    const handlePlaySegment = (index: number) => {
+        const segment = editorState.voiceover.scriptSegments[index];
+        if (!segment?.audioBlob && !segment?.audioUrl) {
+            toast({
+                title: "No audio",
+                description: "Audio not generated for this segment yet.",
+                variant: "destructive",
+            });
+            return;
+        }
+
+        // Stop current playback
+        if (previewAudioRef.current) {
+            previewAudioRef.current.pause();
+            previewAudioRef.current = null;
+        }
+
+        const audioUrl = segment.audioUrl || (segment.audioBlob ? URL.createObjectURL(segment.audioBlob) : null);
+        if (!audioUrl) return;
+
+        const audio = new Audio(audioUrl);
+        previewAudioRef.current = audio;
+        setPlayingSegmentIndex(index);
+
+        audio.addEventListener('ended', () => {
+            setPlayingSegmentIndex(null);
+            previewAudioRef.current = null;
+            if (segment.audioBlob && audioUrl.startsWith('blob:')) {
+                URL.revokeObjectURL(audioUrl);
+            }
+        });
+
+        audio.addEventListener('error', () => {
+            toast({
+                title: "Playback error",
+                description: "Could not play segment audio.",
+                variant: "destructive",
+            });
+            setPlayingSegmentIndex(null);
+            previewAudioRef.current = null;
+        });
+
+        audio.play().catch((error) => {
+            toast({
+                title: "Playback error",
+                description: "Could not play segment audio.",
+                variant: "destructive",
+            });
+            setPlayingSegmentIndex(null);
+            previewAudioRef.current = null;
+        });
+    };
+
+    const formatTime = (seconds: number) => {
+        const mins = Math.floor(seconds / 60);
+        const secs = Math.floor(seconds % 60);
+        return `${mins}:${secs.toString().padStart(2, '0')}`;
     };
 
     const handleDownloadAudio = () => {
@@ -413,6 +585,91 @@ export function VoicePanel() {
                         {editorState.voiceover.script.split(' ').filter(w => w.trim()).length} words
                     </div>
                 </div>
+
+                {/* Script Segments */}
+                {editorState.voiceover.scriptSegments.length > 0 && (
+                    <div className="space-y-3 pb-4 border-b border-border/10">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-xs text-muted-foreground">
+                                Script Segments ({editorState.voiceover.scriptSegments.length})
+                            </Label>
+                            <span className="text-[10px] text-muted-foreground">
+                                {editorState.voiceover.scriptSegments.filter(s => s.isGenerated).length} generated
+                            </span>
+                        </div>
+                        <div className="space-y-2 max-h-[300px] overflow-y-auto">
+                            {editorState.voiceover.scriptSegments.map((segment, index) => (
+                                <div
+                                    key={index}
+                                    className={`p-3 rounded-md border transition-all ${
+                                        segment.isGenerated
+                                            ? 'bg-primary/5 border-primary/20'
+                                            : 'bg-background/30 border-border/20'
+                                    }`}
+                                >
+                                    <div className="flex items-start justify-between gap-2 mb-2">
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex items-center gap-2 mb-1">
+                                                <span className="text-[10px] font-mono text-muted-foreground bg-background/50 px-1.5 py-0.5 rounded">
+                                                    {formatTime(segment.timestamp)}
+                                                </span>
+                                                {segment.isGenerated && (
+                                                    <span className="text-[10px] text-primary bg-primary/10 px-1.5 py-0.5 rounded">
+                                                        ✓ Generated
+                                                    </span>
+                                                )}
+                                                {segment.duration && segment.duration > 0 && (
+                                                    <span className="text-[10px] text-muted-foreground">
+                                                        {Math.round(segment.duration)}s
+                                                    </span>
+                                                )}
+                                            </div>
+                                            <p className="text-sm text-foreground/90 leading-relaxed">
+                                                {segment.text}
+                                            </p>
+                                        </div>
+                                        <div className="flex items-center gap-1 flex-shrink-0">
+                                            {segment.isGenerated && (segment.audioUrl || segment.audioBlob) && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="icon"
+                                                    className="h-8 w-8"
+                                                    onClick={() => {
+                                                        if (playingSegmentIndex === index) {
+                                                            if (previewAudioRef.current) {
+                                                                previewAudioRef.current.pause();
+                                                                previewAudioRef.current = null;
+                                                            }
+                                                            setPlayingSegmentIndex(null);
+                                                        } else {
+                                                            handlePlaySegment(index);
+                                                        }
+                                                    }}
+                                                >
+                                                    {playingSegmentIndex === index ? (
+                                                        <Pause className="h-4 w-4" />
+                                                    ) : (
+                                                        <Play className="h-4 w-4" />
+                                                    )}
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </div>
+                                    {isGeneratingVoice && segmentProgress[index] !== undefined && (
+                                        <div className="mt-2">
+                                            <div className="w-full bg-background/50 rounded-full h-1.5">
+                                                <div
+                                                    className="bg-primary h-1.5 rounded-full transition-all duration-300"
+                                                    style={{ width: `${segmentProgress[index]}%` }}
+                                                />
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                )}
 
                 {/* Voice Selection */}
                 <div className="space-y-3 pb-4 border-b border-border/10">
@@ -748,19 +1005,26 @@ export function VoicePanel() {
                     </div>
                     <Button
                         onClick={handleGenerateVoice}
-                        disabled={isGeneratingVoice || !editorState.voiceover.script.trim()}
+                        disabled={
+                            isGeneratingVoice || 
+                            (!editorState.voiceover.script.trim() && editorState.voiceover.scriptSegments.length === 0)
+                        }
                         className="w-full relative z-10 shadow-lg shadow-primary/20"
                         size="sm"
                     >
                         {isGeneratingVoice ? (
                             <>
                                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                                Generating...
+                                {editorState.voiceover.scriptSegments.length > 0 
+                                    ? `Generating ${editorState.voiceover.scriptSegments.length} segments...`
+                                    : 'Generating...'}
                             </>
                         ) : (
                             <>
                                 <PlayCircle className="mr-2 h-4 w-4" />
-                                Generate Audio
+                                {editorState.voiceover.scriptSegments.length > 0
+                                    ? `Generate ${editorState.voiceover.scriptSegments.length} Audio Segments`
+                                    : 'Generate Audio'}
                             </>
                         )}
                     </Button>

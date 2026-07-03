@@ -1,5 +1,6 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { toast } from "sonner";
 import { Header } from "@/components/layout/Header";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -11,27 +12,25 @@ import {
   Trash2,
   Edit,
   FolderOpen,
+  Eye,
+  Loader2,
+  Share2,
 } from "lucide-react";
+import { ShareDialog } from "@/components/ShareDialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  projectsApi,
+  UnauthorizedError,
+  type ProjectSummary,
+} from "@/lib/api/projects";
 
-interface Project {
-  id: string;
-  title: string;
-  status: "draft" | "rendering" | "ready";
-  updatedAt: string;
-  thumbnail?: string;
-}
-
-const statusConfig = {
-  draft: {
-    label: "Draft",
-    className: "bg-secondary text-secondary-foreground",
-  },
+const statusConfig: Record<string, { label: string; className: string }> = {
+  draft: { label: "Draft", className: "bg-secondary text-secondary-foreground" },
   rendering: {
     label: "Rendering",
     className: "bg-warning/10 text-warning border-warning/20",
@@ -42,169 +41,267 @@ const statusConfig = {
   },
 };
 
-import { AudioGenerator } from "@/components/AudioGenerator";
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "";
+  }
+}
 
 export default function Dashboard() {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [user, setUser] = useState<{ name: string; email: string } | undefined>(
     undefined
   );
-  const [showEmpty, setShowEmpty] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const navigate = useNavigate();
 
+  const signOut = useCallback(() => {
+    localStorage.removeItem("accessToken");
+    localStorage.removeItem("refreshToken");
+    navigate("/auth");
+  }, [navigate]);
+
   useEffect(() => {
-    const fetchProfile = async () => {
+    const token = localStorage.getItem("accessToken");
+    if (!token) {
+      navigate("/auth");
+      return;
+    }
+
+    const load = async () => {
+      // Profile + projects in parallel.
+      const profilePromise = fetch(
+        `${import.meta.env.VITE_API_URL || "http://localhost:8000"}/api/auth/profile/`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      )
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => d && setUser({ name: d.username, email: d.email }))
+        .catch(() => undefined);
+
       try {
-        const token = localStorage.getItem("accessToken");
-        if (!token) {
-          navigate("/auth");
+        const [data] = await Promise.all([projectsApi.list(), profilePromise]);
+        setProjects(data);
+      } catch (err) {
+        if (err instanceof UnauthorizedError) {
+          signOut();
           return;
         }
-
-        const response = await fetch("http://localhost:8000/api/auth/profile/", {
-          headers: {
-            Authorization: `Bearer ${token}`,
-          },
-        });
-
-        if (response.ok) {
-          const data = await response.json();
-          // We map username to name for the UI for now, or use username as name
-          setUser({ name: data.username, email: data.email });
-        } else {
-          // Handle token expiry or invalid token
-          if (response.status === 401) {
-            localStorage.removeItem("accessToken");
-            localStorage.removeItem("refreshToken");
-            navigate("/auth");
-          }
-        }
-      } catch (error) {
-        console.error("Failed to fetch profile", error);
+        toast.error("Couldn't load your projects. Is the backend running?");
+      } finally {
+        setLoading(false);
       }
     };
 
-    fetchProfile();
-  }, [navigate]);
+    load();
+  }, [navigate, signOut]);
 
-  const displayProjects = projects;
+  const handleCreate = async () => {
+    setCreating(true);
+    try {
+      const project = await projectsApi.create();
+      toast.success("New demo created");
+      // Head to the recorder to capture the screen for this project.
+      navigate(`/recorder?project=${project.id}`);
+    } catch (err) {
+      if (err instanceof UnauthorizedError) return signOut();
+      toast.error("Couldn't create a project.");
+      setCreating(false);
+    }
+  };
 
-  const handleDelete = (id: string) => {
-    setProjects(projects.filter((p) => p.id !== id));
+  const handleDelete = async (id: string) => {
+    const prev = projects;
+    setProjects((p) => p.filter((x) => x.id !== id)); // optimistic
+    try {
+      await projectsApi.remove(id);
+      toast.success("Project deleted");
+    } catch (err) {
+      setProjects(prev); // rollback
+      if (err instanceof UnauthorizedError) return signOut();
+      toast.error("Couldn't delete that project.");
+    }
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-gradient-warm">
       <Header isAuthenticated user={user} />
-      <AudioGenerator />
-      <main className="container py-8">
-        {/* Page Header */}
+      <main className="container py-10">
+        {/* Page header */}
         <div className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
-            <h1 className="text-3xl font-bold">Your Projects</h1>
+            <h1 className="font-display text-3xl font-semibold tracking-tight">
+              Your demos
+            </h1>
             <p className="mt-1 text-muted-foreground">
-              Create and manage your demo videos
+              Create, manage, and share your demo videos.
             </p>
           </div>
-          <div className="flex gap-3">
-            <Button variant="hero" asChild>
-              <Link to="/recorder">
-                <Plus className="mr-2 h-4 w-4" />
-                Create New Demo
-              </Link>
-            </Button>
-          </div>
+          <Button variant="hero" onClick={handleCreate} disabled={creating}>
+            {creating ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="mr-2 h-4 w-4" />
+            )}
+            Create new demo
+          </Button>
         </div>
 
-        {displayProjects.length === 0 ? (
-          /* Empty State */
-          <div className="flex min-h-[400px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-secondary/20 p-12 text-center">
+        {loading ? (
+          /* Loading skeleton */
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            {[...Array(4)].map((_, i) => (
+              <div
+                key={i}
+                className="animate-pulse rounded-xl border border-border bg-card"
+              >
+                <div className="aspect-video rounded-t-xl bg-muted" />
+                <div className="space-y-3 p-4">
+                  <div className="h-4 w-3/4 rounded bg-muted" />
+                  <div className="h-3 w-1/2 rounded bg-muted" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : projects.length === 0 ? (
+          /* Empty state */
+          <div className="flex min-h-[400px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-border bg-card/40 p-12 text-center">
             <div className="mb-6 flex h-20 w-20 items-center justify-center rounded-2xl bg-primary/10">
               <FolderOpen className="h-10 w-10 text-primary" />
             </div>
-            <h2 className="mb-2 text-xl font-semibold">No projects yet</h2>
+            <h2 className="mb-2 text-xl font-semibold">No demos yet</h2>
             <p className="mb-8 max-w-sm text-muted-foreground">
-              Create your first demo video by recording your screen. Our AI will
-              handle the rest.
+              Create your first demo by recording your screen. DemoForge's AI will
+              handle the script, voice, and framing.
             </p>
-            <Button variant="hero" size="lg" asChild>
-              <Link to="/recorder">
+            <Button variant="hero" size="lg" onClick={handleCreate} disabled={creating}>
+              {creating ? (
+                <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+              ) : (
                 <Plus className="mr-2 h-5 w-5" />
-                Create Your First Demo
-              </Link>
+              )}
+              Create your first demo
             </Button>
           </div>
         ) : (
-          /* Project Grid */
+          /* Project grid */
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-            {displayProjects.map((project) => (
-              <Link
-                key={project.id}
-                to={`/editor/${project.id}`}
-                className="group relative rounded-xl border border-border bg-card transition-all duration-200 hover:-translate-y-1 hover:shadow-lg"
-              >
-                {/* Thumbnail */}
-                <div className="relative aspect-video overflow-hidden rounded-t-xl bg-gradient-subtle">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <Video className="h-10 w-10 text-muted-foreground/30" />
-                  </div>
-                  <div className="absolute inset-0 flex items-center justify-center bg-foreground/0 opacity-0 transition-all group-hover:bg-foreground/5 group-hover:opacity-100">
-                    <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary shadow-lg">
-                      <Edit className="h-5 w-5 text-primary-foreground" />
+            {projects.map((project) => {
+              const cfg = statusConfig[project.status] ?? statusConfig.draft;
+              return (
+                <Link
+                  key={project.id}
+                  to={`/editor/${project.id}`}
+                  className="group relative rounded-xl border border-border bg-card transition-all duration-200 hover:-translate-y-0.5 hover:shadow-lg"
+                >
+                  {/* Thumbnail */}
+                  <div className="relative aspect-video overflow-hidden rounded-t-xl bg-gradient-subtle">
+                    {project.thumbnail_url ? (
+                      <img
+                        src={project.thumbnail_url}
+                        alt={project.title}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center">
+                        <Video className="h-10 w-10 text-muted-foreground/30" />
+                      </div>
+                    )}
+                    <div className="absolute inset-0 flex items-center justify-center bg-foreground/0 opacity-0 transition-all group-hover:bg-foreground/5 group-hover:opacity-100">
+                      <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary shadow-lg">
+                        <Edit className="h-5 w-5 text-primary-foreground" />
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Content */}
-                <div className="p-4">
-                  <div className="mb-3 flex items-start justify-between gap-2">
-                    <h3 className="line-clamp-2 font-medium leading-snug">
-                      {project.title}
-                    </h3>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        asChild
-                        onClick={(e) => e.preventDefault()}
-                      >
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
+                  {/* Content */}
+                  <div className="p-4">
+                    <div className="mb-3 flex items-start justify-between gap-2">
+                      <h3 className="line-clamp-2 font-medium leading-snug">
+                        {project.title}
+                      </h3>
+                      <DropdownMenu>
+                        <DropdownMenuTrigger
+                          asChild
+                          onClick={(e) => e.preventDefault()}
                         >
-                          <MoreHorizontal className="h-4 w-4" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          onClick={(e) => {
-                            e.preventDefault();
-                            handleDelete(project.id);
-                          }}
-                          className="text-destructive focus:text-destructive"
-                        >
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          Delete
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </div>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 shrink-0 opacity-0 group-hover:opacity-100"
+                          >
+                            <MoreHorizontal className="h-4 w-4" />
+                          </Button>
+                        </DropdownMenuTrigger>
+                        <DropdownMenuContent align="end">
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.preventDefault();
+                              setSharing(project);
+                            }}
+                          >
+                            <Share2 className="mr-2 h-4 w-4" />
+                            Share
+                          </DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={(e) => {
+                              e.preventDefault();
+                              handleDelete(project.id);
+                            }}
+                            className="text-destructive focus:text-destructive"
+                          >
+                            <Trash2 className="mr-2 h-4 w-4" />
+                            Delete
+                          </DropdownMenuItem>
+                        </DropdownMenuContent>
+                      </DropdownMenu>
+                    </div>
 
-                  <div className="flex items-center justify-between">
-                    <Badge
-                      variant="outline"
-                      className={statusConfig[project.status].className}
-                    >
-                      {statusConfig[project.status].label}
-                    </Badge>
-                    <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                      <Clock className="h-3 w-3" />
-                      {project.updatedAt}
+                    <div className="flex items-center justify-between">
+                      <Badge variant="outline" className={cfg.className}>
+                        {cfg.label}
+                      </Badge>
+                      <div className="flex items-center gap-3 text-xs text-muted-foreground">
+                        {project.view_count > 0 && (
+                          <span className="flex items-center gap-1">
+                            <Eye className="h-3 w-3" />
+                            {project.view_count}
+                          </span>
+                        )}
+                        <span className="flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {formatDate(project.updated_at)}
+                        </span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </Link>
-            ))}
+                </Link>
+              );
+            })}
           </div>
+        )}
+
+        {sharing && (
+          <ShareDialog
+            open
+            onOpenChange={(o) => !o && setSharing(null)}
+            projectId={sharing.id}
+            shareSlug={sharing.share_slug}
+            visibility={sharing.visibility}
+            viewCount={sharing.view_count}
+            onVisibilityChange={(v) =>
+              setProjects((ps) =>
+                ps.map((p) => (p.id === sharing.id ? { ...p, visibility: v } : p))
+              )
+            }
+          />
         )}
       </main>
     </div>

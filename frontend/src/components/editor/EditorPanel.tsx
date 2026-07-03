@@ -6,6 +6,7 @@ import { InteractionEffectsPanel } from './panels/InteractionEffectsPanel';
 import { VoicePanel } from './panels/VoicePanel';
 import { TextPanel } from './panels/TextPanel';
 import { TimelinePanel } from './panels/TimelinePanel';
+import { ScriptPanel } from './panels/ScriptPanel';
 import {
     Palette,
     Video,
@@ -13,12 +14,13 @@ import {
     Mic2,
     Type,
     LayoutTemplate,
-    Clock
+    Clock,
+    FileText
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
-type TabId = 'voice' | 'design' | 'text' | 'camera' | 'effects' | 'timeline';
+type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'effects' | 'timeline';
 
 interface SidebarItemProps {
     id: TabId;
@@ -89,6 +91,7 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect,
         }
 
         switch (activeTab) {
+            case 'script': return <ScriptPanel />;
             case 'voice': return <VoicePanel />;
             case 'design': return <DesignPanel />;
             case 'text': return <TextPanel />;
@@ -105,6 +108,7 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect,
             <div className="w-10 flex flex-col items-center bg-card/40 border-r border-white/5 backdrop-blur-md z-10 shadow-xl">
 
                 <div className="flex-1 w-full flex flex-col items-center scrollbar-none overflow-y-auto py-2" style={{overflow:'hidden'}}>
+                    <SidebarItem id="script" icon={FileText} label="Script" isActive={activeTab === 'script'} onClick={setActiveTab} />
                     <SidebarItem id="voice" icon={Mic2} label="Voice" isActive={activeTab === 'voice'} onClick={setActiveTab} />
                     <div className="w-8 h-[1px] bg-border/40 my-2" />
                     <SidebarItem id="design" icon={Palette} label="Design" isActive={activeTab === 'design'} onClick={setActiveTab} />
@@ -125,6 +129,7 @@ export function EditorPanel({ selectedEffectId, onEffectSelect, isLoopingEffect,
                         </h2>
                         <p className="text-xs text-muted-foreground/80 font-medium">
                             {selectedClickIndex !== null && selectedClickIndex !== undefined && 'Configure click effect properties'}
+                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'script' && 'Generate AI script with timestamps from video events'}
                             {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'voice' && 'Generate and manage AI voiceovers with script editing'}
                             {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'design' && 'Canvas layout and background'}
                             {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'text' && 'Add text overlays and titles'}

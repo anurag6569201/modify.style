@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Video, LogOut, User } from "lucide-react";
+import { Clapperboard, LogOut, User } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -18,6 +18,12 @@ interface HeaderProps {
   };
 }
 
+const marketingLinks = [
+  { label: "How it works", href: "/#how-it-works" },
+  { label: "Features", href: "/#features" },
+  { label: "Pricing", href: "/#pricing" },
+];
+
 export function Header({ isAuthenticated = false, user }: HeaderProps) {
   const navigate = useNavigate();
 
@@ -28,16 +34,33 @@ export function Header({ isAuthenticated = false, user }: HeaderProps) {
   };
 
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/80 backdrop-blur-xl">
+    <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/80 backdrop-blur-xl">
       <div className="container flex h-16 items-center justify-between">
-        <Link to="/" className="flex items-center gap-2 transition-opacity hover:opacity-80">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-gradient-hero">
-            <Video className="h-5 w-5 text-primary-foreground" />
+        <Link
+          to="/"
+          className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
+        >
+          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary shadow-sm">
+            <Clapperboard className="h-[18px] w-[18px] text-primary-foreground" />
           </div>
-          <span className="text-xl font-semibold">DemoForge</span>
+          <span className="text-lg font-semibold tracking-tight">DemoForge</span>
         </Link>
 
-        <nav className="flex items-center gap-4">
+        {!isAuthenticated && (
+          <nav className="hidden items-center gap-8 md:flex">
+            {marketingLinks.map((link) => (
+              <a
+                key={link.label}
+                href={link.href}
+                className="text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {link.label}
+              </a>
+            ))}
+          </nav>
+        )}
+
+        <nav className="flex items-center gap-2 sm:gap-3">
           {isAuthenticated ? (
             <>
               <Button variant="ghost" asChild>
@@ -49,7 +72,7 @@ export function Header({ isAuthenticated = false, user }: HeaderProps) {
                     <Avatar className="h-9 w-9">
                       <AvatarImage src={user?.avatar} alt={user?.name} />
                       <AvatarFallback className="bg-primary text-primary-foreground">
-                        {user?.name?.charAt(0) || <User className="h-4 w-4" />}
+                        {user?.name?.charAt(0)?.toUpperCase() || <User className="h-4 w-4" />}
                       </AvatarFallback>
                     </Avatar>
                   </Button>
@@ -61,7 +84,10 @@ export function Header({ isAuthenticated = false, user }: HeaderProps) {
                       <p className="text-xs text-muted-foreground">{user?.email}</p>
                     </div>
                   </div>
-                  <DropdownMenuItem onClick={handleLogout} className="text-destructive focus:text-destructive">
+                  <DropdownMenuItem
+                    onClick={handleLogout}
+                    className="text-destructive focus:text-destructive"
+                  >
                     <LogOut className="mr-2 h-4 w-4" />
                     Log out
                   </DropdownMenuItem>
@@ -70,11 +96,11 @@ export function Header({ isAuthenticated = false, user }: HeaderProps) {
             </>
           ) : (
             <>
-              <Button variant="ghost" asChild>
+              <Button variant="ghost" asChild className="hidden sm:inline-flex">
                 <Link to="/auth">Sign in</Link>
               </Button>
               <Button variant="hero" asChild>
-                <Link to="/auth">Get Started</Link>
+                <Link to="/auth">Start free</Link>
               </Button>
             </>
           )}

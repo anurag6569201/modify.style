@@ -9,6 +9,7 @@ import Dashboard from "./pages/Dashboard";
 import Recorder from "./pages/Recorder";
 import Editor from "./pages/Editor";
 import Render from "./pages/Render";
+import Share from "./pages/Share";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -25,6 +26,8 @@ const App = () => (
           {/* Public Routes */}
           <Route path="/" element={<Landing />} />
           <Route path="/auth" element={<Auth />} />
+          {/* Public share player — anyone with the link, no auth */}
+          <Route path="/v/:slug" element={<Share />} />
 
           {/* Protected Routes */}
           <Route element={<ProtectedRoute />}>

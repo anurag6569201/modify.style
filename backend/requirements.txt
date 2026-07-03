@@ -4,3 +4,8 @@ django-cors-headers
 djangorestframework-simplejwt
 requests
 azure-cognitiveservices-speech
+google-generativeai
+openai
+azure-storage-blob
+python-dotenv
+Pillow

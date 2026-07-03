@@ -1,0 +1,38 @@
+# ─── Secrets & local config (NEVER commit) ───
+.env
+*.env
+.env.*
+!*.env.example
+!.env.example
+
+# ─── Python / Django ───
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+*.sqlite3
+db.sqlite3
+backend/media/
+*.log
+
+# ─── Node / Vite / frontend ───
+node_modules/
+dist/
+dist-ssr/
+.vite/
+*.local
+bun.lockb.bak
+
+# ─── Editor / OS ───
+.DS_Store
+Thumbs.db
+.idea/
+*.swp
+.cache/
+
+# ─── Build / coverage ───
+coverage/
+htmlcov/
+.pytest_cache/
