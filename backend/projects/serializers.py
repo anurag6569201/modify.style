@@ -40,6 +40,17 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
     def get_video_url(self, obj):
         return resolve_project_video_url(obj, self.context.get('request'))
 
+    def update(self, instance, validated_data):
+        incoming_recording = validated_data.get('recording_data')
+        if incoming_recording is not None:
+            merged = dict(instance.recording_data or {})
+            merged.update(incoming_recording)
+            existing_path = (instance.recording_data or {}).get('video_storage_path')
+            if existing_path:
+                merged['video_storage_path'] = existing_path
+            validated_data['recording_data'] = merged
+        return super().update(instance, validated_data)
+
 
 class ProjectPublicSerializer(serializers.ModelSerializer):
     """
