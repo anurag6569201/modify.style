@@ -24,34 +24,23 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Create deployment package
-        run: |
-          cd backend
-          zip -r ../deploy.zip . \
-            -x "*.git*" "venv/*" ".venv/*" "__pycache__/*" "*.pyc" \
-            "db.sqlite3" ".env" ".env.*" "media/*" "staticfiles/*" ".azure/*"
-
       - name: Deploy to Azure Web App
-        run: |
-          az webapp deploy \
-            --resource-group greaby \
-            --name demoforge-api \
-            --src-path deploy.zip \
-            --type zip \
-            --async false \
-            --clean true
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: demoforge-api
+          package: backend
 
       - name: Restart Web App
         run: az webapp restart --resource-group greaby --name demoforge-api
 
       - name: Verify health
         run: |
-          for i in 1 2 3 4 5 6 7 8 10 12; do
-            sleep "$i"
+          for wait in 20 30 40 50 60 60 60; do
+            sleep "$wait"
             body=$(curl -s "https://demoforge-api.azurewebsites.net/api/health/" || true)
-            echo "attempt: $body"
+            echo "$body"
             echo "$body" | grep -q '"database":"postgresql"' && \
             echo "$body" | grep -q '"storage":"azure_blob"' && exit 0
           done
-          echo "Health check failed — production not on PostgreSQL + Azure Blob" >&2
+          echo "Health check failed" >&2
           exit 1
