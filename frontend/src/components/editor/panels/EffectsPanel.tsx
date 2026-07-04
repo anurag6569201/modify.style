@@ -1,25 +1,20 @@
-import React, { useState } from 'react';
+import React from 'react';
 import { editorStore, useEditorState } from '@/lib/editor/store';
 import { Label } from '@/components/ui/label';
 import { Slider } from '@/components/ui/slider';
 import { Switch } from '@/components/ui/switch';
-import { Button } from '@/components/ui/button';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import {
     MousePointerClick,
-    Zap,
-    Activity,
-    ChevronDown,
+    MousePointer2,
     Sparkles,
-    Palette,
-    Layers
+    Info,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
+const CLICK_STYLES = ['ripple', 'orb', 'pulse', 'ring', 'splash', 'none'] as const;
+
 export function EffectsPanel() {
-    const { effects } = useEditorState();
-    const [activeSection, setActiveSection] = useState<string | null>('click_effects');
+    const { effects, cursor, events } = useEditorState();
 
     const updateEffects = (updates: Partial<typeof effects>) => {
         editorStore.setState((prev) => ({
@@ -27,173 +22,250 @@ export function EffectsPanel() {
         }));
     };
 
+    const updateCursor = (updates: Partial<typeof cursor>) => {
+        editorStore.setState((prev) => ({
+            cursor: { ...prev.cursor, ...updates },
+        }));
+    };
+
     return (
-        <div className="h-full flex flex-col bg-background/20">
-            {/* Header */}
-            <div className="flex items-center justify-between p-4 border-b border-white/5 bg-white/5 backdrop-blur-md">
-                <div className="flex items-center gap-3">
-                    <div className="h-8 w-8 rounded-lg bg-purple-500/20 flex items-center justify-center border border-purple-500/30">
-                        <Sparkles className="h-4 w-4 text-purple-400" />
-                    </div>
-                    <div>
-                        <h3 className="text-sm font-semibold text-foreground/90">
-                            Global Effects
-                        </h3>
-                        <p className="text-xs text-muted-foreground">
-                            Configure default behaviors
-                        </p>
-                    </div>
+        <div className="space-y-5 p-4 pb-16">
+            {/* ---- Click effects ---- */}
+            <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                    <Label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                        <MousePointerClick className="h-3.5 w-3.5 text-sky-500" />
+                        Click effects
+                    </Label>
+                    <Switch
+                        checked={effects.clickRipple}
+                        onCheckedChange={(c) => updateEffects({ clickRipple: c })}
+                    />
                 </div>
-            </div>
+                <p className="text-[10px] text-muted-foreground">
+                    Every recorded click ({events.clicks.length} captured) plays this effect. Select a click dot on the
+                    timeline to style one click differently.
+                </p>
 
-            <ScrollArea className="flex-1">
-                <div className="p-4 space-y-6">
-
-                    {/* Interaction Effects Section */}
-                    <div className="space-y-4">
-                        <div className="flex items-center gap-2 px-1">
-                            <MousePointerClick className="h-4 w-4 text-blue-400" />
-                            <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Interaction Defaults</h4>
+                {effects.clickRipple && (
+                    <div className="space-y-3 animate-in fade-in slide-in-from-top-1">
+                        <div className="grid grid-cols-3 gap-1.5">
+                            {CLICK_STYLES.map((style) => (
+                                <button
+                                    key={style}
+                                    className={cn(
+                                        'h-8 rounded-md border text-[10px] font-medium capitalize transition-all',
+                                        effects.clickAnimationStyle === style
+                                            ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                                            : 'border-border/50 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground'
+                                    )}
+                                    onClick={() => updateEffects({ clickAnimationStyle: style })}
+                                >
+                                    {style}
+                                </button>
+                            ))}
                         </div>
 
-                        {/* Main Toggle */}
-                        <div className="p-4 rounded-xl bg-gradient-to-br from-white/5 to-white/0 border border-white/10 shadow-sm backdrop-blur-sm">
-                            <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <Label className="text-sm font-medium text-foreground/90">Click Ripple Effects</Label>
+                        <div className="flex items-center gap-2">
+                            <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-md border border-border/50" title="Effect color">
+                                <input
+                                    type="color"
+                                    className="absolute -left-1/2 -top-1/2 h-[200%] w-[200%] cursor-pointer border-0 p-0"
+                                    value={/^#([0-9a-f]{6})$/i.test(effects.clickColor) ? effects.clickColor : '#eb4034'}
+                                    onChange={(e) => updateEffects({ clickColor: e.target.value })}
+                                />
+                            </div>
+                            <div className="flex-1 space-y-1">
+                                <div className="flex items-center justify-between">
+                                    <Label className="text-[10px] text-muted-foreground">Size</Label>
+                                    <span className="font-mono text-[10px] text-muted-foreground">{effects.clickSize.toFixed(1)}x</span>
                                 </div>
-                                <Switch
-                                    checked={effects.clickRipple}
-                                    onCheckedChange={(c) => updateEffects({ clickRipple: c })}
-                                    className="data-[state=checked]:bg-blue-500"
+                                <Slider
+                                    min={0.5}
+                                    max={3}
+                                    step={0.1}
+                                    value={[effects.clickSize]}
+                                    onValueChange={([val]) => updateEffects({ clickSize: val })}
                                 />
                             </div>
                         </div>
 
-                        {effects.clickRipple && (
-                            <div className="space-y-4 animate-in fade-in slide-in-from-top-2 duration-300">
-                                {/* Animation Style */}
-                                <div className="space-y-3">
-                                    <Label className="text-xs text-muted-foreground px-1">Default Style</Label>
-                                    <div className="grid grid-cols-3 gap-2">
-                                        {(['ripple', 'orb', 'pulse', 'ring', 'splash', 'none'] as const).map((style) => (
-                                            <Button
-                                                key={style}
-                                                variant="outline"
-                                                size="sm"
-                                                onClick={() => updateEffects({ clickAnimationStyle: style })}
-                                                className={cn(
-                                                    "h-8 text-xs capitalize transition-all duration-200",
-                                                    effects.clickAnimationStyle === style
-                                                        ? "bg-blue-500/20 text-blue-400 border-blue-500/50 shadow-[0_0_15px_-5px_rgba(59,130,246,0.5)]"
-                                                        : "bg-white/5 text-muted-foreground border-white/10 hover:bg-white/10 hover:text-foreground"
-                                                )}
-                                            >
-                                                {style}
-                                            </Button>
-                                        ))}
-                                    </div>
-                                </div>
-
-                                {/* Properties */}
-                                <Collapsible
-                                    open={activeSection === 'click_properties'}
-                                    onOpenChange={() => setActiveSection(activeSection === 'click_properties' ? null : 'click_properties')}
-                                    className="space-y-2 rounded-xl bg-white/5 border border-white/10 overflow-hidden"
-                                >
-                                    <CollapsibleTrigger className="flex items-center justify-between w-full p-4 hover:bg-white/5 transition-colors">
-                                        <div className="flex items-center gap-2">
-                                            <Palette className="h-4 w-4 text-purple-400" />
-                                            <span className="text-sm font-medium">Appearance</span>
-                                        </div>
-                                        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform duration-200", activeSection === 'click_properties' && "rotate-180")} />
-                                    </CollapsibleTrigger>
-                                    <CollapsibleContent className="p-4 pt-0 space-y-4">
-                                        <div className="space-y-2">
-                                            <Label className="text-xs text-muted-foreground">Default Color</Label>
-                                            <div className="flex gap-2 items-center">
-                                                <div className="relative h-8 w-8 shrink-0 overflow-hidden rounded-md border border-white/20 shadow-sm cursor-pointer hover:scale-105 transition-transform">
-                                                    <input
-                                                        type="color"
-                                                        className="absolute -top-1/2 -left-1/2 w-[200%] h-[200%] p-0 cursor-pointer opacity-0"
-                                                        value={effects.clickColor}
-                                                        onChange={(e) => updateEffects({ clickColor: e.target.value })}
-                                                    />
-                                                    <div className="w-full h-full" style={{ backgroundColor: effects.clickColor }} />
-                                                </div>
-                                                <div className="flex-1  rounded px-2 py-1 text-xs font-mono text-muted-foreground border border-white/10">
-                                                    {effects.clickColor}
-                                                </div>
-                                            </div>
-                                        </div>
-
-                                        <div className="space-y-2">
-                                            <div className="flex justify-between">
-                                                <Label className="text-xs text-muted-foreground">Default Size</Label>
-                                                <span className="text-xs font-mono text-muted-foreground">{effects.clickSize.toFixed(1)}x</span>
-                                            </div>
-                                            <Slider
-                                                min={0.5}
-                                                max={3}
-                                                step={0.1}
-                                                value={[effects.clickSize]}
-                                                onValueChange={([val]) => updateEffects({ clickSize: val })}
-                                                className="[&_.range-thumb]:bg-purple-400 [&_.range-fill]:bg-purple-400/50"
-                                            />
-                                        </div>
-                                    </CollapsibleContent>
-                                </Collapsible>
-
-                                {/* Physics */}
-                                <Collapsible
-                                    open={activeSection === 'click_physics'}
-                                    onOpenChange={() => setActiveSection(activeSection === 'click_physics' ? null : 'click_physics')}
-                                    className="space-y-2 rounded-xl bg-white/5 border border-white/10 overflow-hidden"
-                                >
-                                    <CollapsibleTrigger className="flex items-center justify-between w-full p-4 hover:bg-white/5 transition-colors">
-                                        <div className="flex items-center gap-2">
-                                            <Zap className="h-4 w-4 text-yellow-400" />
-                                            <span className="text-sm font-medium">Physics</span>
-                                        </div>
-                                        <ChevronDown className={cn("h-4 w-4 text-muted-foreground transition-transform duration-200", activeSection === 'click_physics' && "rotate-180")} />
-                                    </CollapsibleTrigger>
-                                    <CollapsibleContent className="p-4 pt-0 space-y-4">
-                                        <div className="space-y-2">
-                                            <div className="flex justify-between">
-                                                <Label className="text-xs text-muted-foreground">Impact Force</Label>
-                                                <span className="text-xs font-mono text-muted-foreground">{(effects.clickForce * 100).toFixed(0)}%</span>
-                                            </div>
-                                            <Slider
-                                                min={0}
-                                                max={1.5}
-                                                step={0.1}
-                                                value={[effects.clickForce]}
-                                                onValueChange={([val]) => updateEffects({ clickForce: val })}
-                                                className="[&_.range-thumb]:bg-yellow-400 [&_.range-fill]:bg-yellow-400/50"
-                                            />
-                                            <p className="text-[10px] text-muted-foreground/70">
-                                                Controls screen shake intensity on click
-                                            </p>
-                                        </div>
-
-                                        <div className="flex items-center justify-between pt-2 border-t border-white/5">
-                                            <div className="flex items-center gap-2">
-                                                <Activity className="h-3.5 w-3.5 text-red-400" />
-                                                <Label className="text-sm text-foreground/80">Double Click Emphasis</Label>
-                                            </div>
-                                            <Switch
-                                                checked={effects.clickEmphasis}
-                                                onCheckedChange={(c) => updateEffects({ clickEmphasis: c })}
-                                                className="scale-90"
-                                            />
-                                        </div>
-                                    </CollapsibleContent>
-                                </Collapsible>
+                        <div className="space-y-1.5">
+                            <div className="flex items-center justify-between">
+                                <Label className="text-[10px] uppercase text-muted-foreground">Impact force</Label>
+                                <span className="font-mono text-[10px] text-muted-foreground">{Math.round(effects.clickForce * 100)}%</span>
                             </div>
-                        )}
+                            <Slider
+                                min={0}
+                                max={1.5}
+                                step={0.1}
+                                value={[effects.clickForce]}
+                                onValueChange={([val]) => updateEffects({ clickForce: val })}
+                            />
+                            <p className="text-[10px] text-muted-foreground/70">Intensity of the effect (and screen shake on strong clicks).</p>
+                        </div>
+
+                        <div className="flex items-center justify-between rounded-lg border border-border/30 bg-background/40 px-3 py-2">
+                            <Label className="text-xs">Emphasize double clicks</Label>
+                            <Switch
+                                checked={effects.clickEmphasis}
+                                onCheckedChange={(c) => updateEffects({ clickEmphasis: c })}
+                                className="scale-90"
+                            />
+                        </div>
+                    </div>
+                )}
+            </div>
+
+            {/* ---- Cursor ---- */}
+            <div className="space-y-3 border-t border-border/40 pt-4">
+                <Label className="flex items-center gap-2 text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                    <MousePointer2 className="h-3.5 w-3.5 text-primary" />
+                    Cursor
+                </Label>
+
+                {/* Style picker */}
+                <div className="grid grid-cols-5 gap-1.5">
+                    {(
+                        [
+                            { id: 'arrow', label: 'Arrow', hint: 'Classic pointer' },
+                            { id: 'halo', label: 'Halo', hint: 'Pointer with a highlight ring — great for tutorials' },
+                            { id: 'dot', label: 'Dot', hint: 'Minimal dot marker' },
+                            { id: 'spotlight', label: 'Spot', hint: 'Dims everything except around the cursor' },
+                            { id: 'hidden', label: 'Off', hint: 'No cursor' },
+                        ] as const
+                    ).map(({ id, label, hint }) => (
+                        <button
+                            key={id}
+                            title={hint}
+                            className={cn(
+                                'h-8 rounded-md border text-[10px] font-medium transition-all',
+                                cursor.style === id
+                                    ? 'border-primary bg-primary/10 text-primary shadow-sm'
+                                    : 'border-border/50 bg-background/50 text-muted-foreground hover:border-border hover:text-foreground'
+                            )}
+                            onClick={() => updateCursor({ style: id })}
+                        >
+                            {label}
+                        </button>
+                    ))}
+                </div>
+
+                {cursor.style !== 'hidden' && (
+                <>
+                <div className="space-y-1.5">
+                    <div className="flex items-center justify-between">
+                        <Label className="text-[10px] uppercase text-muted-foreground">Movement smoothing</Label>
+                        <span className="font-mono text-[10px] text-muted-foreground">{Math.round((cursor.smoothing ?? 0.35) * 100)}%</span>
+                    </div>
+                    <Slider
+                        min={0}
+                        max={1}
+                        step={0.05}
+                        value={[cursor.smoothing ?? 0.35]}
+                        onValueChange={([val]) => updateCursor({ smoothing: val })}
+                    />
+                    <p className="text-[10px] text-muted-foreground/70">Irons out jittery mouse movement for a polished, deliberate feel.</p>
+                </div>
+
+                <div className="flex items-center gap-2">
+                    <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-md border border-border/50" title="Cursor color">
+                        <input
+                            type="color"
+                            className="absolute -left-1/2 -top-1/2 h-[200%] w-[200%] cursor-pointer border-0 p-0"
+                            value={/^#([0-9a-f]{6})$/i.test(cursor.color) ? cursor.color : '#000000'}
+                            onChange={(e) => updateCursor({ color: e.target.value })}
+                        />
+                    </div>
+                    <div className="flex-1 space-y-1">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-[10px] text-muted-foreground">Size</Label>
+                            <span className="font-mono text-[10px] text-muted-foreground">{cursor.size.toFixed(1)}x</span>
+                        </div>
+                        <Slider
+                            min={0.5}
+                            max={2.5}
+                            step={0.1}
+                            value={[cursor.size]}
+                            onValueChange={([val]) => updateCursor({ size: val })}
+                        />
                     </div>
                 </div>
-            </ScrollArea>
+
+                <div className="grid grid-cols-3 gap-2">
+                    <div className="flex items-center justify-between rounded-lg border border-border/30 bg-background/40 px-2.5 py-2">
+                        <Label className="text-[11px]">Glow</Label>
+                        <Switch
+                            checked={cursor.glow}
+                            onCheckedChange={(c) => updateCursor({ glow: c })}
+                            className="scale-75"
+                        />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-border/30 bg-background/40 px-2.5 py-2">
+                        <Label className="text-[11px]">Trail</Label>
+                        <Switch
+                            checked={cursor.trail}
+                            onCheckedChange={(c) => updateCursor({ trail: c, trailLength: c ? Math.max(8, cursor.trailLength) : 0 })}
+                            className="scale-75"
+                        />
+                    </div>
+                    <div className="flex items-center justify-between rounded-lg border border-border/30 bg-background/40 px-2.5 py-2" title="Ring animation on every recorded click">
+                        <Label className="text-[11px]">Pulse</Label>
+                        <Switch
+                            checked={cursor.clickPulse ?? true}
+                            onCheckedChange={(c) => updateCursor({ clickPulse: c })}
+                            className="scale-75"
+                        />
+                    </div>
+                </div>
+
+                {cursor.trail && (
+                    <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                        <div className="flex items-center justify-between">
+                            <Label className="text-[10px] uppercase text-muted-foreground">Trail length</Label>
+                            <span className="font-mono text-[10px] text-muted-foreground">{cursor.trailLength}</span>
+                        </div>
+                        <Slider
+                            min={4}
+                            max={30}
+                            step={1}
+                            value={[cursor.trailLength]}
+                            onValueChange={([val]) => updateCursor({ trailLength: val })}
+                        />
+                    </div>
+                )}
+
+                {(cursor.style === 'halo' || cursor.style === 'spotlight' || cursor.glow || cursor.trail || (cursor.clickPulse ?? true)) && (
+                    <div className="flex items-center gap-2">
+                        <div className="relative h-7 w-7 shrink-0 overflow-hidden rounded-md border border-border/50" title="Accent color for halo, trail, glow and pulse">
+                            <input
+                                type="color"
+                                className="absolute -left-1/2 -top-1/2 h-[200%] w-[200%] cursor-pointer border-0 p-0"
+                                value={/^#([0-9a-f]{6})$/i.test(cursor.haloColor ?? '') ? cursor.haloColor : '#e8506e'}
+                                onChange={(e) => updateCursor({ haloColor: e.target.value })}
+                            />
+                        </div>
+                        <span className="text-[10px] text-muted-foreground">Accent color — halo ring, trail, glow and click pulse</span>
+                    </div>
+                )}
+
+                <p className="flex items-start gap-1.5 rounded-lg border border-border/30 bg-background/40 p-2 text-[10px] text-muted-foreground">
+                    <Info className="mt-0.5 h-3 w-3 shrink-0" />
+                    The cursor is re-drawn from your recorded mouse movements — live in the preview and identically in the export.
+                </p>
+                </>
+                )}
+            </div>
+
+            {/* ---- Pointer to per-click styling ---- */}
+            <div className="flex items-start gap-2 rounded-lg border border-primary/20 bg-primary/5 p-3">
+                <Sparkles className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary" />
+                <p className="text-[11px] leading-relaxed text-muted-foreground">
+                    <span className="font-medium text-foreground">Per-click styling:</span> click any blue dot on the
+                    timeline&apos;s Clicks track to give that moment its own effect — 20+ styles including glitch,
+                    shockwave and hologram.
+                </p>
+            </div>
         </div>
     );
 }

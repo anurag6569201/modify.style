@@ -62,6 +62,7 @@ class ScriptGenerationViewSet(viewsets.ModelViewSet):
         video_duration = validated_data.get('video_duration')
         events = validated_data.get('events', {})
         screenshots = validated_data.get('screenshots', [])
+        style = validated_data.get('style', {}) or {}
         
         # Get or create user (handles both authenticated and anonymous in DEBUG)
         user = self.get_or_create_user()
@@ -85,7 +86,8 @@ class ScriptGenerationViewSet(viewsets.ModelViewSet):
             script_segments = gemini_script_service.generate_script_with_timestamps(
                 video_duration=video_duration,
                 events=events,
-                screenshots=screenshots
+                screenshots=screenshots,
+                style=style
             )
             
             # Update script generation with results

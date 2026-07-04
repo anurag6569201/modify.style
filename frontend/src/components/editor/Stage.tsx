@@ -4,6 +4,8 @@ import { VideoLayer } from './VideoLayer';
 import { BackgroundLayer } from './BackgroundLayer';
 import { TextLayer } from './TextLayer';
 import { ClickEffectsLayer } from './ClickEffectsLayer';
+import { CursorLayer } from './CursorLayer';
+import { CaptionsLayer } from './CaptionsLayer';
 import { updateCameraSystem, getInitialCameraState } from '@/lib/composition/camera';
 import { calculateOutputDimensions, calculateVideoTransform } from '@/lib/composition/aspectRatio';
 
@@ -401,6 +403,8 @@ export const Stage: React.FC = () => {
                 <VideoLayer />
                 {/* Click Effects Layer */}
                 <ClickEffectsLayer />
+                {/* Synthetic cursor (styles, trail, click pulse) */}
+                <CursorLayer />
                 {/* Vignette Overlay */}
                 <div
                     ref={vignetteRef}
@@ -413,6 +417,7 @@ export const Stage: React.FC = () => {
                 />
             </div>
             <TextLayer />
+            <CaptionsLayer />
         </div>
     );
 };

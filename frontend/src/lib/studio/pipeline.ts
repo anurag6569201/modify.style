@@ -23,6 +23,8 @@ export type EditorTabId =
   | "text"
   | "camera"
   | "effects"
+  | "polish"
+  | "music"
   | "timeline";
 
 export interface PipelineStep {

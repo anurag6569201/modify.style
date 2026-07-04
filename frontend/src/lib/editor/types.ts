@@ -1,5 +1,8 @@
 import { ClickData, MoveData, EffectEvent } from "@/pages/Recorder";
 
+/** A zoom/spotlight moment on the timeline (alias of the recorded effect event). */
+export type ZoomEffect = EffectEvent;
+
 export interface VideoConfig {
     url: string | null;
     duration: number;
@@ -15,16 +18,21 @@ export interface CameraConfig {
     mode: 'cinematic' | 'fast' | 'manual';
 }
 
+export type CursorStyle = 'arrow' | 'halo' | 'dot' | 'spotlight' | 'hidden';
+
 export interface CursorConfig {
     size: number;        // Scale multiplier (1.0 default)
     color: string;
     glow: boolean;
     trail: boolean;
     trailLength: number; // Number of history points to keep
-    style: 'modern' | 'classic' | 'gaming' | 'minimal' | 'custom'; // Cursor style theme
-    theme: 'light' | 'dark' | 'auto'; // Color theme
-    animation: boolean;  // Enable cursor animations
-    completePath: boolean; // Enable complete path capture and visualization
+    style: CursorStyle;  // Cursor rendering style
+    theme: 'light' | 'dark' | 'auto'; // Color theme (legacy)
+    animation: boolean;  // Enable cursor animations (legacy)
+    completePath: boolean; // Enable complete path capture and visualization (legacy)
+    clickPulse: boolean; // Pulse/scale animation on every click
+    smoothing: number;   // 0 = raw recorded path, 1 = heavy smoothing
+    haloColor: string;   // Ring/highlight color for halo & spotlight styles
 }
 
 export interface ClickEffectConfig {
@@ -147,6 +155,7 @@ export interface PlaybackState {
 }
 
 export interface ScriptSegment {
+    id?: string;
     text: string;
     timestamp: number;
     audioUrl?: string | null;
@@ -155,9 +164,41 @@ export interface ScriptSegment {
     isGenerated?: boolean;
 }
 
+export type ScriptTone = 'professional' | 'friendly' | 'energetic' | 'calm' | 'playful';
+
+export type CaptionStyle = 'clean' | 'boxed' | 'gradient';
+
+export interface CaptionsConfig {
+    enabled: boolean;
+    style: CaptionStyle;
+    position: 'bottom' | 'top';
+    size: number; // font size in px at 1080p reference
+}
+
+export interface MusicConfig {
+    enabled: boolean;
+    name: string;            // display name of the loaded file
+    url: string | null;      // object/data URL (blob URLs are session-only)
+    blob: Blob | null;       // in-memory audio for preview + export
+    volume: number;          // 0–100 base music volume
+    ducking: number;         // 0–100 → how much volume drops under narration
+    loop: boolean;
+    fadeIn: number;          // seconds
+    fadeOut: number;         // seconds
+}
+
+export interface ScriptStyleConfig {
+    template: string;   // template id, e.g. 'walkthrough'
+    tone: ScriptTone;
+    audience: string;   // free text, e.g. "new users"
+    instructions: string; // extra guidance for the AI
+}
+
 export interface VoiceoverConfig {
     script: string;
     scriptSegments: ScriptSegment[];
+    scriptStyle: ScriptStyleConfig;
+    captions: CaptionsConfig;
     voiceId: string;
     audioUrl: string | null;
     audioBlob: Blob | null;
@@ -184,7 +225,18 @@ export interface EditorState {
         temperature: number;
         vignette: number;
     };
-    textOverlays: Array<{
+    textOverlays: Array<TextOverlay>;
+    voiceover: VoiceoverConfig;
+    music: MusicConfig;
+    events: {
+        clicks: ClickData[];
+        moves: MoveData[];
+        effects: EffectEvent[];
+    };
+    playback: PlaybackState;
+}
+
+export interface TextOverlay {
         id: string;
         text: string;
         // Position & Transform
@@ -226,14 +278,6 @@ export interface EditorState {
         startTime: number;
         endTime: number;
         animation: 'none' | 'fade' | 'slide-up' | 'slide-down' | 'slide-left' | 'slide-right' | 'typewriter' | 'scale' | 'pop' | 'blur-in' | 'glitch' | 'spin-3d';
-    }>;
-    voiceover: VoiceoverConfig;
-    events: {
-        clicks: ClickData[];
-        moves: MoveData[];
-        effects: EffectEvent[];
-    };
-    playback: PlaybackState;
 }
 
 export const DEFAULT_EDITOR_STATE: EditorState = {
@@ -255,11 +299,14 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         color: '#000000', // Simple black cursor
         glow: false,
         trail: false,
-        trailLength: 0,
-        style: 'modern',
+        trailLength: 12,
+        style: 'arrow',
         theme: 'dark',
         animation: true,
         completePath: false,
+        clickPulse: true,
+        smoothing: 0.35,
+        haloColor: '#e8506e',
     },
     effects: {
         clickRipple: false,
@@ -329,7 +376,19 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
     voiceover: {
         script: '',
         scriptSegments: [],
-        voiceId: 'emma',
+        scriptStyle: {
+            template: 'walkthrough',
+            tone: 'professional',
+            audience: '',
+            instructions: '',
+        },
+        captions: {
+            enabled: false,
+            style: 'boxed',
+            position: 'bottom',
+            size: 32,
+        },
+        voiceId: 'en-US-EmmaMultilingualNeural',
         audioUrl: null,
         audioBlob: null,
         duration: 0,
@@ -338,6 +397,17 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         volume: 100,
         isGenerated: false,
         generatedAt: null,
+    },
+    music: {
+        enabled: false,
+        name: '',
+        url: null,
+        blob: null,
+        volume: 30,
+        ducking: 70,
+        loop: true,
+        fadeIn: 1,
+        fadeOut: 2,
     },
     events: {
         clicks: [],

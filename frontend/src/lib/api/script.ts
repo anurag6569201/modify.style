@@ -34,6 +34,12 @@ export interface ScriptGenerationRequest {
         timestamp: number;
         image: string; // base64 encoded image (data URL)
     }>;
+    style?: {
+        template?: string;
+        tone?: string;
+        audience?: string;
+        instructions?: string;
+    };
 }
 
 export interface ScriptGenerationResponse {
@@ -76,6 +82,7 @@ class ScriptAPIService {
                 video_duration: request.video_duration,
                 events: request.events,
                 screenshots: request.screenshots || [],
+                ...(request.style ? { style: request.style } : {}),
             };
             
             // Only include video_url if it's a valid non-empty string

@@ -17,7 +17,7 @@ export function useEditorFlowGuard(
   editorTab: string,
   live: LivePipelineSnapshot,
   setEditorTab: (tab: "script" | "voice" | "camera") => void,
-  options?: { projectLoading?: boolean }
+  options?: { projectLoading?: boolean; freshRecording?: boolean }
 ) {
   const navigate = useNavigate();
 
@@ -33,7 +33,8 @@ export function useEditorFlowGuard(
     const gate = gates.gates[step];
 
     if (!gates.recordComplete) {
-      if (live.hasVideo) return;
+      // Fresh recording from Recorder carries a blob URL in nav state — don't bounce back.
+      if (live.hasVideo || options?.freshRecording) return;
       toast.message("Record your demo first", {
         description: "Capture your screen before editing.",
       });

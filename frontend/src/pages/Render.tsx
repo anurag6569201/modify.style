@@ -13,6 +13,7 @@ import { PresentationConfig, VideoConfig, EffectsConfig, CursorConfig } from "@/
 import { calculateOutputDimensions, calculateVideoTransform } from "@/lib/composition/aspectRatio";
 import { FilterEngine } from "@/lib/effects/filters";
 import { getCursorPos } from "@/lib/composition/math";
+import { smoothedCursor, cursorTrail, clickPulseProgress } from "@/lib/editor/cursor";
 import { updateCameraSystem, getInitialCameraState } from "@/lib/composition/camera";
 import { ClickData, MoveData } from "./Recorder";
 import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
@@ -365,58 +366,132 @@ function drawCursor(
   ctx: CanvasRenderingContext2D,
   time: number,
   moves: MoveData[],
+  clicks: ClickData[],
   canvasWidth: number,
   canvasHeight: number,
-  cursorConfig: CursorConfig,
-  cursorImage?: HTMLImageElement
+  cursorConfig: CursorConfig
 ) {
-  const pos = getCursorPos(time, moves);
+  if (!cursorConfig || (cursorConfig as any).style === 'hidden') return;
+  const smoothing = (cursorConfig as any).smoothing ?? 0.35;
+  const pos = smoothedCursor(time, moves, smoothing);
   if (!pos) return;
 
   const cx = pos.x * canvasWidth;
   const cy = pos.y * canvasHeight;
+  const size = 22 * (cursorConfig.size || 1) * (canvasWidth / 1280);
+  const haloColor = (cursorConfig as any).haloColor || '#e8506e';
+  const style = (cursorConfig as any).style || 'arrow';
+  const pulse = (cursorConfig as any).clickPulse ? clickPulseProgress(time, clicks) : null;
 
-  // Use cursor image if available (matching CursorLayer.tsx)
-  if (cursorImage && cursorImage.complete) {
-    const size = 24 * cursorConfig.size;
-
-    // Glow effect
-    if (cursorConfig.glow) {
-      ctx.shadowColor = cursorConfig.color;
-      ctx.shadowBlur = 15;
-    } else {
-      ctx.shadowColor = "rgba(0,0,0,0.3)";
-      ctx.shadowBlur = 4;
-    }
-
-    // Draw cursor image
-    ctx.drawImage(cursorImage, cx, cy, size, size);
-    ctx.shadowColor = "transparent";
-    ctx.shadowBlur = 0;
-  } else {
-    // Fallback: simple cursor drawing
-    const size = 24 * cursorConfig.size;
-    ctx.fillStyle = cursorConfig.color;
-    ctx.strokeStyle = '#ffffff';
-    ctx.lineWidth = 1.5;
-
-    if (cursorConfig.glow) {
-      ctx.shadowColor = cursorConfig.color;
-      ctx.shadowBlur = 15;
-    }
-
-    ctx.beginPath();
-    ctx.moveTo(cx, cy);
-    ctx.lineTo(cx + size * 0.4, cy + size * 0.6);
-    ctx.lineTo(cx + size * 0.2, cy + size * 0.5);
-    ctx.lineTo(cx + size * 0.3, cy + size * 0.8);
-    ctx.lineTo(cx + size * 0.1, cy + size * 0.7);
-    ctx.closePath();
-
-    ctx.fill();
-    ctx.stroke();
-    ctx.shadowBlur = 0;
+  // Trail
+  if (cursorConfig.trail && cursorConfig.trailLength > 0) {
+    const trail = cursorTrail(time, moves, cursorConfig.trailLength, smoothing);
+    trail.forEach((p, i) => {
+      const alpha = 0.35 * (1 - i / trail.length);
+      const r = Math.max(1, size * 0.22 * (1 - i / trail.length));
+      ctx.beginPath();
+      ctx.arc(p.x * canvasWidth, p.y * canvasHeight, r, 0, Math.PI * 2);
+      ctx.fillStyle = cursorHexAlpha(haloColor, alpha);
+      ctx.fill();
+    });
   }
+
+  // Spotlight dimming
+  if (style === 'spotlight') {
+    const radius = size * 5;
+    const grad = ctx.createRadialGradient(cx, cy, radius * 0.55, cx, cy, radius * 1.6);
+    grad.addColorStop(0, 'rgba(0,0,0,0)');
+    grad.addColorStop(1, 'rgba(0,0,0,0.45)');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+  }
+
+  // Click pulse ring
+  if (pulse !== null) {
+    const pr = size * (1 + pulse * 2.4);
+    ctx.beginPath();
+    ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+    ctx.strokeStyle = cursorHexAlpha(haloColor, 0.75 * (1 - pulse));
+    ctx.lineWidth = Math.max(1.5, size * 0.14 * (1 - pulse));
+    ctx.stroke();
+  }
+
+  // Glow
+  if (cursorConfig.glow) {
+    ctx.shadowColor = haloColor;
+    ctx.shadowBlur = size * 0.9;
+  } else {
+    ctx.shadowColor = 'rgba(0,0,0,0.35)';
+    ctx.shadowBlur = 4;
+  }
+
+  const pressScale = pulse !== null && pulse < 0.3 ? 1 - 0.18 * (1 - pulse / 0.3) : 1;
+  switch (style) {
+    case 'halo': {
+      ctx.beginPath();
+      ctx.arc(cx, cy, size * 1.5 * pressScale, 0, Math.PI * 2);
+      ctx.fillStyle = cursorHexAlpha(haloColor, 0.28);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(cx, cy, size * 1.5 * pressScale, 0, Math.PI * 2);
+      ctx.strokeStyle = cursorHexAlpha(haloColor, 0.6);
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      drawArrowCursor(ctx, cx, cy, size * pressScale, cursorConfig.color);
+      break;
+    }
+    case 'dot': {
+      ctx.beginPath();
+      ctx.arc(cx, cy, size * 0.55 * pressScale, 0, Math.PI * 2);
+      ctx.fillStyle = cursorConfig.color;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      break;
+    }
+    case 'spotlight': {
+      ctx.beginPath();
+      ctx.arc(cx, cy, size * 0.45 * pressScale, 0, Math.PI * 2);
+      ctx.fillStyle = cursorConfig.color;
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+      break;
+    }
+    case 'arrow':
+    default:
+      drawArrowCursor(ctx, cx, cy, size * pressScale, cursorConfig.color);
+      break;
+  }
+  ctx.shadowColor = 'transparent';
+  ctx.shadowBlur = 0;
+}
+
+function drawArrowCursor(ctx: CanvasRenderingContext2D, x: number, y: number, size: number, color: string) {
+  ctx.beginPath();
+  ctx.moveTo(x, y);
+  ctx.lineTo(x, y + size * 1.15);
+  ctx.lineTo(x + size * 0.28, y + size * 0.88);
+  ctx.lineTo(x + size * 0.48, y + size * 1.32);
+  ctx.lineTo(x + size * 0.62, y + size * 1.24);
+  ctx.lineTo(x + size * 0.42, y + size * 0.82);
+  ctx.lineTo(x + size * 0.78, y + size * 0.78);
+  ctx.closePath();
+  ctx.fillStyle = color;
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.95)';
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+function cursorHexAlpha(hex: string, alpha: number): string {
+  if (/^#([0-9a-f]{6})$/i.test(hex)) {
+    const a = Math.round(Math.max(0, Math.min(1, alpha)) * 255).toString(16).padStart(2, '0');
+    return hex + a;
+  }
+  return hex;
 }
 
 export default function Render() {
@@ -435,6 +510,7 @@ export default function Render() {
     textOverlays = [],
     rawRecording = false,
     voiceover,
+    music,
   } = location.state || {};
 
   const projectId = stateProjectId ?? queryProjectId ?? undefined;
@@ -628,6 +704,22 @@ export default function Render() {
 
     // Setup MediaRecorder
     const stream = canvas.captureStream(fps);
+
+    // --- Audio graph: mix voiceover + music INTO the recording (not just speakers) ---
+    let recordDest: MediaStreamAudioDestinationNode | null = null;
+    const hasVoAudio = !!voiceover?.scriptSegments?.some(
+      (seg: any) => seg.isGenerated && (seg.audioBlob || seg.audioUrl)
+    );
+    const hasMusic = !!(music?.enabled && (music.blob || music.url));
+    if (hasVoAudio || hasMusic) {
+      try {
+        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
+        recordDest = audioContextRef.current.createMediaStreamDestination();
+        recordDest.stream.getAudioTracks().forEach((t) => stream.addTrack(t));
+      } catch (e) {
+        console.warn("Audio mix init failed:", e);
+      }
+    }
     let mimeType = "video/webm;codecs=vp9";
     if (exportFormat === "mp4") {
       const mp4Types = [
@@ -695,9 +787,8 @@ export default function Render() {
     };
 
     // Setup audio context and load audio segments if available
-    if (voiceover?.scriptSegments && voiceover.scriptSegments.length > 0) {
+    if (voiceover?.scriptSegments && voiceover.scriptSegments.length > 0 && audioContextRef.current) {
       try {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
         
         // Load and prepare audio segments
         const audioSegments = voiceover.scriptSegments.filter(s => s.isGenerated && (s.audioBlob || s.audioUrl));
@@ -737,6 +828,51 @@ export default function Render() {
       }
     }
 
+    // --- Background music with fades + ducking under narration ---
+    let musicSource: AudioBufferSourceNode | null = null;
+    if (hasMusic && audioContextRef.current && recordDest) {
+      try {
+        const actx = audioContextRef.current;
+        const ab = music.blob
+          ? await music.blob.arrayBuffer()
+          : await (await fetch(music.url)).arrayBuffer();
+        const buffer = await actx.decodeAudioData(ab);
+        musicSource = actx.createBufferSource();
+        musicSource.buffer = buffer;
+        musicSource.loop = !!music.loop;
+        const musicGain = actx.createGain();
+        musicSource.connect(musicGain);
+        musicGain.connect(recordDest);
+        musicGain.connect(actx.destination);
+
+        const base = Math.max(0, Math.min(1, (music.volume ?? 30) / 100));
+        const ducked = base * (1 - Math.max(0, Math.min(1, (music.ducking ?? 70) / 100)));
+        const t0 = actx.currentTime + 0.05;
+        const videoDur = video.duration || 0;
+        const g = musicGain.gain;
+        g.setValueAtTime(music.fadeIn > 0 ? 0.0001 : base, t0);
+        if (music.fadeIn > 0) g.linearRampToValueAtTime(base, t0 + music.fadeIn);
+        const voicedSegs = (voiceover?.scriptSegments ?? [])
+          .filter((seg: any) => seg.isGenerated && (seg.audioBlob || seg.audioUrl))
+          .sort((a: any, b: any) => a.timestamp - b.timestamp);
+        voicedSegs.forEach((seg: any) => {
+          const segStart = t0 + Math.max(0, seg.timestamp - 0.15);
+          const segEnd = t0 + seg.timestamp + (seg.duration && seg.duration > 0 ? seg.duration : 4) + 0.2;
+          g.setValueAtTime(base, Math.max(t0 + (music.fadeIn || 0), segStart - 0.25));
+          g.linearRampToValueAtTime(ducked, segStart);
+          g.setValueAtTime(ducked, segEnd);
+          g.linearRampToValueAtTime(base, segEnd + 0.5);
+        });
+        if (videoDur > 0 && music.fadeOut > 0) {
+          g.setValueAtTime(base, t0 + Math.max(0, videoDur - music.fadeOut));
+          g.linearRampToValueAtTime(0.0001, t0 + videoDur);
+        }
+        musicSource.start(t0);
+      } catch (e) {
+        console.warn("Music mixing failed:", e);
+      }
+    }
+
     mediaRecorder.start();
     video.currentTime = 0;
     await video.play();
@@ -755,6 +891,7 @@ export default function Render() {
     const renderLoop = () => {
       if (video.ended || video.paused) {
         if (video.ended) {
+          try { musicSource?.stop(); } catch { /* already stopped */ }
           mediaRecorder.stop();
           return;
         }
@@ -776,6 +913,7 @@ export default function Render() {
               const source = audioContextRef.current!.createBufferSource();
               source.buffer = segmentData.buffer;
               source.connect(audioContextRef.current!.destination);
+              if (recordDest) source.connect(recordDest);
               
               // Calculate offset if we're slightly past the start time
               const offset = Math.max(0, currentTime - segmentTimestamp);
@@ -1162,36 +1300,102 @@ export default function Render() {
       });
     }
 
-    // Draw cursor
+    // Draw cursor (normalized recorded coords — matches editor preview)
     if (cursorConfig) {
-      // Scale cursor coordinates to match scaled video size
-      const scaledMoves = moveData.map(move => ({
-        ...move,
-        x: move.x * scaleX,
-        y: move.y * scaleY,
-      }));
-      drawCursor(ctx, time, scaledMoves, scaledVideoWidth, scaledVideoHeight, cursorConfig, cursorImageRef.current || undefined);
+      drawCursor(ctx, time, moveData, clickData, scaledVideoWidth, scaledVideoHeight, cursorConfig);
     }
 
     ctx.restore();
 
-    // 6. Render text overlays
+    // 6. Render text overlays (typography, box styling, shadow — matches editor)
     textOverlays.forEach(overlay => {
       if (time >= overlay.startTime && time <= overlay.endTime) {
-        const progress = (time - overlay.startTime) / (overlay.endTime - overlay.startTime);
-        let opacity = 1;
-        if (overlay.animation === 'fade') {
+        const progress = (time - overlay.startTime) / Math.max(0.001, overlay.endTime - overlay.startTime);
+        let opacity = overlay.opacity ?? 1;
+        if (overlay.animation === 'fade' || overlay.animation === undefined) {
           const fadeIn = Math.min(1, progress * 10);
           const fadeOut = Math.min(1, (overlay.endTime - time) * 10);
-          opacity = Math.min(fadeIn, fadeOut);
+          opacity *= Math.min(fadeIn, fadeOut);
         }
+
         ctx.save();
-        ctx.globalAlpha = opacity;
-        ctx.fillStyle = overlay.color;
-        ctx.font = `${overlay.fontSize}px sans-serif`;
+        ctx.globalAlpha = Math.max(0, Math.min(1, opacity));
+
+        // Scale font relative to a 1080p reference frame
+        const fontScale = height / 1080;
+        const fontSize = (overlay.fontSize || 32) * fontScale * (overlay.scale ?? 1);
+        const weight = overlay.fontWeight && overlay.fontWeight !== 'normal' ? overlay.fontWeight : '400';
+        const style = overlay.fontStyle === 'italic' ? 'italic ' : '';
+        const family = overlay.fontFamily || 'Inter';
+        ctx.font = `${style}${weight} ${fontSize}px ${family}, sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(overlay.text, overlay.x * width, overlay.y * height);
+
+        let text = overlay.text || '';
+        if (overlay.textTransform === 'uppercase') text = text.toUpperCase();
+        else if (overlay.textTransform === 'lowercase') text = text.toLowerCase();
+
+        const cx = overlay.x * width;
+        const cy = overlay.y * height;
+        const rotation = ((overlay.rotation ?? 0) * Math.PI) / 180;
+        if (rotation !== 0) {
+          ctx.translate(cx, cy);
+          ctx.rotate(rotation);
+          ctx.translate(-cx, -cy);
+        }
+
+        // Word-wrap to 84% of frame width
+        const maxWidth = width * 0.84;
+        const words = text.split(/\s+/);
+        const lines: string[] = [];
+        let line = '';
+        for (const word of words) {
+          const test = line ? line + ' ' + word : word;
+          if (ctx.measureText(test).width > maxWidth && line) {
+            lines.push(line);
+            line = word;
+          } else {
+            line = test;
+          }
+        }
+        if (line) lines.push(line);
+        const lineHeight = fontSize * (overlay.lineHeight ?? 1.25);
+        const blockHeight = lines.length * lineHeight;
+        const widest = Math.max(...lines.map((l) => ctx.measureText(l).width), 1);
+
+        // Background box
+        const bg = overlay.backgroundColor;
+        if (bg && bg !== 'transparent') {
+          const pad = (overlay.padding ?? 0) * fontScale;
+          const radius = (overlay.borderRadius ?? 0) * fontScale;
+          const bx = cx - widest / 2 - pad;
+          const by = cy - blockHeight / 2 - pad;
+          const bw = widest + pad * 2;
+          const bh = blockHeight + pad * 2;
+          ctx.beginPath();
+          const r = Math.min(radius, bw / 2, bh / 2);
+          ctx.moveTo(bx + r, by);
+          ctx.arcTo(bx + bw, by, bx + bw, by + bh, r);
+          ctx.arcTo(bx + bw, by + bh, bx, by + bh, r);
+          ctx.arcTo(bx, by + bh, bx, by, r);
+          ctx.arcTo(bx, by, bx + bw, by, r);
+          ctx.closePath();
+          ctx.fillStyle = bg;
+          ctx.fill();
+        }
+
+        // Text shadow
+        if (overlay.shadowBlur && overlay.shadowBlur > 0) {
+          ctx.shadowColor = overlay.shadowColor || 'rgba(0,0,0,0.6)';
+          ctx.shadowBlur = overlay.shadowBlur * fontScale;
+          ctx.shadowOffsetX = (overlay.shadowOffsetX ?? 0) * fontScale;
+          ctx.shadowOffsetY = (overlay.shadowOffsetY ?? 0) * fontScale;
+        }
+
+        ctx.fillStyle = overlay.color || '#ffffff';
+        const startY = cy - blockHeight / 2 + lineHeight / 2;
+        lines.forEach((l, i) => ctx.fillText(l, cx, startY + i * lineHeight));
+
         ctx.restore();
       }
     });

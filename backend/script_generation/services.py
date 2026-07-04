@@ -13,14 +13,51 @@ class GeminiScriptService:
     
     def __init__(self):
         # Read from environment only — never hardcode secrets in source.
-        self.api_key = os.environ.get('GOOGLE_GEMINI_API_KEY', '')
+        self.api_key = os.environ.get('GOOGLE_GEMINI_API_KEY', '').strip()
         self.base_url = 'https://generativelanguage.googleapis.com/v1beta'
+
+    def _build_style_directives(self, style: Optional[Dict[str, Any]]) -> str:
+        """Turn frontend style hints into prompt directives."""
+        if not style:
+            return ""
+        template_map = {
+            'walkthrough': 'a step-by-step product walkthrough that guides the viewer through the flow',
+            'feature-launch': 'a punchy feature-launch announcement that builds excitement about what is new',
+            'sales-pitch': 'a persuasive sales pitch that focuses on benefits, outcomes and value',
+            'tutorial': 'an instructional tutorial that teaches the viewer exactly how to do it themselves',
+            'social-teaser': 'a short, hook-first social media teaser with fast pacing and short sentences',
+            'investor-update': 'a confident product update for stakeholders highlighting progress and impact',
+        }
+        tone_map = {
+            'professional': 'professional, clear and polished',
+            'friendly': 'warm, friendly and conversational',
+            'energetic': 'high-energy, enthusiastic and punchy',
+            'calm': 'calm, reassuring and measured',
+            'playful': 'playful, witty and light-hearted',
+        }
+        parts = []
+        template = template_map.get(str(style.get('template', '')).strip())
+        if template:
+            parts.append(f"Write the script as {template}.")
+        tone = tone_map.get(str(style.get('tone', '')).strip())
+        if tone:
+            parts.append(f"The tone of voice must be {tone}.")
+        audience = str(style.get('audience', '') or '').strip()
+        if audience:
+            parts.append(f"The target audience is: {audience}.")
+        instructions = str(style.get('instructions', '') or '').strip()
+        if instructions:
+            parts.append(f"Additional instructions from the creator: {instructions}")
+        if not parts:
+            return ""
+        return "\nStyle requirements:\n- " + "\n- ".join(parts) + "\n"
         
     def generate_script_with_timestamps(
         self,
         video_duration: float,
         events: Dict[str, Any],
-        screenshots: Optional[List[Dict[str, Any]]] = None
+        screenshots: Optional[List[Dict[str, Any]]] = None,
+        style: Optional[Dict[str, Any]] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate script segments with timestamps based on video events and screenshots
@@ -56,17 +93,17 @@ class GeminiScriptService:
                             except:
                                 model = genai.GenerativeModel('gemini-2.5-flash-lite')
                     
-                    content = self._build_vision_content(video_duration, events, screenshots)
+                    content = self._build_vision_content(video_duration, events, screenshots, style)
                     response = model.generate_content(content)
                 except Exception as vision_error:
                     logger.warning(f"Gemini Vision API failed, falling back to text-only: {vision_error}")
                     # Fallback to text-only
-                    prompt = self._build_prompt(video_duration, events)
+                    prompt = self._build_prompt(video_duration, events, style)
                     model = genai.GenerativeModel('gemini-2.5-pro')
                     response = model.generate_content(prompt)
             else:
                 # Use text-only model
-                prompt = self._build_prompt(video_duration, events)
+                prompt = self._build_prompt(video_duration, events, style)
                 model = genai.GenerativeModel('gemini-2.5-pro')
                 response = model.generate_content(prompt)
             
@@ -84,7 +121,7 @@ class GeminiScriptService:
             logger.error(f"Error generating script with Gemini: {e}", exc_info=True)
             return self._generate_fallback_script(video_duration, events)
     
-    def _build_prompt(self, video_duration: float, events: Dict[str, Any]) -> str:
+    def _build_prompt(self, video_duration: float, events: Dict[str, Any], style: Optional[Dict[str, Any]] = None) -> str:
         """Build the prompt for Gemini API"""
         clicks = events.get('clicks', [])
         moves = events.get('moves', [])
@@ -104,6 +141,7 @@ User Interactions:
                 y = click.get('y', 0)
                 prompt += f"  - At {timestamp:.2f}s: Click at ({x:.2f}, {y:.2f})\n"
         
+        prompt += self._build_style_directives(style)
         prompt += f"""
 Generate a script with timestamps that narrates what's happening in the video. The script should:
 1. Be natural and conversational
@@ -130,7 +168,8 @@ Generate the script now:
         self,
         video_duration: float,
         events: Dict[str, Any],
-        screenshots: List[Dict[str, Any]]
+        screenshots: List[Dict[str, Any]],
+        style: Optional[Dict[str, Any]] = None
     ) -> List[Any]:
         """Build content for Gemini Vision API with images"""
         import base64
@@ -155,6 +194,7 @@ User Interactions:
                 y = click.get('y', 0)
                 prompt_text += f"  - At {timestamp:.2f}s: Click at ({x:.2f}, {y:.2f})\n"
         
+        prompt_text += self._build_style_directives(style)
         prompt_text += f"""
 For each screenshot, analyze:
 1. What UI elements are visible (buttons, text, menus, forms, etc.)

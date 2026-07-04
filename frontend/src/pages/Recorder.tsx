@@ -843,6 +843,7 @@ export default function Recorder() {
   const [timer, setTimer] = useState(0);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
   const projectId = searchParams.get("project");
   const { toast } = useToast();
   const [existingProject, setExistingProject] = useState<ProjectDetail | null>(null);
@@ -3321,10 +3322,6 @@ export default function Recorder() {
       }
 
       setRecordingState("stopped");
-      toast({
-        title: "Saving recording",
-        description: "Uploading video and events to your project…",
-      });
 
       const recordingPayload = buildRecordingPayload({
         clicks: clicksRef.current,
@@ -3341,34 +3338,38 @@ export default function Recorder() {
         },
       });
 
+      const editorNavState = {
+        videoUrl,
+        clickData: clicksRef.current,
+        moveData: movesRef.current,
+        markers,
+        rawRecording,
+        visualEffects: {
+          cursorEffects,
+          clickRipple,
+          cursorGlow,
+          cursorTrail,
+          showClickIndicator,
+        },
+      };
+
+      // Open editor immediately with the local blob — never block on cloud upload.
+      navigate(`/editor/${projectId ?? "new"}?tab=script`, {
+        replace: true,
+        state: editorNavState,
+      });
+
       void (async () => {
         let targetProjectId = projectId ?? undefined;
-        const editorNavState = {
-          videoUrl,
-          clickData: clicksRef.current,
-          moveData: movesRef.current,
-          markers,
-          rawRecording,
-          visualEffects: {
-            cursorEffects,
-            clickRipple,
-            cursorGlow,
-            cursorTrail,
-            showClickIndicator,
-          },
-        };
-
         try {
           if (!targetProjectId) {
             const created = await projectsApi.create({ title: "Untitled demo" });
             targetProjectId = created.id;
+            navigate(`/editor/${targetProjectId}?tab=script`, {
+              replace: true,
+              state: editorNavState,
+            });
           }
-
-          await projectsApi.saveRecordingData(
-            targetProjectId,
-            recordingPayload as unknown as Record<string, unknown>,
-            { duration: timer }
-          );
 
           const ext = selectedMimeType.includes("mp4") ? "mp4" : "webm";
           await projectsApi.uploadVideo(targetProjectId, blob, {
@@ -3377,25 +3378,27 @@ export default function Recorder() {
             filename: `recording.${ext}`,
           });
 
-          toast({
-            title: "Recording saved",
-            description: "Opening the editor…",
-          });
+          await projectsApi.saveRecordingData(
+            targetProjectId,
+            recordingPayload as unknown as Record<string, unknown>,
+            { duration: timer }
+          );
 
-          navigate(`/editor/${targetProjectId}?tab=script`, {
-            replace: true,
-            state: editorNavState,
+          toast({
+            title: "Saved to cloud",
+            description: "Your recording is backed up to your project.",
           });
         } catch (err) {
           console.error("[Recorder] Failed to persist recording:", err);
+          const detail =
+            err instanceof Error ? err.message : "Unknown error";
           toast({
             title: "Couldn't save to cloud",
-            description: "Opening editor with a local copy — try exporting again later.",
+            description:
+              detail.length > 120
+                ? `${detail.slice(0, 120)}… — editing locally; retry from the editor later.`
+                : `${detail} — editing locally; retry from the editor later.`,
             variant: "destructive",
-          });
-          navigate(`/editor/${targetProjectId ?? "new"}?tab=script`, {
-            replace: true,
-            state: editorNavState,
           });
         }
       })();

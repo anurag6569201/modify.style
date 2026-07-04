@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Auto-installed by scripts/install-git-hooks.sh
+exec bash "$(git rev-parse --show-toplevel)/scripts/check-secrets.sh"

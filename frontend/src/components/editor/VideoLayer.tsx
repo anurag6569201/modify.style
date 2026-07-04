@@ -26,6 +26,25 @@ export const VideoLayer: React.FC = () => {
         };
     }, []);
 
+    // High-frequency master clock: the `timeupdate` event only fires a few
+    // times per second, which makes the synthetic cursor / effects / captions
+    // stutter behind the video. While playing, push the video's currentTime
+    // into the store on every animation frame instead.
+    useEffect(() => {
+        let raf: number;
+        const tick = () => {
+            raf = requestAnimationFrame(tick);
+            const video = videoRef.current;
+            if (!video || video.paused || video.seeking || seekingRef.current) return;
+            const t = video.currentTime;
+            if (isFinite(t) && !isNaN(t) && t >= 0) {
+                editorStore.setPlayback({ currentTime: t });
+            }
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, []);
+
     // Initialize canvas size
     useEffect(() => {
         const canvas = canvasRef.current;

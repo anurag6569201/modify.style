@@ -1,11 +1,31 @@
-# ─── Secrets & local config (NEVER commit) ───
+# ═══════════════════════════════════════════════════════════════
+# Secrets & local config — NEVER commit (see scripts/check-secrets.sh)
+# ═══════════════════════════════════════════════════════════════
 .env
-*.env
 .env.*
-!*.env.example
 !.env.example
+!**/.env.example
+*.env
+!*.env.example
+*.local
+.env.local
+.env.*.local
 
-# ─── Python / Django ───
+# Credential / key material
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+credentials.json
+service-account*.json
+secrets.json
+**/appsettings*.json
+!**/appsettings*.example.json
+
+# ═══════════════════════════════════════════════════════════════
+# Python / Django
+# ═══════════════════════════════════════════════════════════════
 __pycache__/
 *.py[cod]
 *$py.class
@@ -14,25 +34,48 @@ venv/
 env/
 *.sqlite3
 db.sqlite3
+backend/db.sqlite3
 backend/media/
 *.log
+htmlcov/
+.coverage
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
-# ─── Node / Vite / frontend ───
+# Azure CLI local defaults (may reference subscription/resource names)
+backend/.azure/
+
+# ═══════════════════════════════════════════════════════════════
+# Node / Vite / frontend
+# ═══════════════════════════════════════════════════════════════
 node_modules/
 dist/
 dist-ssr/
 .vite/
-*.local
+.vercel/
 bun.lockb.bak
+frontend/vite.config.ts.timestamp-*.mjs
 
-# ─── Editor / OS ───
+# ═══════════════════════════════════════════════════════════════
+# Deploy / build artifacts
+# ═══════════════════════════════════════════════════════════════
+deploy.zip
+*.zip
+!**/public/**/*.zip
+
+# ═══════════════════════════════════════════════════════════════
+# Editor / OS
+# ═══════════════════════════════════════════════════════════════
 .DS_Store
 Thumbs.db
 .idea/
+.vscode/*
+!.vscode/extensions.json
 *.swp
 .cache/
-
-# ─── Build / coverage ───
-coverage/
-htmlcov/
-.pytest_cache/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

@@ -9,3 +9,7 @@ openai
 azure-storage-blob
 python-dotenv
 Pillow
+gunicorn
+whitenoise
+psycopg2-binary
+dj-database-url

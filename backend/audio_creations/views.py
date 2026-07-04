@@ -1,4 +1,5 @@
 from django.db import transaction
+from django.http import FileResponse, Http404
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -95,6 +96,26 @@ class AudioCreationViewSet(viewsets.ModelViewSet):
             multiplier = VOICE_MULTIPLIERS.get(voice_id, DEFAULT_VOICE_MULTIPLIER)
             data.append({ 'id': voice_id, 'name': display_name, 'multiplier': float(multiplier) })
         return Response(data)
+
+    @action(detail=True, methods=['get'], url_path='download')
+    def download(self, request, pk=None):
+        """Stream generated audio — works in production where /media/ is not public."""
+        creation = self.get_object()
+        if creation.status != AudioCreation.Status.COMPLETED or not creation.result_file:
+            raise Http404('Audio not ready')
+        content_type = {
+            'mp3': 'audio/mpeg',
+            'wav': 'audio/wav',
+            'opus': 'audio/ogg',
+            'aac': 'audio/aac',
+            'flac': 'audio/flac',
+        }.get(creation.response_format, 'application/octet-stream')
+        return FileResponse(
+            creation.result_file.open('rb'),
+            content_type=content_type,
+            as_attachment=False,
+            filename=creation.result_file.name.split('/')[-1],
+        )
 
 class FailedAudioCreationViewSet(ReadOnlyModelViewSet):
     serializer_class = AudioCreationResponseSerializer

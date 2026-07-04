@@ -35,8 +35,20 @@ export function serializeEditorState(
     presentation: state.presentation,
     colorGrading: state.colorGrading,
     textOverlays: state.textOverlays,
+    music: {
+      enabled: state.music.enabled,
+      name: state.music.name,
+      url: stripBlobUrls(state.music.url),
+      volume: state.music.volume,
+      ducking: state.music.ducking,
+      loop: state.music.loop,
+      fadeIn: state.music.fadeIn,
+      fadeOut: state.music.fadeOut,
+    },
     voiceover: {
       script: state.voiceover.script,
+      scriptStyle: state.voiceover.scriptStyle,
+      captions: state.voiceover.captions,
       scriptSegments: state.voiceover.scriptSegments.map((seg) => ({
         text: seg.text,
         timestamp: seg.timestamp,
@@ -78,7 +90,7 @@ export function hydrateEditorFromProject(project: ProjectDetail): boolean {
         clicks: (recording.clicks as EditorState["events"]["clicks"]) ?? prev.events.clicks,
         moves: (recording.moves as EditorState["events"]["moves"]) ?? prev.events.moves,
       },
-    }));
+    }), { history: false });
     hydrated = true;
   }
 
@@ -94,6 +106,7 @@ export function hydrateEditorFromProject(project: ProjectDetail): boolean {
         ? { colorGrading: { ...prev.colorGrading, ...edit.colorGrading } }
         : {}),
       ...(edit.textOverlays ? { textOverlays: edit.textOverlays } : {}),
+      ...(edit.music ? { music: { ...prev.music, ...edit.music, blob: null } } : {}),
       ...(edit.voiceover
         ? {
             voiceover: {
@@ -114,11 +127,14 @@ export function hydrateEditorFromProject(project: ProjectDetail): boolean {
             },
           }
         : {}),
-    }));
+    }), { history: false });
     hydrated = true;
   }
 
-  if (project.script_segments?.length) {
+  // Only fall back to the flat script_segments table when edit_data didn't
+  // carry richer segment state (audio URLs, durations, generated flags).
+  const hasEditSegments = !!edit?.voiceover?.scriptSegments?.length;
+  if (!hasEditSegments && project.script_segments?.length) {
     editorStore.setState((prev) => ({
       voiceover: {
         ...prev.voiceover,
@@ -128,7 +144,7 @@ export function hydrateEditorFromProject(project: ProjectDetail): boolean {
           isGenerated: false,
         })),
       },
-    }));
+    }), { history: false });
     hydrated = true;
   }
 
@@ -145,7 +161,7 @@ export function buildRecordingPayload(input: {
 }): RecordingPayload {
   return {
     clicks: input.clicks,
-    moves: input.moves,
+    moves: trimMovesForPersistence(input.moves),
     markers: input.markers ?? [],
     metadata: {
       duration: input.duration ?? 0,
@@ -157,6 +173,20 @@ export function buildRecordingPayload(input: {
     rawRecording: input.rawRecording,
     visualEffects: input.visualEffects,
   };
+}
+
+/** Keep API payloads small — full move streams can exceed 10k+ points. */
+export function trimMovesForPersistence<T extends { timestamp: number }>(
+  moves: T[],
+  maxCount = 2500
+): T[] {
+  if (moves.length <= maxCount) return moves;
+  const out: T[] = [];
+  const step = moves.length / maxCount;
+  for (let i = 0; i < maxCount; i++) {
+    out.push(moves[Math.floor(i * step)]);
+  }
+  return out;
 }
 
 export function scriptSegmentsFromState(state: EditorState) {

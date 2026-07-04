@@ -7,21 +7,36 @@ import { VoicePanel } from './panels/VoicePanel';
 import { TextPanel } from './panels/TextPanel';
 import { TimelinePanel } from './panels/TimelinePanel';
 import { ScriptPanel } from './panels/ScriptPanel';
+import { PolishPanel } from './panels/PolishPanel';
+import { MusicPanel } from './panels/MusicPanel';
 import {
     Palette,
     Video,
-    Sparkles,
     Mic2,
     Type,
-    LayoutTemplate,
     Clock,
     FileText,
     Lock,
+    MousePointerClick,
+    SlidersHorizontal,
+    Music,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
-type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'effects' | 'timeline';
+type TabId = 'script' | 'voice' | 'design' | 'text' | 'camera' | 'effects' | 'polish' | 'music' | 'timeline';
+
+const TAB_META: Record<TabId, { title: string; subtitle: string }> = {
+    script: { title: 'Script', subtitle: 'AI-written, timed narration — pick a template and tone' },
+    voice: { title: 'Voice', subtitle: 'Turn your script into a lifelike voiceover' },
+    design: { title: 'Design', subtitle: 'Looks, backgrounds and framing' },
+    text: { title: 'Text', subtitle: 'Titles, captions and callouts' },
+    camera: { title: 'Camera', subtitle: 'Zoom moments, focus and movement' },
+    effects: { title: 'Effects', subtitle: 'Click effects and the synthetic cursor' },
+    polish: { title: 'Polish', subtitle: 'Filters and color grading' },
+    music: { title: 'Music', subtitle: 'Background track with auto-ducking' },
+    timeline: { title: 'Chapters', subtitle: 'Everything on your timeline, listed' },
+};
 
 interface SidebarItemProps {
     id: TabId;
@@ -38,22 +53,20 @@ const SidebarItem = ({ id, icon: Icon, label, isActive, onClick, locked, lockRea
         variant="ghost"
         size="icon"
         disabled={locked}
-        title={locked ? lockReason : undefined}
+        title={locked ? lockReason : label}
         onClick={() => !locked && onClick(id)}
         className={cn(
-            "w-8 h-8 rounded-sm mb-3 flex flex-col items-center justify-center gap-1 transition-all duration-300 relative group overflow-visible",
+            "group relative mb-3 flex h-8 w-8 flex-col items-center justify-center gap-1 overflow-visible rounded-sm transition-all duration-300",
             locked && "cursor-not-allowed opacity-40",
             isActive
-                ? "bg-primary text-primary-foreground shadow-lg shadow-primary/25 scale-105"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground hover:scale-105"
+                ? "scale-105 bg-primary text-primary-foreground shadow-lg shadow-primary/25"
+                : "text-muted-foreground hover:scale-105 hover:bg-muted hover:text-foreground"
         )}
     >
         {locked ? <Lock className="h-4 w-4" /> : <Icon className={cn("h-5 w-5", isActive ? "stroke-[2.5px]" : "stroke-2")} />}
-
-        {/* Tooltip / Label */}
         <span className={cn(
-            "absolute left-14 bg-popover text-popover-foreground text-xs font-semibold px-2 py-1.5 rounded-md shadow-md border border-border/50 transition-all duration-200 pointer-events-none z-50 whitespace-nowrap",
-            "opacity-0 -translate-x-2 group-hover:opacity-100 group-hover:translate-x-0"
+            "pointer-events-none absolute left-14 z-50 whitespace-nowrap rounded-md border border-border/50 bg-popover px-2 py-1.5 text-xs font-semibold text-popover-foreground shadow-md transition-all duration-200",
+            "-translate-x-2 opacity-0 group-hover:translate-x-0 group-hover:opacity-100"
         )}>
             {label}
         </span>
@@ -66,6 +79,8 @@ interface EditorPanelProps {
     isLoopingEffect?: boolean;
     selectedClickIndex?: number | null;
     onClickSelect?: (index: number | null) => void;
+    selectedTextLayerId?: string | null;
+    onTextLayerSelect?: (id: string | null) => void;
     activeTab?: TabId;
     onTabChange?: (tab: TabId) => void;
     tabLocks?: Partial<Record<TabId, string>>;
@@ -77,11 +92,13 @@ export function EditorPanel({
     isLoopingEffect,
     selectedClickIndex,
     onClickSelect,
+    selectedTextLayerId,
+    onTextLayerSelect,
     activeTab: controlledTab,
     onTabChange,
     tabLocks = {},
 }: EditorPanelProps = {}) {
-    const [internalTab, setInternalTab] = useState<TabId>('voice');
+    const [internalTab, setInternalTab] = useState<TabId>('script');
     const activeTab = controlledTab ?? internalTab;
 
     const setActiveTab = (tab: TabId) => {
@@ -92,26 +109,29 @@ export function EditorPanel({
 
     const frameLocked = tabLocks.camera ?? tabLocks.design;
 
-    // Switch to camera tab when effect is selected
+    // Selecting a zoom moment opens the camera tab
     useEffect(() => {
-        if (selectedEffectId) {
+        if (selectedEffectId && activeTab !== 'camera') {
             setActiveTab('camera');
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedEffectId]);
 
-    // Switch to effects tab when click is selected
+    // Selecting a click opens the effects editor
     useEffect(() => {
         if (selectedClickIndex !== null && selectedClickIndex !== undefined) {
             setActiveTab('effects');
         }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [selectedClickIndex]);
 
+    const clickSelected = selectedClickIndex !== null && selectedClickIndex !== undefined;
+
     const renderPanel = () => {
-        // Show InteractionEffectsPanel when a click is selected, regardless of tab
-        if (selectedClickIndex !== null && selectedClickIndex !== undefined) {
+        if (clickSelected) {
             return (
-                <InteractionEffectsPanel 
-                    selectedClickIndex={selectedClickIndex}
+                <InteractionEffectsPanel
+                    selectedClickIndex={selectedClickIndex!}
                     onDeselectClick={() => onClickSelect?.(null)}
                 />
             );
@@ -121,13 +141,19 @@ export function EditorPanel({
             case 'script': return <ScriptPanel />;
             case 'voice': return <VoicePanel />;
             case 'design': return <DesignPanel />;
-            case 'text': return <TextPanel />;
+            case 'text': return <TextPanel selectedLayerId={selectedTextLayerId} onSelectLayer={onTextLayerSelect} />;
             case 'camera': return <CameraPanel selectedEffectId={selectedEffectId} onEffectSelect={onEffectSelect} isLoopingEffect={isLoopingEffect} />;
             case 'effects': return <EffectsPanel />;
+            case 'polish': return <PolishPanel />;
+            case 'music': return <MusicPanel />;
             case 'timeline': return <TimelinePanel />;
-            default: return <VoicePanel />;
+            default: return <ScriptPanel />;
         }
     };
+
+    const meta = clickSelected
+        ? { title: 'Click effect', subtitle: 'Style the effect for this click' }
+        : TAB_META[activeTab];
 
     return (
         <div className="flex h-full overflow-hidden bg-card">
@@ -135,36 +161,28 @@ export function EditorPanel({
                 <div className="flex w-full flex-1 flex-col items-center overflow-y-auto py-2">
                     <SidebarItem id="script" icon={FileText} label="Script" isActive={activeTab === 'script'} onClick={setActiveTab} locked={!!tabLocks.script} lockReason={tabLocks.script} />
                     <SidebarItem id="voice" icon={Mic2} label="Voice" isActive={activeTab === 'voice'} onClick={setActiveTab} locked={!!tabLocks.voice} lockReason={tabLocks.voice} />
+                    <SidebarItem id="music" icon={Music} label="Music" isActive={activeTab === 'music'} onClick={setActiveTab} locked={!!tabLocks.music} lockReason={tabLocks.music} />
                     <div className="my-2 h-px w-8 bg-border" />
                     <SidebarItem id="design" icon={Palette} label="Design" isActive={activeTab === 'design'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.design ?? tabLocks.camera} />
                     <SidebarItem id="text" icon={Type} label="Text" isActive={activeTab === 'text'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.text ?? tabLocks.camera} />
                     <SidebarItem id="camera" icon={Video} label="Camera" isActive={activeTab === 'camera'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.camera} />
+                    <SidebarItem id="effects" icon={MousePointerClick} label="Effects" isActive={activeTab === 'effects'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.effects ?? tabLocks.camera} />
+                    <SidebarItem id="polish" icon={SlidersHorizontal} label="Polish" isActive={activeTab === 'polish'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.polish ?? tabLocks.camera} />
                     <div className="my-2 h-px w-8 bg-border" />
-                    <SidebarItem id="timeline" icon={Clock} label="Timeline" isActive={activeTab === 'timeline'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.timeline ?? tabLocks.camera} />
+                    <SidebarItem id="timeline" icon={Clock} label="Chapters" isActive={activeTab === 'timeline'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.timeline ?? tabLocks.camera} />
                 </div>
             </div>
 
             <div className="relative flex min-w-0 flex-1 flex-col bg-background">
-                <div className="sticky top-0 z-20 flex h-14 items-center border-b border-border bg-card px-4">
+                <div className="sticky top-0 z-20 flex h-14 shrink-0 items-center border-b border-border bg-card px-4">
                     <div>
-                        <h2 className="font-display text-base font-semibold capitalize">
-                            {selectedClickIndex !== null && selectedClickIndex !== undefined ? 'Interaction Effects' : activeTab}
-                        </h2>
-                        <p className="text-xs text-muted-foreground">
-                            {selectedClickIndex !== null && selectedClickIndex !== undefined && 'Configure click effect properties'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'script' && 'Generate AI script with timestamps from video events'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'voice' && 'Generate and manage AI voiceovers with script editing'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'design' && 'Canvas layout and background'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'text' && 'Add text overlays and titles'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'camera' && (selectedEffectId ? 'Editing selected zoom effect' : 'Control camera movement and zoom')}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'effects' && 'Apply visual effects and filters'}
-                            {selectedClickIndex === null && selectedClickIndex === undefined && activeTab === 'timeline' && 'Review events on the timeline'}
-                        </p>
+                        <h2 className="font-display text-base font-semibold">{meta.title}</h2>
+                        <p className="text-xs text-muted-foreground">{meta.subtitle}</p>
                     </div>
                 </div>
 
-                <div className="flex-1 overflow-y-auto custom-scrollbar">
-                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300 fill-mode-forwards">
+                <div className="custom-scrollbar flex-1 overflow-y-auto">
+                    <div className="animate-in fade-in slide-in-from-bottom-2 fill-mode-forwards h-full duration-300">
                         {renderPanel()}
                     </div>
                 </div>

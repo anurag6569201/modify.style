@@ -22,6 +22,10 @@ class ScriptGenerationRequestSerializer(serializers.Serializer):
         allow_empty=True,
         help_text="Array of screenshots with timestamp and base64 image"
     )
+    style = serializers.DictField(
+        required=False,
+        help_text="Optional style hints: {template, tone, audience, instructions}"
+    )
     
     def validate_video_url(self, value):
         """Validate video_url - allow empty/null, blob URLs, or valid URLs"""

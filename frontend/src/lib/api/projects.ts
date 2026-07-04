@@ -52,10 +52,16 @@ export { UnauthorizedError };
 async function handle<T>(res: Response): Promise<T> {
   if (res.status === 401) throw new UnauthorizedError("Session expired");
   if (!res.ok) {
-    const detail = await res.text().catch(() => "");
+    const text = await res.text().catch(() => "");
+    let detail = text;
+    try {
+      const json = JSON.parse(text) as { detail?: string; error?: string };
+      detail = json.detail || json.error || text;
+    } catch {
+      /* use raw text */
+    }
     throw new Error(detail || `Request failed (${res.status})`);
   }
-  // DELETE returns 204 with no body.
   if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
