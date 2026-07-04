@@ -1,13 +1,19 @@
-import io
 import logging
-import mimetypes
 import os
 import uuid
 
 from django.conf import settings
-from django.core.files.storage import default_storage
 from django.core.signing import BadSignature, TimestampSigner
 from django.urls import reverse
+
+from modify_style_backend.media_storage import (
+    media_content_type,
+    media_exists,
+    open_media,
+    project_media_path,
+    save_upload,
+    use_azure_blob,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,85 +37,20 @@ def _extension(filename: str, content_type: str) -> str:
     return MIME_EXT.get(content_type, ".webm")
 
 
-def _use_azure_blob() -> bool:
-    return bool(getattr(settings, "AZURE_STORAGE_CONNECTION_STRING", "").strip())
-
-
-def _blob_service():
-    from azure.storage.blob import BlobServiceClient
-
-    return BlobServiceClient.from_connection_string(settings.AZURE_STORAGE_CONNECTION_STRING)
-
-
-def _blob_client(path: str):
-    return _blob_service().get_blob_client(
-        container=settings.AZURE_STORAGE_CONTAINER,
-        blob=path,
-    )
-
-
 def save_project_media(project_id: uuid.UUID, uploaded_file, kind: str) -> str:
-    """
-    Persist an uploaded blob under projects/<id>/<kind>.<ext>.
-    Uses Azure Blob in production, local media/ in dev.
-    """
     ext = _extension(uploaded_file.name, getattr(uploaded_file, "content_type", ""))
-    path = f"projects/{project_id}/{kind}{ext}"
-
-    if _use_azure_blob():
-        from azure.storage.blob import ContentSettings
-
-        client = _blob_client(path)
-        if client.exists():
-            client.delete_blob()
-        uploaded_file.seek(0)
-        content_type = getattr(uploaded_file, "content_type", None) or mimetypes.guess_type(path)[0]
-        client.upload_blob(
-            uploaded_file.read(),
-            overwrite=True,
-            content_settings=ContentSettings(content_type=content_type) if content_type else None,
-        )
-        logger.info("Uploaded project media to Azure Blob: %s", path)
-        return path
-
-    if default_storage.exists(path):
-        default_storage.delete(path)
-    return default_storage.save(path, uploaded_file)
-
-
-def media_exists(path: str) -> bool:
-    try:
-        if _use_azure_blob():
-            return _blob_client(path).exists()
-        return default_storage.exists(path)
-    except Exception:
-        logger.exception("Failed to check media existence for %s", path)
-        return False
-
-
-def open_media(path: str):
-    """Return a readable binary stream for a stored media object."""
-    if _use_azure_blob():
-        data = _blob_client(path).download_blob().readall()
-        return io.BytesIO(data)
-    return default_storage.open(path, "rb")
-
-
-def media_content_type(path: str) -> str:
-    guessed, _ = mimetypes.guess_type(path)
-    return guessed or "application/octet-stream"
+    path = project_media_path(project_id, kind, ext)
+    return save_upload(path, uploaded_file)
 
 
 def video_storage_path_for_project(project) -> str | None:
-    """Storage-relative path for a project's source/render video, if known."""
     data = project.recording_data or {}
     if path := data.get("video_storage_path"):
         return path
     if project.video_url and "/media/" in project.video_url:
         return project.video_url.split("/media/", 1)[1].split("?", 1)[0]
-    # Convention-based fallback for legacy rows.
     if project.duration and project.duration > 0:
-        return f"projects/{project.id}/source.webm"
+        return project_media_path(project.id, "source", ".webm")
     return None
 
 
@@ -125,7 +66,6 @@ def verify_video_access_token(project_id: uuid.UUID, token: str) -> bool:
 
 
 def build_project_video_stream_url(project, request=None) -> str:
-    """Signed API URL that the browser <video> tag can load without JWT headers."""
     if request is None:
         return ""
     path = video_storage_path_for_project(project)
@@ -137,19 +77,19 @@ def build_project_video_stream_url(project, request=None) -> str:
 
 
 def resolve_project_video_url(project, request=None) -> str:
-    """Return a browser-playable URL, or empty string if no video is stored."""
+    """Always prefer signed API stream URLs — never return /media/ in production."""
     stream_url = build_project_video_stream_url(project, request)
     if stream_url:
         return stream_url
 
-    path = video_storage_path_for_project(project)
-    if path and media_exists(path) and not _use_azure_blob():
-        url = default_storage.url(path)
-        if request and url.startswith("/"):
-            url = request.build_absolute_uri(url)
-        return url
+    # Local dev fallback only
+    if not settings.IS_PRODUCTION:
+        path = video_storage_path_for_project(project)
+        if path and media_exists(path) and not use_azure_blob() and request:
+            from django.core.files.storage import default_storage
+            url = default_storage.url(path)
+            if url.startswith("/"):
+                url = request.build_absolute_uri(url)
+            return url
 
-    # Never return stale /media/ URLs from App Service — they 404 in production.
-    if project.video_url and "/media/" in project.video_url:
-        return ""
-    return project.video_url or ""
+    return ""

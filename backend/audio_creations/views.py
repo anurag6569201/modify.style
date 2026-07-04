@@ -99,22 +99,18 @@ class AudioCreationViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['get'], url_path='download')
     def download(self, request, pk=None):
-        """Stream generated audio — works in production where /media/ is not public."""
+        """Stream generated audio from Azure Blob (prod) or local media (dev)."""
         creation = self.get_object()
         if creation.status != AudioCreation.Status.COMPLETED or not creation.result_file:
             raise Http404('Audio not ready')
-        content_type = {
-            'mp3': 'audio/mpeg',
-            'wav': 'audio/wav',
-            'opus': 'audio/ogg',
-            'aac': 'audio/aac',
-            'flac': 'audio/flac',
-        }.get(creation.response_format, 'application/octet-stream')
+        path = creation.result_file.name
+        if not path or not media_exists(path):
+            raise Http404('Audio file not found')
         return FileResponse(
-            creation.result_file.open('rb'),
-            content_type=content_type,
+            open_media(path),
+            content_type=media_content_type(path),
             as_attachment=False,
-            filename=creation.result_file.name.split('/')[-1],
+            filename=path.rsplit('/', 1)[-1],
         )
 
 class FailedAudioCreationViewSet(ReadOnlyModelViewSet):

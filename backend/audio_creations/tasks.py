@@ -1,8 +1,9 @@
 import azure.cognitiveservices.speech as speechsdk
 from django.conf import settings
 from django.db import transaction
-from django.core.files.base import ContentFile
 import logging
+
+from modify_style_backend.media_storage import media_content_type, media_exists, open_media
 
 from .models import AudioCreation
 
@@ -78,11 +79,20 @@ def generate_audio_from_text_sync(creation_id: str):
 
         audio_data = result.audio_data
         file_extension = 'mp3' if creation.response_format == 'aac' else creation.response_format
-        file_name = f'{creation.id}.{file_extension}'
-        file_content = ContentFile(audio_data)
-        
+        storage_path = f'audio_creations/{creation.id}.{file_extension}'
+        content_type = {
+            'mp3': 'audio/mpeg',
+            'wav': 'audio/wav',
+            'opus': 'audio/ogg',
+            'aac': 'audio/aac',
+            'flac': 'audio/flac',
+        }.get(creation.response_format, 'application/octet-stream')
+
+        from modify_style_backend.media_storage import save_bytes
+        save_bytes(storage_path, audio_data, content_type=content_type)
+
         with transaction.atomic():
-            creation.result_file.save(file_name, file_content, save=False)
+            creation.result_file.name = storage_path
             creation.status = AudioCreation.Status.COMPLETED
             creation.error_message = None
             creation.save(update_fields=['result_file', 'status', 'error_message'])

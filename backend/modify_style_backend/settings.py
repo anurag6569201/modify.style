@@ -13,6 +13,8 @@ https://docs.djangoproject.com/en/6.0/ref/settings/
 import os
 from pathlib import Path
 
+from django.core.exceptions import ImproperlyConfigured
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -35,6 +37,7 @@ SECRET_KEY = os.environ.get(
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True').lower() in ('true', '1', 'yes')
+IS_PRODUCTION = not DEBUG
 
 ALLOWED_HOSTS = [
     h.strip()
@@ -92,14 +95,22 @@ TEMPLATES = [
 WSGI_APPLICATION = 'modify_style_backend.wsgi.application'
 
 
-# Database
-# https://docs.djangoproject.com/en/6.0/ref/settings/#databases
-
-_database_url = os.environ.get('DATABASE_URL', '')
-if _database_url:
+# Database — PostgreSQL (Azure) in production; SQLite for local dev only.
+_database_url = os.environ.get('DATABASE_URL', '').strip()
+if IS_PRODUCTION:
+    if not _database_url:
+        raise ImproperlyConfigured(
+            'DATABASE_URL is required when DJANGO_DEBUG=False. '
+            'Production must use Azure PostgreSQL, not SQLite.'
+        )
     import dj_database_url
     DATABASES = {
         'default': dj_database_url.parse(_database_url, conn_max_age=600, ssl_require=True),
+    }
+elif _database_url:
+    import dj_database_url
+    DATABASES = {
+        'default': dj_database_url.parse(_database_url, conn_max_age=600, ssl_require=False),
     }
 else:
     DATABASES = {
@@ -212,10 +223,17 @@ AZURE_TRANSLATOR_KEY = os.environ.get('AZURE_TRANSLATOR_KEY', '')
 AZURE_TRANSLATOR_ENDPOINT = os.environ.get('AZURE_TRANSLATOR_ENDPOINT', '')
 AZURE_TRANSLATOR_REGION = os.environ.get('AZURE_TRANSLATOR_REGION', '')
 
-# Azure Blob Storage + CDN — durable media + public share playback
-AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '')
+# Azure Blob Storage + CDN — durable media in production
+AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRING', '').strip()
 AZURE_STORAGE_CONTAINER = os.environ.get('AZURE_STORAGE_CONTAINER', 'demoforge-media')
-AZURE_CDN_BASE_URL = os.environ.get('AZURE_CDN_BASE_URL', '')
+AZURE_CDN_BASE_URL = os.environ.get('AZURE_CDN_BASE_URL', '').strip()
+USE_AZURE_BLOB = bool(AZURE_STORAGE_CONNECTION_STRING)
+
+if IS_PRODUCTION and not USE_AZURE_BLOB:
+    raise ImproperlyConfigured(
+        'AZURE_STORAGE_CONNECTION_STRING is required when DJANGO_DEBUG=False. '
+        'Production media must use Azure Blob Storage, not local /media/.'
+    )
 
 # Which LLM provider to use for scripts: 'azure_openai' or 'gemini'.
 AI_SCRIPT_PROVIDER = os.environ.get(

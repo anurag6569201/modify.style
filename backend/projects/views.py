@@ -14,13 +14,11 @@ from .serializers import (
     ProjectDetailSerializer,
     ProjectPublicSerializer,
 )
+from modify_style_backend.media_storage import media_content_type, media_exists, open_media
 from .upload import (
     save_project_media,
     resolve_project_video_url,
     video_storage_path_for_project,
-    media_exists,
-    open_media,
-    media_content_type,
     verify_video_access_token,
 )
 
