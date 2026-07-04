@@ -3,6 +3,7 @@ import { Link, useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 import { Header } from "@/components/layout/Header";
 import { useAuth } from "@/contexts/AuthContext";
+import { useGuestSignIn } from "@/hooks/useGuestSignIn";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -15,10 +16,9 @@ import {
   FolderOpen,
   Eye,
   Share2,
+  Sparkles,
 } from "lucide-react";
 import { ShareDialog } from "@/components/ShareDialog";
-import { StudioPipeline } from "@/components/studio/StudioPipeline";
-import { computePipelineGates, firstUnlockedEditorTab } from "@/lib/studio/pipelineProgress";
 import { recorderHref, editorHref } from "@/lib/studio/pipeline";
 import {
   DropdownMenu,
@@ -57,10 +57,10 @@ function formatDate(iso: string): string {
 }
 
 function projectResumeHref(project: ProjectSummary): string {
-  const gates = computePipelineGates(project);
-  if (!gates.recordComplete) return recorderHref(project.id);
-  const tab = firstUnlockedEditorTab(gates.gates);
-  return editorHref(project.id, tab);
+  // No pipeline ordering — open the editor directly. Brand-new drafts with no
+  // duration recorded yet go to the recorder.
+  if (project.status === "draft" && !project.duration) return recorderHref(project.id);
+  return editorHref(project.id);
 }
 
 export default function Dashboard() {
@@ -68,17 +68,26 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [sharing, setSharing] = useState<ProjectSummary | null>(null);
   const navigate = useNavigate();
-  const { signOut } = useAuth();
+  const { signOut, isAuthenticated } = useAuth();
+  const signIn = useGuestSignIn();
 
   useEffect(() => {
+    // Guests have no server-side projects — skip the fetch and show the
+    // guest home instead.
+    if (!isAuthenticated) {
+      setProjects([]);
+      setLoading(false);
+      return;
+    }
+
     const load = async () => {
+      setLoading(true);
       try {
         const data = await projectsApi.list();
         setProjects(data);
       } catch (err) {
         if (err instanceof UnauthorizedError) {
           signOut();
-          navigate("/auth");
           return;
         }
         toast.error("Couldn't load your projects. Is the backend running?");
@@ -88,7 +97,7 @@ export default function Dashboard() {
     };
 
     load();
-  }, [navigate, signOut]);
+  }, [navigate, signOut, isAuthenticated]);
 
   const handleCreate = () => {
     navigate("/recorder");
@@ -131,7 +140,32 @@ export default function Dashboard() {
           </Button>
         </div>
 
-        <StudioPipeline overview />
+        {!isAuthenticated && (
+          <div className="flex flex-col gap-3 rounded-xl border border-primary/20 bg-primary/5 p-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+                <Sparkles className="h-4 w-4 text-primary" />
+              </div>
+              <div>
+                <p className="text-sm font-medium">
+                  You're using DemoForge as a guest
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Record, edit, and try one free render. Sign in to save your
+                  work, share it, and render as much as you like.
+                </p>
+              </div>
+            </div>
+            <Button
+              variant="outline"
+              className="shrink-0"
+              onClick={() => signIn({ onSuccess: () => navigate("/dashboard") })}
+            >
+              Sign in to save
+            </Button>
+          </div>
+        )}
+
 
         {loading ? (
           /* Loading skeleton */

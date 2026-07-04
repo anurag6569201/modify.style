@@ -213,7 +213,8 @@ export function Timeline({
                 }
                 case 'segment-move': {
                     const newTs = Math.max(0, Math.min(snapTime(rawTime - drag.grabOffset, true), duration));
-                    editorStore.updateSegment(drag.index, { timestamp: Math.round(newTs * 10) / 10 });
+                    // 10ms precision (was 100ms — segments audibly snapped off-beat)
+                    editorStore.updateSegment(drag.index, { timestamp: Math.round(newTs * 100) / 100 });
                     break;
                 }
             }
@@ -229,9 +230,14 @@ export function Timeline({
         };
     }, [timeAtClientX, snapTime, seek, duration]);
 
-    // Ctrl/cmd + wheel = zoom · wheel = pan when zoomed
+    // Ctrl/cmd + wheel = zoom · wheel = pan when zoomed.
+    // Attached as a NATIVE non-passive listener: React registers `onWheel` as
+    // passive, so `preventDefault()` silently failed and ctrl+scroll zoomed
+    // the whole browser page instead of the timeline. This was the "timeline
+    // zoom randomly doesn't work" bug.
+    const canvasWrapRef = useRef<HTMLDivElement>(null);
     const handleWheel = useCallback(
-        (e: React.WheelEvent) => {
+        (e: WheelEvent) => {
             if (duration <= 0) return;
             if (e.ctrlKey || e.metaKey) {
                 e.preventDefault();
@@ -240,7 +246,7 @@ export function Timeline({
                 const nextVisible = duration / nextZoom;
                 const ratio = (pivot - windowStart) / visibleDuration;
                 setZoom(nextZoom);
-                setWindowStart(Math.max(0, Math.min(pivot - ratio * nextVisible, duration - nextVisible)));
+                setWindowStart(Math.max(0, Math.min(pivot - ratio * nextVisible, Math.max(0, duration - nextVisible))));
             } else if (zoom > 1) {
                 e.preventDefault();
                 const delta = (Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY) * (visibleDuration / 600);
@@ -249,6 +255,13 @@ export function Timeline({
         },
         [duration, zoom, windowStart, visibleDuration, timeAtClientX, clampWindowStart]
     );
+
+    useEffect(() => {
+        const el = canvasWrapRef.current;
+        if (!el) return;
+        el.addEventListener('wheel', handleWheel, { passive: false });
+        return () => el.removeEventListener('wheel', handleWheel);
+    }, [handleWheel]);
 
     // ---- Ruler ticks -----------------------------------------------------------
 
@@ -343,7 +356,7 @@ export function Timeline({
             </div>
 
             {/* ---- Canvas ---- */}
-            <div className="relative select-none" onWheel={handleWheel}>
+            <div ref={canvasWrapRef} className="relative select-none">
                 {/* Ruler */}
                 <div className="flex h-7 border-b border-border/30 bg-background/70">
                     <div className="flex w-[96px] shrink-0 items-center border-r border-border/30 px-2 text-[9px] uppercase tracking-wider text-muted-foreground" style={{ width: LABEL_W }}>

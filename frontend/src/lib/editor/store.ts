@@ -142,6 +142,72 @@ class EditorStore {
         this.setState((prev) => ({ voiceover: { ...prev.voiceover, ...config } }));
     }
 
+    /**
+     * Apply the "auto-magic" starter template to a fresh recording so the demo
+     * looks finished with zero effort. This is the first impression, so it's
+     * tuned to look premium out of the box:
+     *   - a soft, warm neutral backdrop (not the loud default purple),
+     *   - the video floating with rounded corners + a realistic soft shadow
+     *     (no hard white border),
+     *   - punchy-but-smooth auto-zoom on clicks,
+     *   - subtle cursor glow + click ripples,
+     *   - captions on (they light up once a script exists).
+     * Everyone gets this on record; members/Pro can override any of it.
+     * No history entry — it's the baseline, not an edit.
+     */
+    applyDefaultTemplate() {
+        this.setState(
+            (prev) => ({
+                camera: { ...prev.camera, mode: 'cinematic', zoomStrength: 1.5, speed: 1.0 },
+                cursor: { ...prev.cursor, glow: true, clickPulse: true, smoothing: 0.4 },
+                effects: {
+                    ...prev.effects,
+                    clickRipple: true,
+                    clickEmphasis: true,
+                    clickAnimationStyle: 'ripple',
+                },
+                presentation: {
+                    ...prev.presentation,
+                    backgroundMode: 'gradient',
+                    backgroundColor: '#e9dfce',
+                    backgroundGradient: {
+                        type: 'linear',
+                        angle: 145,
+                        stops: [
+                            { color: '#f4ece0', position: 0 },
+                            { color: '#e2d2ba', position: 0.55 },
+                            { color: '#c7ad8c', position: 1 },
+                        ],
+                    },
+                    backgroundBlur: 0,
+                    videoPadding: { enabled: true, top: 60, right: 60, bottom: 60, left: 60, uniform: true },
+                    videoCrop: {
+                        ...prev.presentation.videoCrop,
+                        enabled: false,
+                        roundedCorners: true,
+                        cornerRadius: 16,
+                    },
+                    videoStyle: {
+                        ...prev.presentation.videoStyle,
+                        borderEnabled: false,
+                        borderWidth: 0,
+                        shadowEnabled: true,
+                        shadowColor: 'rgba(74, 52, 30, 0.32)',
+                        shadowBlur: 55,
+                        shadowOffsetX: 0,
+                        shadowOffsetY: 26,
+                        rotation: 0,
+                    },
+                },
+                voiceover: {
+                    ...prev.voiceover,
+                    captions: { ...prev.voiceover.captions, enabled: true },
+                },
+            }),
+            { history: false }
+        );
+    }
+
     // ---- Script segments -------------------------------------------------
 
     setScriptSegments(segments: ScriptSegment[]) {

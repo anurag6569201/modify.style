@@ -234,6 +234,37 @@ export function VideoControls({
 
                     <div className="w-px h-4 bg-border/50" />
 
+                    {/* Playback speed */}
+                    <Popover>
+                        <PopoverTrigger asChild>
+                            <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 px-2 font-mono text-xs hover:bg-primary/10 hover:text-primary"
+                                title="Playback speed"
+                            >
+                                {playbackSpeed === 1 ? '1x' : `${playbackSpeed}x`}
+                            </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-28 p-1">
+                            {[0.25, 0.5, 0.75, 1, 1.25, 1.5, 2].map((speed) => (
+                                <button
+                                    key={speed}
+                                    className={cn(
+                                        "flex w-full items-center justify-between rounded-md px-2 py-1.5 font-mono text-xs transition-colors hover:bg-muted",
+                                        playbackSpeed === speed && "bg-primary/10 text-primary"
+                                    )}
+                                    onClick={() => onSpeedChange(speed)}
+                                >
+                                    {speed}x
+                                    {speed === 1 && <span className="text-[9px] text-muted-foreground">normal</span>}
+                                </button>
+                            ))}
+                        </PopoverContent>
+                    </Popover>
+
+                    <div className="w-px h-4 bg-border/50" />
+
                     {/* Fullscreen */}
                     <Button
                         variant="ghost"

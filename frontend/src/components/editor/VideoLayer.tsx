@@ -1,6 +1,10 @@
 import React, { useEffect, useRef } from 'react';
 import { useEditorState, editorStore } from '@/lib/editor/store';
 import { FilterEngine } from '@/lib/effects/filters';
+import { frameClock } from '@/lib/editor/frameClock';
+
+/** One frame at 30fps — the seek precision we guarantee. */
+const FRAME = 1 / 30;
 
 export const VideoLayer: React.FC = () => {
     const videoRef = useRef<HTMLVideoElement>(null);
@@ -21,29 +25,48 @@ export const VideoLayer: React.FC = () => {
                 cancelAnimationFrame(animationFrameRef.current);
                 animationFrameRef.current = null;
             }
+            frameClock.detach();
             // Cleanup filter engine
             filterEngineRef.current = null;
         };
     }, []);
 
+    // Register the video with the frame-exact clock so every overlay layer
+    // (cursor, camera, click effects, captions) samples the time of the frame
+    // actually on screen — not the decode position.
+    useEffect(() => {
+        if (videoRef.current) frameClock.attach(videoRef.current);
+    }, [videoConfig.url]);
+
     // High-frequency master clock: the `timeupdate` event only fires a few
     // times per second, which makes the synthetic cursor / effects / captions
-    // stutter behind the video. While playing, push the video's currentTime
+    // stutter behind the video. While playing, push the frame-exact time
     // into the store on every animation frame instead.
     useEffect(() => {
         let raf: number;
+        let lastPushed = -1;
         const tick = () => {
             raf = requestAnimationFrame(tick);
             const video = videoRef.current;
             if (!video || video.paused || video.seeking || seekingRef.current) return;
-            const t = video.currentTime;
-            if (isFinite(t) && !isNaN(t) && t >= 0) {
+            const t = frameClock.isAttached() ? frameClock.getTime() : video.currentTime;
+            if (isFinite(t) && !isNaN(t) && t >= 0 && t !== lastPushed) {
+                lastPushed = t;
                 editorStore.setPlayback({ currentTime: t });
             }
         };
         raf = requestAnimationFrame(tick);
         return () => cancelAnimationFrame(raf);
     }, []);
+
+    // Apply playback rate (speed control) to the element.
+    useEffect(() => {
+        const video = videoRef.current;
+        const rate = playback.playbackRate || 1;
+        if (video && isFinite(rate) && rate > 0 && video.playbackRate !== rate) {
+            video.playbackRate = rate;
+        }
+    }, [playback.playbackRate, videoConfig.url]);
 
     // Initialize canvas size
     useEffect(() => {
@@ -136,17 +159,28 @@ export const VideoLayer: React.FC = () => {
                 : Infinity;
             const clampedTime = Math.max(0, Math.min(targetTime, maxTime));
 
-            // Only seek if difference is significant (e.g. user scrubbed)
-            // Reduced threshold for smoother scrubbing
+            // Frame-precise seeking. While playing, only correct drift beyond
+            // one frame (the rAF tick is the source of truth). While paused or
+            // scrubbing, honour every change so trims/steps land exactly.
+            const threshold = video.paused ? 0.005 : FRAME;
             const timeDiff = Math.abs(video.currentTime - clampedTime);
-            if (timeDiff > 0.1) {
+            if (timeDiff > threshold) {
                 seekingRef.current = true;
+                const onSeeked = () => {
+                    seekingRef.current = false;
+                    video.removeEventListener('seeked', onSeeked);
+                };
+                video.addEventListener('seeked', onSeeked);
                 video.currentTime = clampedTime;
-                // Reset seeking flag after a short delay
+                // Safety net in case 'seeked' never fires (detached src, error)
                 const timeoutId = setTimeout(() => {
                     seekingRef.current = false;
-                }, 100);
-                return () => clearTimeout(timeoutId);
+                    video.removeEventListener('seeked', onSeeked);
+                }, 250);
+                return () => {
+                    clearTimeout(timeoutId);
+                    video.removeEventListener('seeked', onSeeked);
+                };
             }
         } catch (error) {
             console.error('Error seeking video:', error);
@@ -160,11 +194,16 @@ export const VideoLayer: React.FC = () => {
         
         try {
             const video = videoRef.current;
-            if (video && !seekingRef.current) {
+            // While playing, the rAF tick owns the store time (frame-exact).
+            // timeupdate only backfills when paused (e.g. after a seek).
+            if (video && !seekingRef.current && video.paused) {
                 const currentTime = video.currentTime;
                 // Only update if time is finite and valid
                 if (isFinite(currentTime) && !isNaN(currentTime) && currentTime >= 0) {
-                    editorStore.setPlayback({ currentTime });
+                    const stored = editorStore.getState().playback.currentTime;
+                    if (Math.abs(stored - currentTime) > 0.005) {
+                        editorStore.setPlayback({ currentTime });
+                    }
                 }
             }
         } catch (error) {

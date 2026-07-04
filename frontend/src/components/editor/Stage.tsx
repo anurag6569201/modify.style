@@ -8,6 +8,7 @@ import { CursorLayer } from './CursorLayer';
 import { CaptionsLayer } from './CaptionsLayer';
 import { updateCameraSystem, getInitialCameraState } from '@/lib/composition/camera';
 import { calculateOutputDimensions, calculateVideoTransform } from '@/lib/composition/aspectRatio';
+import { frameClock } from '@/lib/editor/frameClock';
 
 export const Stage: React.FC = () => {
     const containerRef = useRef<HTMLDivElement>(null);
@@ -56,7 +57,11 @@ export const Stage: React.FC = () => {
                 // CAMERA LOGIC
                 // -----------------------------------------------------
                 const currentState = editorStore.getState();
-                const videoTime = currentState.playback.currentTime;
+                // Frame-exact time — same clock as the cursor layer, so the
+                // camera and the pixels can never drift apart.
+                const videoTime = frameClock.isAttached()
+                    ? frameClock.getTime()
+                    : currentState.playback.currentTime;
                 const { width, height } = currentState.video;
 
                 // Validate state
@@ -215,7 +220,12 @@ export const Stage: React.FC = () => {
                 requestRef.current = undefined;
             }
         };
-    }, [showRawVideo, state.effects.clickRipple, state.camera, state.playback.currentTime]);
+        // The loop reads everything it needs from editorStore.getState() each
+        // frame. Keeping volatile values (currentTime, camera config) OUT of
+        // the deps is critical: with them, React tore down and restarted this
+        // rAF loop ~60×/sec, resetting spring timing — the source of the
+        // laggy, stuttering zoom/camera motion.
+    }, [showRawVideo]);
 
     // Calculate output dimensions based on aspect ratio preset
     const outputDims = calculateOutputDimensions(

@@ -1,6 +1,7 @@
+import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
-import { Clapperboard, LogOut, User } from "lucide-react";
+import { Clapperboard, LogOut, User, Sparkles } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -8,30 +9,27 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { useAuth } from "@/contexts/AuthContext";
-
-const marketingLinks = [
-  { label: "How it works", href: "/#how-it-works" },
-  { label: "Features", href: "/#features" },
-  { label: "Pricing", href: "/#pricing" },
-];
+import { useGuestSignIn } from "@/hooks/useGuestSignIn";
+import { UpgradeDialog } from "@/components/UpgradeDialog";
 
 export function Header() {
   const navigate = useNavigate();
-  const { user, isAuthenticated, signOut } = useAuth();
+  const { user, plan, isAuthenticated, signOut } = useAuth();
+  const signIn = useGuestSignIn();
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
 
   const handleLogout = () => {
     signOut();
-    navigate("/auth");
+    navigate("/dashboard");
   };
-
-  const homeHref = isAuthenticated ? "/dashboard" : "/";
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-border/60 bg-background/80 backdrop-blur-xl">
       <div className="container flex h-16 items-center justify-between">
         <Link
-          to={homeHref}
+          to="/dashboard"
           className="flex items-center gap-2.5 transition-opacity hover:opacity-80"
         >
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary shadow-sm">
@@ -39,20 +37,6 @@ export function Header() {
           </div>
           <span className="text-lg font-semibold tracking-tight">DemoForge</span>
         </Link>
-
-        {!isAuthenticated && (
-          <nav className="hidden items-center gap-8 md:flex">
-            {marketingLinks.map((link) => (
-              <a
-                key={link.label}
-                href={link.href}
-                className="text-sm text-muted-foreground transition-colors hover:text-foreground"
-              >
-                {link.label}
-              </a>
-            ))}
-          </nav>
-        )}
 
         <nav className="flex items-center gap-2 sm:gap-3">
           {isAuthenticated ? (
@@ -63,6 +47,16 @@ export function Header() {
               <Button variant="ghost" asChild className="hidden md:inline-flex">
                 <Link to="/recorder">Record</Link>
               </Button>
+              {plan === "free" && (
+                <Button
+                  variant="outline"
+                  className="hidden gap-1.5 sm:inline-flex"
+                  onClick={() => setUpgradeOpen(true)}
+                >
+                  <Sparkles className="h-4 w-4 text-primary" />
+                  Upgrade
+                </Button>
+              )}
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button variant="ghost" className="relative h-9 w-9 rounded-full">
@@ -80,6 +74,12 @@ export function Header() {
                       <p className="text-sm font-medium">{user?.name}</p>
                       <p className="text-xs text-muted-foreground">{user?.email}</p>
                     </div>
+                    <Badge
+                      variant={plan === "pro" ? "default" : "secondary"}
+                      className="ml-auto capitalize"
+                    >
+                      {plan}
+                    </Badge>
                   </div>
                   <DropdownMenuItem
                     onClick={handleLogout}
@@ -93,16 +93,22 @@ export function Header() {
             </>
           ) : (
             <>
-              <Button variant="ghost" asChild className="hidden sm:inline-flex">
-                <Link to="/auth">Sign in</Link>
+              <Button
+                variant="ghost"
+                className="hidden sm:inline-flex"
+                onClick={() => signIn()}
+              >
+                Sign in
               </Button>
               <Button variant="hero" asChild>
-                <Link to="/auth">Start free</Link>
+                <Link to="/recorder">Start recording</Link>
               </Button>
             </>
           )}
         </nav>
       </div>
+
+      <UpgradeDialog open={upgradeOpen} onOpenChange={setUpgradeOpen} />
     </header>
   );
 }

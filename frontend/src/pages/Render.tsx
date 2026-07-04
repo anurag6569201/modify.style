@@ -1,8 +1,6 @@
 import { useState, useRef, useEffect } from "react";
 import { Link, useLocation, useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
-import { StudioPipeline } from "@/components/studio/StudioPipeline";
-import { StudioProjectBar } from "@/components/studio/StudioProjectBar";
 import { ShareDialog } from "@/components/ShareDialog";
 import { Button } from "@/components/ui/button";
 import { Check, ArrowLeft, Download, Loader2, Video, FileVideo, Image as ImageIcon, Settings, Share2 } from "lucide-react";
@@ -18,8 +16,24 @@ import { updateCameraSystem, getInitialCameraState } from "@/lib/composition/cam
 import { ClickData, MoveData } from "./Recorder";
 import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
 import { editorHref } from "@/lib/studio/pipeline";
-import { useRenderFlowGuard } from "@/hooks/useStudioFlowGuard";
-import { computePipelineGates } from "@/lib/studio/pipelineProgress";
+import { useAuth } from "@/contexts/AuthContext";
+import { useEntitlement } from "@/lib/entitlements";
+import { useGuestSignIn } from "@/hooks/useGuestSignIn";
+import {
+  guestCanRender,
+  recordGuestRender,
+  GUEST_FREE_RENDERS,
+} from "@/lib/guest/guestSession";
+import { UpgradeDialog } from "@/components/UpgradeDialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog";
+import { Sparkles } from "lucide-react";
 
 // Helper function to render background
 function renderBackground(
@@ -503,6 +517,8 @@ export default function Render() {
     videoUrl: stateVideoUrl,
     clickData = [],
     moveData = [],
+    effects: zoomEffects = [],
+    camera: cameraConfig,
     presentation,
     colorGrading,
     effectsConfig,
@@ -512,6 +528,14 @@ export default function Render() {
     voiceover,
     music,
   } = location.state || {};
+
+  // Camera config for the render pass (zoom strength/speed/padding). Falls back
+  // to sensible auto-template defaults if we arrived without editor state.
+  const renderCameraConfig = {
+    zoomStrength: cameraConfig?.zoomStrength ?? 1.5,
+    speed: cameraConfig?.speed ?? 1.0,
+    padding: cameraConfig?.padding ?? 0.2,
+  };
 
   const projectId = stateProjectId ?? queryProjectId ?? undefined;
 
@@ -523,12 +547,15 @@ export default function Render() {
   const [showSettings, setShowSettings] = useState(false);
   const [shareOpen, setShareOpen] = useState(false);
   const [project, setProject] = useState<ProjectDetail | null>(null);
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+  const [renderWallOpen, setRenderWallOpen] = useState(false);
+
+  const { isAuthenticated } = useAuth();
+  const signIn = useGuestSignIn();
+  const hdEntitled = useEntitlement("hdExport");
 
   const videoUrl = stateVideoUrl ?? project?.video_url ?? undefined;
 
-  const flowGates = computePipelineGates(project, { includeExport: true, currentStep: "export" });
-
-  useRenderFlowGuard(projectId, project, !!videoUrl, !!stateVideoUrl);
 
   useEffect(() => {
     if (!projectId) return;
@@ -568,6 +595,12 @@ export default function Render() {
 
   const startRendering = async () => {
     if (!videoUrl || !canvasRef.current || !videoRef.current) return;
+
+    // Guests get a limited number of free renders, then we ask them to sign in.
+    if (!isAuthenticated && !guestCanRender()) {
+      setRenderWallOpen(true);
+      return;
+    }
 
     setRendering(true);
     setProgress(0);
@@ -694,8 +727,11 @@ export default function Render() {
     }
 
     // Determine FPS and bitrate
-    const fps = exportQuality === "high" ? 60 : exportQuality === "medium" ? 30 : 24;
-    const bitrate = exportQuality === "high" ? 8000000 : exportQuality === "medium" ? 4000000 : 2000000;
+    // HD (high) export is a Pro feature — clamp to medium for everyone else.
+    const effectiveQuality =
+      hdEntitled || exportQuality !== "high" ? exportQuality : "medium";
+    const fps = effectiveQuality === "high" ? 60 : effectiveQuality === "medium" ? 30 : 24;
+    const bitrate = effectiveQuality === "high" ? 8000000 : effectiveQuality === "medium" ? 4000000 : 2000000;
 
     if (exportFormat === "gif" || exportFormat === "apng") {
       await renderAnimatedImage(exportFormat, fps, ctx, canvasWidth, canvasHeight, outputDims, video, videoConfig, presentationConfig, colorGrading, effectsConfig, cursorConfig, clickData, moveData, videoTransform, finalVideoX, finalVideoY, finalVideoWidth, finalVideoHeight, padding);
@@ -751,6 +787,9 @@ export default function Render() {
       setDownloadUrl(url);
       setRendering(false);
       setProgress(100);
+
+      // Count this render against the guest's free allowance.
+      if (!isAuthenticated) recordGuestRender();
 
       toast({
         title: "Rendering complete",
@@ -1004,9 +1043,10 @@ export default function Render() {
         dt,
         clickData,
         moveData,
-        [],
+        zoomEffects,
         { width: videoConfig.width, height: videoConfig.height },
-        videoConfig.duration || 0
+        videoConfig.duration || 0,
+        renderCameraConfig
       );
     }
 
@@ -1438,40 +1478,30 @@ export default function Render() {
     <div className="min-h-screen bg-background">
       <Header />
       <main className="container space-y-8 py-10">
-        <StudioProjectBar
-          title={project?.title ?? "Export demo"}
-          projectId={projectId}
-          actions={
-            <>
-              <Button variant="outline" size="sm" asChild>
-                <Link to={editorHref(projectId)}>
-                  <ArrowLeft className="mr-2 h-4 w-4" />
-                  Back to editor
-                </Link>
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h1 className="text-xl font-semibold tracking-tight">
+              {project?.title ?? "Your finished demo"}
+            </h1>
+            <p className="text-sm text-muted-foreground">
+              Preview it, then render and download.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="outline" size="sm" asChild>
+              <Link to={editorHref(projectId)}>
+                <ArrowLeft className="mr-2 h-4 w-4" />
+                Back to editor
+              </Link>
+            </Button>
+            {project && (
+              <Button variant="hero" size="sm" onClick={() => setShareOpen(true)}>
+                <Share2 className="mr-2 h-4 w-4" />
+                Share
               </Button>
-              {project && (
-                <Button
-                  variant="hero"
-                  size="sm"
-                  onClick={() => setShareOpen(true)}
-                  disabled={!flowGates.canShare}
-                  title={!flowGates.canShare ? "Finish export before sharing" : undefined}
-                >
-                  <Share2 className="mr-2 h-4 w-4" />
-                  Share
-                </Button>
-              )}
-            </>
-          }
-        />
-
-        <StudioPipeline
-          currentStep="export"
-          projectId={projectId}
-          project={project}
-          includeExport
-          onShareClick={project && flowGates.canShare ? () => setShareOpen(true) : undefined}
-        />
+            )}
+          </div>
+        </div>
 
         <div className="mx-auto max-w-2xl">
           {!videoUrl ? (
@@ -1566,12 +1596,24 @@ export default function Render() {
 
                     <div className="space-y-2">
                       <Label>Quality</Label>
-                      <Select value={exportQuality} onValueChange={(v) => setExportQuality(v as typeof exportQuality)}>
+                      <Select
+                        value={exportQuality}
+                        onValueChange={(v) => {
+                          if (v === "high" && !hdEntitled) {
+                            // HD is Pro-only — nudge instead of selecting it.
+                            setUpgradeOpen(true);
+                            return;
+                          }
+                          setExportQuality(v as typeof exportQuality);
+                        }}
+                      >
                         <SelectTrigger>
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="high">High (60fps, 8Mbps)</SelectItem>
+                          <SelectItem value="high">
+                            High (60fps, 8Mbps){!hdEntitled ? " — Pro" : ""}
+                          </SelectItem>
                           <SelectItem value="medium">Medium (30fps, 4Mbps)</SelectItem>
                           <SelectItem value="low">Low (24fps, 2Mbps)</SelectItem>
                         </SelectContent>
@@ -1637,6 +1679,48 @@ export default function Render() {
           onVisibilityChange={(v) => setProject((p) => (p ? { ...p, visibility: v } : p))}
         />
       )}
+
+      <UpgradeDialog
+        open={upgradeOpen}
+        onOpenChange={setUpgradeOpen}
+        feature="hdExport"
+      />
+
+      {/* Guest free-render wall */}
+      <Dialog open={renderWallOpen} onOpenChange={setRenderWallOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <div className="mb-2 flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10">
+              <Sparkles className="h-5 w-5 text-primary" />
+            </div>
+            <DialogTitle>
+              You've used your free render{GUEST_FREE_RENDERS === 1 ? "" : "s"}
+            </DialogTitle>
+            <DialogDescription>
+              Sign in to save this demo to your account, share it, and render as
+              many times as you like — your work so far comes with you.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter className="flex-col gap-2 sm:flex-col">
+            <Button
+              variant="hero"
+              className="w-full"
+              onClick={() =>
+                signIn({ onSuccess: () => setRenderWallOpen(false) })
+              }
+            >
+              Sign in to continue
+            </Button>
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={() => setRenderWallOpen(false)}
+            >
+              Maybe later
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

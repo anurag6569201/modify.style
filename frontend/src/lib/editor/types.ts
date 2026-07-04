@@ -152,6 +152,8 @@ export interface PlaybackState {
     isPlaying: boolean;
     volume: number;
     isMuted: boolean;
+    /** Playback speed multiplier (0.25–2). Applied to video + voiceover audio. */
+    playbackRate: number;
 }
 
 export interface ScriptSegment {
@@ -419,5 +421,6 @@ export const DEFAULT_EDITOR_STATE: EditorState = {
         isPlaying: false,
         volume: 1,
         isMuted: false,
+        playbackRate: 1,
     },
 };

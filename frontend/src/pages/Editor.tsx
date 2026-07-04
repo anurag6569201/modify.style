@@ -10,8 +10,7 @@ import { MusicAudioLayer } from "@/components/editor/MusicAudioLayer";
 
 import { useNavigate, useParams, useLocation, useSearchParams, Link } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
-import { StudioStepChips } from "@/components/studio/StudioStepChips";
-import type { PipelineStepId, EditorTabId } from "@/lib/studio/pipeline";
+import type { EditorTabId } from "@/lib/studio/pipeline";
 import { Button } from "@/components/ui/button";
 import {
   Sparkles,
@@ -28,6 +27,7 @@ import {
   Mic2,
   Maximize2,
   Minimize2,
+  Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
@@ -35,8 +35,11 @@ import { ShareDialog } from "@/components/ShareDialog";
 import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
 import { hydrateEditorFromProject, serializeEditorState, scriptSegmentsFromState } from "@/lib/projectPersistence";
 import { useDebouncedProjectSave } from "@/hooks/useDebouncedProjectSave";
-import { useEditorFlowGuard } from "@/hooks/useStudioFlowGuard";
-import { computePipelineGates, stepLockReason, isStepNavigable, firstUnlockedEditorTab } from "@/lib/studio/pipelineProgress";
+import { useAuth } from "@/contexts/AuthContext";
+import { runAutoPipeline } from "@/lib/editor/autoPipeline";
+import { editorAccessFor, editorTabLocks } from "@/lib/entitlements";
+import { useGuestSignIn } from "@/hooks/useGuestSignIn";
+import { UpgradeDialog } from "@/components/UpgradeDialog";
 
 const VALID_EDITOR_TABS = new Set<EditorTabId>([
   "script",
@@ -49,18 +52,6 @@ const VALID_EDITOR_TABS = new Set<EditorTabId>([
   "music",
   "timeline",
 ]);
-
-const TAB_PIPELINE_STEP: Record<EditorTabId, PipelineStepId> = {
-  script: "script",
-  voice: "voice",
-  design: "frame",
-  text: "frame",
-  camera: "frame",
-  effects: "frame",
-  polish: "frame",
-  music: "voice",
-  timeline: "frame",
-};
 
 export default function Editor() {
   const { id } = useParams();
@@ -150,51 +141,47 @@ export default function Editor() {
     editorState.video.url ??
     null;
 
-  const livePipeline = useMemo(
-    () => ({
-      hasVideo: !!videoUrl,
-      hasScript:
-        editorState.voiceover.scriptSegments.some((s) => s.text.trim()) ||
-        editorState.voiceover.script.trim().length > 0,
-      hasVoice:
-        editorState.voiceover.isGenerated ||
-        editorState.voiceover.scriptSegments.some((s) => s.isGenerated),
-      frameVisited,
-    }),
-    [videoUrl, editorState.voiceover, frameVisited]
+  // --- Tier-based editing access (no more pipeline ordering) ---
+  const { isAuthenticated, plan } = useAuth();
+  const signIn = useGuestSignIn();
+  const [upgradeOpen, setUpgradeOpen] = useState(false);
+
+  const editorAccess = editorAccessFor(isAuthenticated, plan);
+  const tabLocks = useMemo(
+    () => editorTabLocks(editorAccess) as Partial<Record<EditorTabId, string>>,
+    [editorAccess]
   );
 
-  const flowGates = useMemo(
-    () =>
-      computePipelineGates(project, {
-        currentStep: requestedTab ? TAB_PIPELINE_STEP[requestedTab] : undefined,
-        live: livePipeline,
-      }),
-    [project, requestedTab, livePipeline]
-  );
+  // Land on the first tab this user can actually edit (so free users don't open
+  // straight onto a locked panel). Guests have nothing editable → default to
+  // "script", shown as a locked preview with a login CTA.
+  const firstEditableTab = useMemo<EditorTabId>(() => {
+    const order: EditorTabId[] = [
+      "text", "timeline", "script", "voice",
+      "design", "camera", "effects", "polish", "music",
+    ];
+    return order.find((t) => !tabLocks[t]) ?? "script";
+  }, [tabLocks]);
 
-  const editorTab: EditorTabId = requestedTab ?? firstUnlockedEditorTab(flowGates.gates);
-  const pipelineStep = TAB_PIPELINE_STEP[editorTab];
+  const editorTab: EditorTabId = requestedTab ?? firstEditableTab;
+
+  const lockedCtaLabel = editorAccess === "guest" ? "Log in to edit" : "Upgrade to Pro";
+  const handleLockedCta = useCallback(() => {
+    if (editorAccess === "guest") signIn();
+    else setUpgradeOpen(true);
+  }, [editorAccess, signIn]);
 
   const setEditorTabGuarded = useCallback(
     (tab: EditorTabId) => {
-      const step = TAB_PIPELINE_STEP[tab];
-      const gate = computePipelineGates(project, {
-        currentStep: step,
-        live: livePipeline,
-      }).gates[step];
-
-      if (!isStepNavigable(gate)) {
-        toast({
-          title: "Step locked",
-          description: gate?.lockReason ?? "Complete the previous step first.",
-          variant: "destructive",
-        });
+      const reason = tabLocks[tab];
+      if (reason) {
+        toast({ title: "Editing locked", description: reason });
+        handleLockedCta();
         return;
       }
       setEditorTab(tab);
     },
-    [project, livePipeline, setEditorTab, toast]
+    [tabLocks, setEditorTab, toast, handleLockedCta]
   );
 
   useEffect(() => {
@@ -208,35 +195,6 @@ export default function Editor() {
       setFrameVisited(true);
     }
   }, [editorTab]);
-
-  useEditorFlowGuard(
-    project,
-    id,
-    editorTab,
-    livePipeline,
-    (tab) => setEditorTabGuarded(tab),
-    { projectLoading, freshRecording: !!location.state?.videoUrl }
-  );
-
-  const tabLocks = useMemo(() => {
-    const locks: Partial<Record<EditorTabId, string>> = {};
-    const { gates } = flowGates;
-    if (gates.script.access === "locked") locks.script = gates.script.lockReason;
-    if (gates.voice.access === "locked") {
-      locks.voice = gates.voice.lockReason;
-      locks.music = gates.voice.lockReason;
-    }
-    if (gates.frame.access === "locked") {
-      const reason = gates.frame.lockReason ?? "Complete the previous step first";
-      locks.design = reason;
-      locks.text = reason;
-      locks.camera = reason;
-      locks.effects = reason;
-      locks.polish = reason;
-      locks.timeline = reason;
-    }
-    return locks;
-  }, [flowGates]);
 
   const clickData = location.state?.clickData || [];
   const moveData = location.state?.moveData || [];
@@ -264,12 +222,55 @@ export default function Editor() {
     }
   }, [videoUrl, clickData, moveData, capturedEffects, editorState.video.url, editorState.events.clicks.length]);
 
+  // Auto-apply the polished starter template once, on a fresh recording, so the
+  // demo looks finished with zero effort (guests get this too — it's the
+  // "record and we do everything" experience).
+  const templateAppliedRef = useRef(false);
+  useEffect(() => {
+    const isFreshRecording = !!location.state?.videoUrl;
+    if (isFreshRecording && !templateAppliedRef.current) {
+      templateAppliedRef.current = true;
+      editorStore.applyDefaultTemplate();
+    }
+  }, [location.state?.videoUrl]);
+
+  // Auto-generate the AI script + voiceover for signed-in users on a fresh
+  // recording — the "we do everything" magic. Guests are skipped (the AI
+  // endpoints need a login and we don't call paid AI for anonymous visitors);
+  // they get the visual template only and are nudged to sign in.
+  const [autoGenerating, setAutoGenerating] = useState(false);
+  const autoPipelineRanRef = useRef(false);
+  useEffect(() => {
+    const isFreshRecording = !!location.state?.videoUrl;
+    if (!isFreshRecording || autoPipelineRanRef.current) return;
+    if (!isAuthenticated) return;
+    // Don't re-run if a script already exists (e.g. reopened project).
+    const hasScript = editorStore.getState().voiceover.scriptSegments.length > 0;
+    if (hasScript) return;
+
+    autoPipelineRanRef.current = true;
+    setAutoGenerating(true);
+    toast({
+      title: "Creating your demo…",
+      description: "Writing the script and voiceover from your recording.",
+    });
+    runAutoPipeline()
+      .then((r) => {
+        if (r.scriptGenerated) {
+          toast({
+            title: "Your demo is ready",
+            description: `Script${r.voiceGenerated > 0 ? " and voiceover" : ""} generated — preview it, then export.`,
+          });
+        }
+      })
+      .finally(() => setAutoGenerating(false));
+  }, [location.state?.videoUrl, isAuthenticated, toast]);
+
   // --- Selection state (shared between timeline and panels) ---
   const [selectedEffectId, setSelectedEffectId] = useState<string | null>(null);
   const [selectedTextLayerId, setSelectedTextLayerId] = useState<string | null>(null);
   const [selectedClickIndex, setSelectedClickIndex] = useState<number | null>(null);
   const [isLoopingEffect, setIsLoopingEffect] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [timelineOpen, setTimelineOpen] = useState(false);
   const [focusMode, setFocusMode] = useState(false);
   const loopIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -467,12 +468,10 @@ export default function Editor() {
   }, [selectedEffectId]);
 
   const handleRender = async () => {
-    if (!flowGates.canExport) {
+    if (!videoUrl) {
       toast({
-        title: "Export locked",
-        description:
-          stepLockReason(flowGates.gates, "export") ??
-          "Complete script, voice, and frame first.",
+        title: "Nothing to export yet",
+        description: "Record a demo first.",
         variant: "destructive",
       });
       return;
@@ -559,6 +558,7 @@ export default function Editor() {
         clickData: editorState.events.clicks,
         moveData: editorState.events.moves,
         effects: editorState.events.effects,
+        camera: editorState.camera,
         colorGrading: editorState.colorGrading,
         textOverlays: [...editorState.textOverlays, ...captionOverlays],
         presentation: presentationConfig,
@@ -591,9 +591,9 @@ export default function Editor() {
             variant="ghost"
             size="sm"
             className="h-7 px-2 text-xs"
-            disabled={!flowGates.canExport}
+            disabled={!videoUrl}
             onClick={handleRender}
-            title={!flowGates.canExport ? stepLockReason(flowGates.gates, "export") : "Export"}
+            title={!videoUrl ? "Record a demo first" : "Export"}
           >
             <Sparkles className="mr-1 h-3 w-3" />
             Export
@@ -639,14 +639,14 @@ export default function Editor() {
               )}
             </div>
 
-            <StudioStepChips
-              className="min-w-0 flex-1 overflow-x-auto"
-              currentStep={pipelineStep}
-              projectId={project?.id ?? id}
-              project={project}
-              live={livePipeline}
-              onShareClick={project && flowGates.canShare ? () => setShareOpen(true) : undefined}
-            />
+            <div className="flex min-w-0 flex-1 items-center justify-center">
+              {autoGenerating && (
+                <span className="inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin text-primary" />
+                  Creating your demo…
+                </span>
+              )}
+            </div>
 
             <div className="flex shrink-0 items-center gap-2">
               <div className="flex items-center gap-0.5">
@@ -682,8 +682,8 @@ export default function Editor() {
                 variant="outline"
                 size="sm"
                 onClick={() => setShareOpen(true)}
-                disabled={!project || !flowGates.canShare}
-                title={!flowGates.canShare ? "Export your demo before sharing" : undefined}
+                disabled={!project}
+                title={!project ? "Sign in to share your demo" : undefined}
               >
                 <Share2 className="mr-2 h-4 w-4" />
                 Share
@@ -692,8 +692,8 @@ export default function Editor() {
                 variant="hero"
                 size="sm"
                 onClick={handleRender}
-                disabled={!flowGates.canExport}
-                title={!flowGates.canExport ? stepLockReason(flowGates.gates, "export") : undefined}
+                disabled={!videoUrl}
+                title={!videoUrl ? "Record a demo first" : undefined}
               >
                 <Sparkles className="mr-2 h-4 w-4" />
                 Export
@@ -740,12 +740,12 @@ export default function Editor() {
                   volume={editorState.playback.volume}
                   currentTime={editorState.playback.currentTime}
                   duration={duration}
-                  playbackSpeed={playbackSpeed}
+                  playbackSpeed={editorState.playback.playbackRate}
                   onPlayPause={togglePlay}
                   onSeek={(time) => editorStore.setPlayback({ currentTime: time })}
                   onVolumeChange={(vol) => editorStore.setPlayback({ volume: vol, isMuted: vol === 0 })}
                   onToggleMute={toggleMute}
-                  onSpeedChange={setPlaybackSpeed}
+                  onSpeedChange={(speed) => editorStore.setPlayback({ playbackRate: speed })}
                   onFrameStep={(direction) => {
                     const frameTime = 1 / 30;
                     const newTime = direction === 'forward'
@@ -779,6 +779,8 @@ export default function Editor() {
                 activeTab={editorTab}
                 onTabChange={setEditorTabGuarded}
                 tabLocks={tabLocks}
+                lockedCtaLabel={lockedCtaLabel}
+                onLockedCta={handleLockedCta}
               />
             </div>
           </div>
@@ -872,6 +874,8 @@ export default function Editor() {
           }
         />
       )}
+
+      <UpgradeDialog open={upgradeOpen} onOpenChange={setUpgradeOpen} />
     </div>
   );
 }

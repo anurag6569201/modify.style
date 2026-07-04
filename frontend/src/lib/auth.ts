@@ -5,9 +5,12 @@ export const AUTH_STORAGE = {
   refresh: "refreshToken",
 } as const;
 
+export type Plan = "free" | "pro";
+
 export interface AuthUser {
   name: string;
   email: string;
+  plan: Plan;
 }
 
 export function getAccessToken(): string | null {
@@ -79,6 +82,7 @@ export async function fetchAuthProfile(token?: string): Promise<AuthUser | null>
   return {
     name: data.username || data.email || "User",
     email: data.email || data.username || "",
+    plan: data.plan === "pro" ? "pro" : "free",
   };
 }
 
@@ -102,6 +106,21 @@ export async function authFetch(
   }
 
   return res;
+}
+
+/**
+ * Upgrade (or change) the current user's plan.
+ * Placeholder for real checkout — hits the backend stub that flips the plan.
+ */
+export async function upgradePlan(plan: Plan = "pro"): Promise<Plan> {
+  const res = await authFetch(`${API_BASE_URL}/api/auth/upgrade/`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ plan }),
+  });
+  if (!res.ok) throw new Error("Upgrade failed");
+  const data = await res.json();
+  return data.plan === "pro" ? "pro" : "free";
 }
 
 export { API_BASE_URL };

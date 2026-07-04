@@ -84,6 +84,10 @@ interface EditorPanelProps {
     activeTab?: TabId;
     onTabChange?: (tab: TabId) => void;
     tabLocks?: Partial<Record<TabId, string>>;
+    /** CTA label shown on a locked panel (e.g. "Log in to edit" / "Upgrade to Pro"). */
+    lockedCtaLabel?: string;
+    /** Invoked when the user clicks the CTA on a locked panel. */
+    onLockedCta?: () => void;
 }
 
 export function EditorPanel({
@@ -97,6 +101,8 @@ export function EditorPanel({
     activeTab: controlledTab,
     onTabChange,
     tabLocks = {},
+    lockedCtaLabel = "Unlock editing",
+    onLockedCta,
 }: EditorPanelProps = {}) {
     const [internalTab, setInternalTab] = useState<TabId>('script');
     const activeTab = controlledTab ?? internalTab;
@@ -106,8 +112,6 @@ export function EditorPanel({
         if (onTabChange) onTabChange(tab);
         else setInternalTab(tab);
     };
-
-    const frameLocked = tabLocks.camera ?? tabLocks.design;
 
     // Selecting a zoom moment opens the camera tab
     useEffect(() => {
@@ -128,6 +132,28 @@ export function EditorPanel({
     const clickSelected = selectedClickIndex !== null && selectedClickIndex !== undefined;
 
     const renderPanel = () => {
+        // Tier gate: if the active tab isn't editable for this user, show a
+        // lock card with a login/upgrade CTA instead of the editable panel.
+        const activeLock = tabLocks[activeTab];
+        if (activeLock) {
+            return (
+                <div className="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary/10">
+                        <Lock className="h-6 w-6 text-primary" />
+                    </div>
+                    <div className="space-y-1">
+                        <h3 className="text-base font-semibold">{TAB_META[activeTab].title} is locked</h3>
+                        <p className="max-w-xs text-sm text-muted-foreground">{activeLock}</p>
+                    </div>
+                    {onLockedCta && (
+                        <Button variant="hero" onClick={onLockedCta}>
+                            {lockedCtaLabel}
+                        </Button>
+                    )}
+                </div>
+            );
+        }
+
         if (clickSelected) {
             return (
                 <InteractionEffectsPanel
@@ -163,13 +189,13 @@ export function EditorPanel({
                     <SidebarItem id="voice" icon={Mic2} label="Voice" isActive={activeTab === 'voice'} onClick={setActiveTab} locked={!!tabLocks.voice} lockReason={tabLocks.voice} />
                     <SidebarItem id="music" icon={Music} label="Music" isActive={activeTab === 'music'} onClick={setActiveTab} locked={!!tabLocks.music} lockReason={tabLocks.music} />
                     <div className="my-2 h-px w-8 bg-border" />
-                    <SidebarItem id="design" icon={Palette} label="Design" isActive={activeTab === 'design'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.design ?? tabLocks.camera} />
-                    <SidebarItem id="text" icon={Type} label="Text" isActive={activeTab === 'text'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.text ?? tabLocks.camera} />
-                    <SidebarItem id="camera" icon={Video} label="Camera" isActive={activeTab === 'camera'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.camera} />
-                    <SidebarItem id="effects" icon={MousePointerClick} label="Effects" isActive={activeTab === 'effects'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.effects ?? tabLocks.camera} />
-                    <SidebarItem id="polish" icon={SlidersHorizontal} label="Polish" isActive={activeTab === 'polish'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.polish ?? tabLocks.camera} />
+                    <SidebarItem id="design" icon={Palette} label="Design" isActive={activeTab === 'design'} onClick={setActiveTab} locked={!!tabLocks.design} lockReason={tabLocks.design} />
+                    <SidebarItem id="text" icon={Type} label="Text" isActive={activeTab === 'text'} onClick={setActiveTab} locked={!!tabLocks.text} lockReason={tabLocks.text} />
+                    <SidebarItem id="camera" icon={Video} label="Camera" isActive={activeTab === 'camera'} onClick={setActiveTab} locked={!!tabLocks.camera} lockReason={tabLocks.camera} />
+                    <SidebarItem id="effects" icon={MousePointerClick} label="Effects" isActive={activeTab === 'effects'} onClick={setActiveTab} locked={!!tabLocks.effects} lockReason={tabLocks.effects} />
+                    <SidebarItem id="polish" icon={SlidersHorizontal} label="Polish" isActive={activeTab === 'polish'} onClick={setActiveTab} locked={!!tabLocks.polish} lockReason={tabLocks.polish} />
                     <div className="my-2 h-px w-8 bg-border" />
-                    <SidebarItem id="timeline" icon={Clock} label="Chapters" isActive={activeTab === 'timeline'} onClick={setActiveTab} locked={!!frameLocked} lockReason={tabLocks.timeline ?? tabLocks.camera} />
+                    <SidebarItem id="timeline" icon={Clock} label="Chapters" isActive={activeTab === 'timeline'} onClick={setActiveTab} locked={!!tabLocks.timeline} lockReason={tabLocks.timeline} />
                 </div>
             </div>
 

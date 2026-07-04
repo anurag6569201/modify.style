@@ -1,9 +1,10 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Header } from "@/components/layout/Header";
-import { StudioPipeline } from "@/components/studio/StudioPipeline";
 import { projectsApi, type ProjectDetail } from "@/lib/api/projects";
 import { buildRecordingPayload } from "@/lib/projectPersistence";
+import { useAuth } from "@/contexts/AuthContext";
+import { saveGuestDraft } from "@/lib/guest/guestSession";
 import { Button } from "@/components/ui/button";
 import {
   Circle,
@@ -844,6 +845,7 @@ export default function Recorder() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
+  const { isAuthenticated } = useAuth();
   const projectId = searchParams.get("project");
   const { toast } = useToast();
   const [existingProject, setExistingProject] = useState<ProjectDetail | null>(null);
@@ -3359,6 +3361,17 @@ export default function Recorder() {
         state: editorNavState,
       });
 
+      // Guests don't get a server-side project. Stash their recording locally
+      // so it can be migrated into a real project if/when they sign in.
+      if (!isAuthenticated) {
+        saveGuestDraft({
+          title: "Untitled demo",
+          duration: timer,
+          recording_data: recordingPayload as unknown as Record<string, unknown>,
+        });
+        return;
+      }
+
       void (async () => {
         let targetProjectId = projectId ?? undefined;
         try {
@@ -3556,11 +3569,6 @@ export default function Recorder() {
             Record a walkthrough of your product. We&apos;ll turn it into a polished demo
             with script, voiceover, framing, and a shareable link — no editing required.
           </p>
-        </div>
-
-        {/* Pipeline */}
-        <div className="mx-auto mb-12 max-w-4xl">
-          <StudioPipeline currentStep="record" projectId={projectId} project={existingProject} />
         </div>
 
         <div className="grid gap-10 lg:grid-cols-12 lg:gap-12 lg:items-start">

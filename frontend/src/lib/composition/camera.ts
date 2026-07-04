@@ -218,18 +218,23 @@ export const updateCameraSystem = (
     // Get raw cursor position
     const rawCursorPos = getCursorPos(time, moves);
 
-    // Apply exponential smoothing to cursor position
+    // Apply exponential smoothing to cursor position.
+    // dt-corrected so the smoothing amount is identical at 30, 60 or 120fps —
+    // per-frame alpha made the camera visibly laggier on high-refresh screens.
+    // 0.15/frame @60fps ≈ a rate constant of 9.75/s.
+    const cursorAlpha = 1 - Math.exp(-9.75 * safeDt);
     const smoothedCursor = smoothCursorPosition(
         state.smoothedCursorPos,
         rawCursorPos,
-        CAMERA_CONFIG.CURSOR_SMOOTHING
+        cursorAlpha
     );
 
-    // Get velocity and smooth it
+    // Get velocity and smooth it (dt-corrected: 0.2/frame @60fps ≈ 13.4/s)
+    const velocityAlpha = 1 - Math.exp(-13.4 * safeDt);
     const rawVelocity = rawCursorPos ? getCursorVelocityVector(time, moves, 0.08) : { x: 0, y: 0 };
     const smoothedVelocity = {
-        x: state.cursorVelocitySmoothed.x + 0.2 * (rawVelocity.x - state.cursorVelocitySmoothed.x),
-        y: state.cursorVelocitySmoothed.y + 0.2 * (rawVelocity.y - state.cursorVelocitySmoothed.y),
+        x: state.cursorVelocitySmoothed.x + velocityAlpha * (rawVelocity.x - state.cursorVelocitySmoothed.x),
+        y: state.cursorVelocitySmoothed.y + velocityAlpha * (rawVelocity.y - state.cursorVelocitySmoothed.y),
     };
 
     // --- DETECT SPOTLIGHT WINDOWS ---
@@ -264,7 +269,7 @@ export const updateCameraSystem = (
     const effectPanX = spotlightEffect?.panX ?? 0;
     const effectPanY = spotlightEffect?.panY ?? 0;
 
-    if (inSpotlight && smoothedCursor) {
+    if (inSpotlight) {
         mode = CameraMode.SPOTLIGHT;
 
         // Use effect's easing or default to easeOutCubic
@@ -290,54 +295,66 @@ export const updateCameraSystem = (
                 break;
         }
 
-        // Map zoomStrength (1-5) to actual scale. 
+        // Map zoomStrength (1-5) to actual scale.
         // If config.zoomStrength is e.g. 2.5, that's the target zoom.
         // We blend from IDLE (1.0) to target.
         targetScale = CAMERA_CONFIG.ZOOM_IDLE + (spotlightZoomStrength - CAMERA_CONFIG.ZOOM_IDLE) * zoomProgress;
 
         const centerX = viewport.width / 2;
         const centerY = viewport.height / 2;
-        const cursorX = smoothedCursor.x * viewport.width;
-        const cursorY = smoothedCursor.y * viewport.height;
 
-        // Smart lookahead - only apply when moving fast enough
-        const speed = Math.hypot(smoothedVelocity.x, smoothedVelocity.y);
-        const lookaheadActive = speed > CAMERA_CONFIG.LOOKAHEAD_SPEED_THRESHOLD;
+        if (smoothedCursor) {
+            // Cursor-driven framing: follow the (smoothed) cursor, with a little
+            // velocity lookahead, edge avoidance, and the effect's pan nudge.
+            const cursorX = smoothedCursor.x * viewport.width;
+            const cursorY = smoothedCursor.y * viewport.height;
 
-        const lookaheadX = lookaheadActive ? smoothedVelocity.x * CAMERA_CONFIG.LOOKAHEAD_FACTOR * viewport.width : 0;
-        const lookaheadY = lookaheadActive ? smoothedVelocity.y * CAMERA_CONFIG.LOOKAHEAD_FACTOR * viewport.height : 0;
+            const speed = Math.hypot(smoothedVelocity.x, smoothedVelocity.y);
+            const lookaheadActive = speed > CAMERA_CONFIG.LOOKAHEAD_SPEED_THRESHOLD;
 
-        // Calculate edge avoidance using dynamic padding
-        const padding = EDGE_PADDING;
-        const strength = CAMERA_CONFIG.EDGE_PUSH_STRENGTH;
-        let pushX = 0;
-        let pushY = 0;
+            const lookaheadX = lookaheadActive ? smoothedVelocity.x * CAMERA_CONFIG.LOOKAHEAD_FACTOR * viewport.width : 0;
+            const lookaheadY = lookaheadActive ? smoothedVelocity.y * CAMERA_CONFIG.LOOKAHEAD_FACTOR * viewport.height : 0;
 
-        if (smoothedCursor.x < padding) pushX = (padding - smoothedCursor.x) * strength * viewport.width;
-        else if (smoothedCursor.x > 1 - padding) pushX = -((smoothedCursor.x - (1 - padding)) * strength * viewport.width);
+            const padding = EDGE_PADDING;
+            const strength = CAMERA_CONFIG.EDGE_PUSH_STRENGTH;
+            let pushX = 0;
+            let pushY = 0;
 
-        if (smoothedCursor.y < padding) pushY = (padding - smoothedCursor.y) * strength * viewport.height;
-        else if (smoothedCursor.y > 1 - padding) pushY = -((smoothedCursor.y - (1 - padding)) * strength * viewport.height);
+            if (smoothedCursor.x < padding) pushX = (padding - smoothedCursor.x) * strength * viewport.width;
+            else if (smoothedCursor.x > 1 - padding) pushX = -((smoothedCursor.x - (1 - padding)) * strength * viewport.width);
 
-        const edgeAvoidance = { x: pushX, y: pushY };
+            if (smoothedCursor.y < padding) pushY = (padding - smoothedCursor.y) * strength * viewport.height;
+            else if (smoothedCursor.y > 1 - padding) pushY = -((smoothedCursor.y - (1 - padding)) * strength * viewport.height);
 
-        // Apply effect panning: panX/panY are -1 to 1, where 0 is center
-        // Convert to pixel offset (max offset is half viewport when zoomed)
-        const maxPanOffsetX = (viewport.width * targetScale - viewport.width) / 2;
-        const maxPanOffsetY = (viewport.height * targetScale - viewport.height) / 2;
-        const effectPanOffsetX = effectPanX * maxPanOffsetX;
-        const effectPanOffsetY = effectPanY * maxPanOffsetY;
+            // Translate is applied BEFORE scale in CSS (`scale() translate()`),
+            // so limits live in unscaled coordinates: W(S−1)/(2S), not W(S−1)/2.
+            const maxPanOffsetX = targetScale > 1 ? (viewport.width * (targetScale - 1)) / (2 * targetScale) : 0;
+            const maxPanOffsetY = targetScale > 1 ? (viewport.height * (targetScale - 1)) / (2 * targetScale) : 0;
+            const effectPanOffsetX = effectPanX * maxPanOffsetX;
+            const effectPanOffsetY = effectPanY * maxPanOffsetY;
 
-        const focusX = cursorX + lookaheadX + effectPanOffsetX;
-        const focusY = cursorY + lookaheadY + effectPanOffsetY;
+            const focusX = cursorX + lookaheadX + effectPanOffsetX;
+            const focusY = cursorY + lookaheadY + effectPanOffsetY;
 
-        // Calculate camera offset with edge avoidance and effect panning
-        targetTranslateX = (centerX - focusX) + edgeAvoidance.x;
-        targetTranslateY = (centerY - focusY) + edgeAvoidance.y;
+            targetTranslateX = (centerX - focusX) + pushX;
+            targetTranslateY = (centerY - focusY) + pushY;
 
-        // Subtle rotation based on horizontal movement
-        const rotationFromVelocity = smoothedVelocity.x * CAMERA_CONFIG.ROTATION_FACTOR;
-        targetRotation = clamp(rotationFromVelocity, -CAMERA_CONFIG.ROTATION_MAX, CAMERA_CONFIG.ROTATION_MAX);
+            const rotationFromVelocity = smoothedVelocity.x * CAMERA_CONFIG.ROTATION_FACTOR;
+            targetRotation = clamp(rotationFromVelocity, -CAMERA_CONFIG.ROTATION_MAX, CAMERA_CONFIG.ROTATION_MAX);
+        } else {
+            // No cursor/move data at this moment — zoom straight to the click
+            // point baked into the effect's pan (panX/panY are -1..1 around
+            // center). This guarantees auto-zoom always lands somewhere useful,
+            // even when mouse-move capture is sparse or missing.
+            const clickNormX = clamp((effectPanX + 1) / 2, 0, 1);
+            const clickNormY = clamp((effectPanY + 1) / 2, 0, 1);
+            const focusX = clickNormX * viewport.width;
+            const focusY = clickNormY * viewport.height;
+
+            targetTranslateX = centerX - focusX;
+            targetTranslateY = centerY - focusY;
+            targetRotation = 0;
+        }
 
     } else if (state.lastSpotlightState && !inSpotlight) {
         // Settling back to idle
@@ -355,10 +372,15 @@ export const updateCameraSystem = (
     }
 
     // --- EDGE CLAMPING ---
-    // Ensure the camera never reveals the background by clamping translation
-    // Max translation is half the "excess" width/height created by zooming
-    const maxTranslateX = (viewport.width * targetScale - viewport.width) / 2;
-    const maxTranslateY = (viewport.height * targetScale - viewport.height) / 2;
+    // Ensure the camera never reveals the background by clamping translation.
+    // The CSS transform is `scale(S) translate(t)` — translate happens in
+    // UNSCALED space and gets multiplied by S on screen. The visible window at
+    // scale S spans W/S of the content, so the max legal |t| is:
+    //   W/2 − W/(2S) = W(S−1)/(2S)
+    // The old formula W(S−1)/2 was too loose by a factor of S, which let the
+    // camera pan past the video edge and reveal the background mid-zoom.
+    const maxTranslateX = targetScale > 1 ? (viewport.width * (targetScale - 1)) / (2 * targetScale) : 0;
+    const maxTranslateY = targetScale > 1 ? (viewport.height * (targetScale - 1)) / (2 * targetScale) : 0;
 
     // Strict clamping
     const limitX = Math.max(0, maxTranslateX);

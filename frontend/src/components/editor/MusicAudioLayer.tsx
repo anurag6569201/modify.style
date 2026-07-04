@@ -54,6 +54,10 @@ export function MusicAudioLayer() {
             if (!audio) return;
             audio.loop = music.loop;
 
+            // Follow the editor speed control so music stays in sync
+            const rate = isFinite(playback.playbackRate) && playback.playbackRate > 0 ? playback.playbackRate : 1;
+            if (audio.playbackRate !== rate) audio.playbackRate = rate;
+
             if (!playback.isPlaying) {
                 if (!audio.paused) audio.pause();
                 return;

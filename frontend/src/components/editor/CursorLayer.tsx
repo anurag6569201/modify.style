@@ -1,6 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { editorStore } from '@/lib/editor/store';
 import { smoothedCursor, cursorTrail, clickPulseProgress } from '@/lib/editor/cursor';
+import { frameClock } from '@/lib/editor/frameClock';
 
 /**
  * Live synthetic cursor in the editor preview.
@@ -23,16 +24,22 @@ export const CursorLayer: React.FC = () => {
             const state = editorStore.getState();
             const { cursor, events, playback } = state;
 
-            // Read time straight off the sibling <video> element — the true
-            // frame clock — so the cursor never lags behind the pixels.
-            if (!videoElRef.current || !videoElRef.current.isConnected) {
-                videoElRef.current = parent.querySelector('video');
+            // Frame-exact time: the frameClock tracks the mediaTime of the
+            // frame actually presented on screen (requestVideoFrameCallback),
+            // so the cursor never lags or leads the video pixels.
+            let frameTime: number;
+            if (frameClock.isAttached()) {
+                frameTime = frameClock.getTime();
+            } else {
+                if (!videoElRef.current || !videoElRef.current.isConnected) {
+                    videoElRef.current = parent.querySelector('video');
+                }
+                const videoEl = videoElRef.current;
+                frameTime =
+                    videoEl && isFinite(videoEl.currentTime) && videoEl.currentTime >= 0
+                        ? videoEl.currentTime
+                        : playback.currentTime;
             }
-            const videoEl = videoElRef.current;
-            const frameTime =
-                videoEl && isFinite(videoEl.currentTime) && videoEl.currentTime >= 0
-                    ? videoEl.currentTime
-                    : playback.currentTime;
 
             // Match canvas to element size (handles resizes cheaply)
             const w = parent.clientWidth;

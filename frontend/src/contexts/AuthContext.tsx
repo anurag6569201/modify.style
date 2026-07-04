@@ -13,16 +13,21 @@ import {
   getAccessToken,
   hasStoredSession,
   setTokens,
+  upgradePlan,
   type AuthUser,
+  type Plan,
 } from "@/lib/auth";
 
 interface AuthContextValue {
   user: AuthUser | null;
+  plan: Plan;
   isAuthenticated: boolean;
   isLoading: boolean;
   signIn: (access: string, refresh: string) => Promise<void>;
   signOut: () => void;
   refreshUser: () => Promise<void>;
+  /** Upgrade the current user's plan (placeholder for real checkout). */
+  upgrade: (plan?: Plan) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -89,16 +94,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
+  const upgrade = useCallback(
+    async (plan: Plan = "pro") => {
+      const newPlan = await upgradePlan(plan);
+      setUser((prev) => (prev ? { ...prev, plan: newPlan } : prev));
+    },
+    []
+  );
+
   const value = useMemo(
     () => ({
       user,
+      plan: user?.plan ?? "free",
       isAuthenticated: !!user && hasStoredSession(),
       isLoading,
       signIn,
       signOut,
       refreshUser,
+      upgrade,
     }),
-    [user, isLoading, signIn, signOut, refreshUser]
+    [user, isLoading, signIn, signOut, refreshUser, upgrade]
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
