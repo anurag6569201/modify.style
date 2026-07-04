@@ -38,19 +38,20 @@ jobs:
             --name demoforge-api \
             --src-path deploy.zip \
             --type zip \
-            --async false
+            --async false \
+            --clean true
 
       - name: Restart Web App
         run: az webapp restart --resource-group greaby --name demoforge-api
 
       - name: Verify health
         run: |
-          for i in 1 2 3 4 5 6; do
-            body=$(curl -sf "https://demoforge-api.azurewebsites.net/api/health/" || true)
-            echo "$body"
+          for i in 1 2 3 4 5 6 7 8 10 12; do
+            sleep "$i"
+            body=$(curl -s "https://demoforge-api.azurewebsites.net/api/health/" || true)
+            echo "attempt: $body"
             echo "$body" | grep -q '"database":"postgresql"' && \
             echo "$body" | grep -q '"storage":"azure_blob"' && exit 0
-            sleep 15
           done
           echo "Health check failed — production not on PostgreSQL + Azure Blob" >&2
           exit 1
