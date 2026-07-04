@@ -1,10 +1,12 @@
 from django.db.models import F, Q
+from django.http import FileResponse, Http404
 from django.utils import timezone
 from rest_framework import viewsets, generics, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from rest_framework.response import Response
 from rest_framework.parsers import MultiPartParser, FormParser
+import logging
 
 from .models import Project
 from .serializers import (
@@ -12,7 +14,17 @@ from .serializers import (
     ProjectDetailSerializer,
     ProjectPublicSerializer,
 )
-from .upload import save_project_media, resolve_project_video_url
+from .upload import (
+    save_project_media,
+    resolve_project_video_url,
+    video_storage_path_for_project,
+    media_exists,
+    open_media,
+    media_content_type,
+    verify_video_access_token,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -87,7 +99,15 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if kind not in {'source', 'render'}:
             return Response({'error': "kind must be 'source' or 'render'."}, status=status.HTTP_400_BAD_REQUEST)
 
-        saved_path = save_project_media(project.id, uploaded, kind)
+        try:
+            saved_path = save_project_media(project.id, uploaded, kind)
+        except Exception as exc:
+            logger.exception("Video upload failed for project %s", project.id)
+            return Response(
+                {'error': f'Upload failed: {exc}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
         recording_data = dict(project.recording_data or {})
         recording_data['video_storage_path'] = saved_path
         project.recording_data = recording_data
@@ -116,6 +136,45 @@ class ProjectViewSet(viewsets.ModelViewSet):
             },
             status=status.HTTP_200_OK,
         )
+
+    @action(
+        detail=True,
+        methods=['get'],
+        url_path='video',
+        url_name='stream-video',
+        permission_classes=[AllowAny],
+    )
+    def stream_video(self, request, pk=None):
+        """
+        Stream project video for browser playback.
+        Accepts a signed ?token= query param (no JWT required for <video src>).
+        """
+        token = request.query_params.get('token', '')
+        if not verify_video_access_token(pk, token):
+            if not request.user.is_authenticated:
+                raise Http404('Invalid or expired video link')
+            project = Project.objects.filter(pk=pk, owner=request.user).first()
+            if not project:
+                raise Http404('Video not found')
+        else:
+            project = Project.objects.filter(pk=pk).first()
+            if not project:
+                raise Http404('Video not found')
+
+        path = video_storage_path_for_project(project)
+        if not path or not media_exists(path):
+            raise Http404('Video file not found')
+
+        handle = open_media(path)
+        response = FileResponse(
+            handle,
+            content_type=media_content_type(path),
+            as_attachment=False,
+            filename=path.rsplit('/', 1)[-1],
+        )
+        response['Accept-Ranges'] = 'bytes'
+        response['Cache-Control'] = 'private, max-age=3600'
+        return response
 
 
 class PublicProjectView(generics.RetrieveAPIView):

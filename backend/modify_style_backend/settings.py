@@ -217,36 +217,6 @@ AZURE_STORAGE_CONNECTION_STRING = os.environ.get('AZURE_STORAGE_CONNECTION_STRIN
 AZURE_STORAGE_CONTAINER = os.environ.get('AZURE_STORAGE_CONTAINER', 'demoforge-media')
 AZURE_CDN_BASE_URL = os.environ.get('AZURE_CDN_BASE_URL', '')
 
-# Durable cloud storage in production (Azure Blob). Local dev uses the filesystem.
-if AZURE_STORAGE_CONNECTION_STRING.strip():
-    STORAGES = {
-        'default': {
-            'BACKEND': 'storages.backends.azure_storage.AzureStorage',
-            'OPTIONS': {
-                'connection_string': AZURE_STORAGE_CONNECTION_STRING,
-                'azure_container': AZURE_STORAGE_CONTAINER,
-                'expiration_secs': 86400,
-                'overwrite_files': True,
-            },
-        },
-        'staticfiles': {
-            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
-        },
-    }
-else:
-    STORAGES = {
-        'default': {
-            'BACKEND': 'django.core.files.storage.FileSystemStorage',
-            'OPTIONS': {
-                'location': MEDIA_ROOT,
-                'base_url': MEDIA_URL,
-            },
-        },
-        'staticfiles': {
-            'BACKEND': 'django.contrib.staticfiles.storage.StaticFilesStorage',
-        },
-    }
-
 # Which LLM provider to use for scripts: 'azure_openai' or 'gemini'.
 AI_SCRIPT_PROVIDER = os.environ.get(
     'AI_SCRIPT_PROVIDER',
