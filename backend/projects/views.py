@@ -1,6 +1,5 @@
 from django.db.models import F, Q
 from django.utils import timezone
-from django.conf import settings
 from rest_framework import viewsets, generics, status
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated, AllowAny
@@ -13,7 +12,7 @@ from .serializers import (
     ProjectDetailSerializer,
     ProjectPublicSerializer,
 )
-from .upload import save_project_media
+from .upload import save_project_media, resolve_project_video_url
 
 
 class ProjectViewSet(viewsets.ModelViewSet):
@@ -89,9 +88,11 @@ class ProjectViewSet(viewsets.ModelViewSet):
             return Response({'error': "kind must be 'source' or 'render'."}, status=status.HTTP_400_BAD_REQUEST)
 
         saved_path = save_project_media(project.id, uploaded, kind)
-        media_url = settings.MEDIA_URL.rstrip('/') + '/' + saved_path
-        video_url = request.build_absolute_uri(media_url)
+        recording_data = dict(project.recording_data or {})
+        recording_data['video_storage_path'] = saved_path
+        project.recording_data = recording_data
 
+        video_url = resolve_project_video_url(project, request)
         project.video_url = video_url
         duration = request.data.get('duration')
         if duration is not None:
@@ -105,7 +106,7 @@ class ProjectViewSet(viewsets.ModelViewSet):
         elif project.status == Project.Status.DRAFT:
             project.status = Project.Status.DRAFT
 
-        project.save(update_fields=['video_url', 'duration', 'status', 'updated_at'])
+        project.save(update_fields=['video_url', 'duration', 'status', 'updated_at', 'recording_data'])
 
         return Response(
             {

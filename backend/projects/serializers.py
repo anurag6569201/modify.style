@@ -1,6 +1,7 @@
 from rest_framework import serializers
 
 from .models import Project
+from .upload import resolve_project_video_url
 
 
 class ProjectListSerializer(serializers.ModelSerializer):
@@ -21,6 +22,8 @@ class ProjectListSerializer(serializers.ModelSerializer):
 class ProjectDetailSerializer(serializers.ModelSerializer):
     """Full representation for the editor (create / retrieve / update)."""
 
+    video_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Project
         fields = (
@@ -31,8 +34,11 @@ class ProjectDetailSerializer(serializers.ModelSerializer):
         )
         read_only_fields = (
             'id', 'share_slug', 'view_count', 'last_viewed_at',
-            'created_at', 'updated_at',
+            'created_at', 'updated_at', 'video_url',
         )
+
+    def get_video_url(self, obj):
+        return resolve_project_video_url(obj, self.context.get('request'))
 
 
 class ProjectPublicSerializer(serializers.ModelSerializer):
@@ -40,6 +46,8 @@ class ProjectPublicSerializer(serializers.ModelSerializer):
     Safe, owner-free representation served on the public share view
     (/v/<share_slug>). Never exposes private editor internals or the owner.
     """
+
+    video_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Project
@@ -49,3 +57,6 @@ class ProjectPublicSerializer(serializers.ModelSerializer):
             'view_count', 'created_at',
         )
         read_only_fields = fields
+
+    def get_video_url(self, obj):
+        return resolve_project_video_url(obj, self.context.get('request'))
